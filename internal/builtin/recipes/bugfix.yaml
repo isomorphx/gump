@@ -1,0 +1,44 @@
+name: bugfix
+description: Reproduce and fix a bug
+
+steps:
+  - name: decompose
+    agent: claude-sonnet
+    output: plan
+    prompt: |
+      Analyze this bug report. Identify the root cause.
+      Produce a single task with the reproduction strategy and affected files.
+    validate:
+      - schema: plan
+
+  - name: fix
+    foreach: decompose
+    steps:
+      - name: reproduce
+        agent: claude-haiku
+        prompt: |
+          Write a test that reproduces this bug: {task.description}
+          The test must fail with the current code.
+        validate:
+          - compile
+          - tests_found
+        retry:
+          max_attempts: 2
+          strategy: [same, escalate: claude-sonnet]
+
+      - name: implement-fix
+        agent: claude-haiku
+        prompt: |
+          Fix the bug. The reproduction test must pass.
+          Only modify: {task.files}
+        validate:
+          - compile
+          - test
+        retry:
+          max_attempts: 3
+          strategy: [same, same, escalate: claude-sonnet]
+
+  - name: final-check
+    validate:
+      - compile
+      - test

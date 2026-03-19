@@ -1,0 +1,54 @@
+# Compiled binaries
+pudding
+/pudding
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Build artifacts
+/dist/
+/build/
+/out/
+*.a
+*.o
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*~
+*.bak
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.cursor/
+.vscode/
+.idea/
+*.sublime-*
+
+# Go
+/vendor/
+*.test
+*.out
+*.prof
+*.trace
+go.work
+go.work.sum
+
+# Test and coverage
+coverage.out
+coverage.txt
+coverage.html
+coverage.xml
+*.coverprofile
+cobertura.xml
+
+# Debug
+__debug_bin
+__debug_bin*

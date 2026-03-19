@@ -1,0 +1,123 @@
+package engine
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/isomorphx/pudding/internal/agent"
+	pkgcontext "github.com/isomorphx/pudding/internal/context"
+	"github.com/isomorphx/pudding/internal/ledger"
+	"github.com/isomorphx/pudding/internal/plan"
+	"github.com/isomorphx/pudding/internal/recipe"
+	"github.com/isomorphx/pudding/internal/template"
+)
+
+// ExecuteReplan runs the replan agent to produce a new plan, then runs each sub-task with the original step agent (no retry on sub-tasks).
+func (e *Engine) ExecuteReplan(replanAgent string, step recipe.Step, scopePath string, errorContext *ErrorContext) error {
+	originalPrompt := step.Prompt
+	if step.Output == "plan" && originalPrompt == "" {
+		originalPrompt = "Analyze the following specification and produce a plan.\n\n{spec}"
+	}
+	vars := e.buildVars(nil, nil, nil)
+	originalResolved := template.Resolve(originalPrompt, vars, e.StateBag, scopePath)
+	diffStr := ""
+	errStr := ""
+	if errorContext != nil {
+		diffStr = errorContext.Diff
+		errStr = errorContext.Error
+	}
+
+	contextFile := agent.ContextFileForAgent(replanAgent)
+	agent.RemoveOtherContextFiles(e.Cook.WorktreeDir, contextFile)
+	if err := PrepareOutputDir(e.Cook.WorktreeDir); err != nil {
+		return fmt.Errorf("prepare output dir for replan: %w", err)
+	}
+	replanBody, err := pkgcontext.BuildReplan(e.Cook.WorktreeDir, originalResolved, diffStr, errStr, contextFile)
+	if err != nil {
+		return fmt.Errorf("write replan context: %w", err)
+	}
+
+	adapter, err := e.Resolver.AdapterFor(replanAgent)
+	if err != nil {
+		return err
+	}
+	promptForAgent := replanBody + "\n[PUDDING:plan]"
+	ctx := context.Background()
+	proc, err := adapter.Launch(ctx, agent.LaunchRequest{
+		Worktree:  e.Cook.WorktreeDir,
+		Prompt:    promptForAgent,
+		AgentName: replanAgent,
+		Timeout:   0,
+		MaxTurns:  0,
+	})
+	if err != nil {
+		return fmt.Errorf("replan agent launch: %w", err)
+	}
+	for ev := range adapter.Stream(proc) {
+		formatStreamEventToTerminal(ev, replanAgent)
+	}
+	result, err := adapter.Wait(proc)
+	if err != nil {
+		return fmt.Errorf("replan agent wait: %w", err)
+	}
+	if result.IsError {
+		return fmt.Errorf("replan agent reported error")
+	}
+
+	tasks, raw, err := ExtractPlanOutput(e.Cook.WorktreeDir)
+	if err != nil {
+		return fmt.Errorf("replan did not produce valid plan: %w", err)
+	}
+	if err := plan.ValidatePlanSchema(tasks); err != nil {
+		return fmt.Errorf("replan plan schema: %w", err)
+	}
+	if e.Cook.Ledger != nil {
+		name := ledger.SanitizeStepPath(scopePath) + "-replan-output.json"
+		if rel, _ := e.Cook.Ledger.WriteArtifact(name, []byte(raw)); rel != "" {
+			_ = e.Cook.Ledger.Emit(ledger.ReplanTriggered{Step: scopePath, Agent: replanAgent, Artifact: rel})
+		}
+	}
+
+	// Snapshot the plan (commit plan.json output).
+	taskName := "-"
+	if _, err := e.Cook.Snapshot(step.Name+"/replan", taskName, 1); err != nil {
+		return fmt.Errorf("snapshot replan: %w", err)
+	}
+	e.StateBag.Set(scopePath+"/replan", raw, "")
+
+	// Run each sub-task with the original step agent; no retry on sub-tasks.
+	sessionMap := make(map[string]string)
+	for _, task := range tasks {
+		// Parent prefix in name so State Bag, artifacts and logs show e.g. [green/replan-task-fix-add] not [replan-task-fix-add].
+		ephemeralName := step.Name + "/replan-task-" + task.Name
+		subPath := scopePath + "/replan-task-" + task.Name
+		ephemeral := recipe.Step{
+			Name:     ephemeralName,
+			Agent:    step.Agent,
+			Output:   step.Output,
+			Prompt:   replanSubTaskPrompt,
+			Validate: step.Validate,
+			Retry:    nil,
+		}
+		if ephemeral.Output == "" {
+			ephemeral.Output = "diff"
+		}
+		extraVars := map[string]string{"original_prompt": originalResolved}
+		if err := e.runAtomicStepWithVars(&ephemeral, subPath, &task, sessionMap, recipe.SessionConfig{Mode: "fresh"}, extraVars); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// replanSubTaskPrompt is the prompt template for each replan sub-task (spec 5.2). "Implementation (replan sub-task)" is used so the stub can use root scenario files only.
+const replanSubTaskPrompt = `## Your Task: Implementation (replan sub-task)
+
+This is a sub-task from a re-planning phase. Focus only on this specific sub-task.
+
+Sub-task: {task.name}
+Description: {task.description}
+Files to modify: {task.files}
+
+Original context:
+{original_prompt}`

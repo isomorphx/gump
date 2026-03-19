@@ -1,0 +1,350 @@
+package cmd
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/isomorphx/pudding/internal/config"
+	"github.com/isomorphx/pudding/internal/recipe"
+	"github.com/spf13/cobra"
+)
+
+// envWithout returns a copy of env with any variable whose name is in keys removed (env is "KEY=value").
+func envWithout(env []string, keys ...string) []string {
+	skip := make(map[string]bool)
+	for _, k := range keys {
+		skip[k] = true
+	}
+	out := make([]string, 0, len(env))
+	for _, e := range env {
+		if idx := strings.IndexByte(e, '='); idx > 0 && skip[e[:idx]] {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+var doctorCmd = &cobra.Command{
+	Use:   "doctor",
+	Short: "Check environment, config, and agent CLIs",
+	RunE:  runDoctor,
+}
+
+func init() {
+	rootCmd.AddCommand(doctorCmd)
+}
+
+func runDoctor(cmd *cobra.Command, args []string) error {
+	fmt.Println("Pudding Doctor")
+	fmt.Println()
+	// Git
+	out, err := exec.Command("git", "version").CombinedOutput()
+	if err != nil {
+		fmt.Println("  git          ✗  not found")
+	} else {
+		fmt.Printf("  git          ✓  %s", string(out))
+	}
+	// Config
+	_, _, err = config.Load()
+	if err != nil {
+		fmt.Println("  config       ✗  failed to load")
+	} else {
+		if config.ProjectConfigPath() != "" {
+			fmt.Println("  config       ✓  pudding.toml found")
+		} else {
+			fmt.Println("  config       ✓  (no project config)")
+		}
+	}
+	// Built-in recipes
+	n := len(recipe.BuiltinRecipes)
+	if n == 0 {
+		fmt.Println("  recipes      ✗  no built-in recipes loaded")
+	} else {
+		fmt.Printf("  recipes      ✓  %d built-in recipes loaded\n", n)
+	}
+	// Agent CLIs
+	fmt.Println()
+	checkClaudeCode()
+	checkCodex()
+	checkGemini()
+	checkQwen()
+	checkOpenCode()
+	return nil
+}
+
+// checkClaudeCode runs the spec harness: temp repo, run claude with json, verify file and is_error.
+func checkClaudeCode() {
+	dir, err := os.MkdirTemp("", "pudding-doctor-claude-")
+	if err != nil {
+		fmt.Println("  claude-code  ✗  failed to create temp dir")
+		return
+	}
+	defer os.RemoveAll(dir)
+
+	if err := exec.Command("git", "init", dir).Run(); err != nil {
+		fmt.Println("  claude-code  ✗  git init failed")
+		return
+	}
+	initPath := filepath.Join(dir, "init.txt")
+	if err := os.WriteFile(initPath, []byte("init"), 0644); err != nil {
+		fmt.Println("  claude-code  ✗  failed to write init.txt")
+		return
+	}
+
+	runCmd := exec.Command("claude", "-p", "Create a file called doctor-test.txt containing pudding-ok",
+		"--output-format", "json",
+		"--allowedTools", "Bash,Read,Write,Edit",
+		"--permission-mode", "acceptEdits")
+	runCmd.Dir = dir
+	// Avoid inheriting ANTHROPIC_API_KEY so the CLI doesn't hit ByteString/API key errors during the harness.
+	runCmd.Env = envWithout(os.Environ(), "ANTHROPIC_API_KEY")
+	out, runErr := runCmd.CombinedOutput()
+	if runErr != nil {
+		fmt.Printf("  claude-code  ✗  %v (is 'claude' installed?)\n", runErr)
+		return
+	}
+
+	var parsed struct {
+		IsError bool `json:"is_error"`
+	}
+	if jsonErr := json.Unmarshal(out, &parsed); jsonErr != nil {
+		fmt.Println("  claude-code  ⚠  installed but JSON not parsable (compat mode)")
+		return
+	}
+	if parsed.IsError {
+		fmt.Println("  claude-code  ✗  run returned is_error=true")
+		return
+	}
+
+	doctorTestPath := filepath.Join(dir, "doctor-test.txt")
+	if _, err := os.Stat(doctorTestPath); err != nil {
+		fmt.Println("  claude-code  ✗  doctor-test.txt was not created")
+		return
+	}
+	statusCmd := exec.Command("git", "status", "--porcelain")
+	statusCmd.Dir = dir
+	statusOut, _ := statusCmd.Output()
+	if !strings.Contains(string(statusOut), "doctor-test.txt") {
+		fmt.Println("  claude-code  ✗  git status does not show doctor-test.txt")
+		return
+	}
+	fmt.Println("  claude-code  ✓  ok")
+}
+
+func checkCodex() {
+	if _, err := exec.LookPath("codex"); err != nil {
+		fmt.Println("  codex        not installed (skipped)")
+		return
+	}
+	dir, err := os.MkdirTemp("", "pudding-doctor-codex-")
+	if err != nil {
+		fmt.Println("  codex        ✗  failed to create temp dir")
+		return
+	}
+	defer os.RemoveAll(dir)
+	if err := exec.Command("git", "init", dir).Run(); err != nil {
+		fmt.Println("  codex        ✗  git init failed")
+		return
+	}
+	initPath := filepath.Join(dir, "init.txt")
+	if err := os.WriteFile(initPath, []byte("init"), 0644); err != nil {
+		fmt.Println("  codex        ✗  failed to write init.txt")
+		return
+	}
+	runCmd := exec.Command("codex", "exec", "Create a file called doctor-test.txt containing pudding-ok",
+		"--json", "--full-auto", "-C", dir, "--skip-git-repo-check")
+	runCmd.Dir = dir
+	out, runErr := runCmd.CombinedOutput()
+	if runErr != nil {
+		fmt.Printf("  codex        ✗  %v (harness failed)\n", runErr)
+		return
+	}
+	// At least one turn.completed in JSONL for green.
+	hasTurnCompleted := strings.Contains(string(out), `"type":"turn.completed"`)
+	doctorTestPath := filepath.Join(dir, "doctor-test.txt")
+	fileCreated := false
+	if _, err := os.Stat(doctorTestPath); err == nil {
+		fileCreated = true
+	}
+	statusCmd := exec.Command("git", "status", "--porcelain")
+	statusCmd.Dir = dir
+	statusOut, _ := statusCmd.Output()
+	statusOK := strings.Contains(string(statusOut), "doctor-test.txt")
+	if hasTurnCompleted && fileCreated && statusOK {
+		fmt.Println("  codex        ✓  ok")
+		return
+	}
+	if fileCreated && statusOK && !hasTurnCompleted {
+		fmt.Println("  codex        ⚠  compat mode (JSONL parse failed, status works)")
+		return
+	}
+	fmt.Println("  codex        ✗  harness failed (file or status missing)")
+}
+
+func checkGemini() {
+	if _, err := exec.LookPath("gemini"); err != nil {
+		fmt.Println("  gemini       not installed (skipped)")
+		return
+	}
+	dir, err := os.MkdirTemp("", "pudding-doctor-gemini-")
+	if err != nil {
+		fmt.Println("  gemini       ✗  failed to create temp dir")
+		return
+	}
+	defer os.RemoveAll(dir)
+	if err := exec.Command("git", "init", dir).Run(); err != nil {
+		fmt.Println("  gemini       ✗  git init failed")
+		return
+	}
+	initPath := filepath.Join(dir, "init.txt")
+	if err := os.WriteFile(initPath, []byte("init"), 0644); err != nil {
+		fmt.Println("  gemini       ✗  failed to write init.txt")
+		return
+	}
+	runCmd := exec.Command("gemini", "-p", "Create a file called doctor-test.txt containing pudding-ok",
+		"--output-format", "json", "--yolo")
+	runCmd.Dir = dir
+	// Gemini emits JSON on stdout only; stderr has "YOLO mode...", credentials, etc. (gemini-cli-reference §3).
+	out, runErr := runCmd.Output()
+	if runErr != nil {
+		fmt.Printf("  gemini       ✗  %v (harness failed)\n", runErr)
+		return
+	}
+	var parsed struct {
+		SessionID string      `json:"session_id"`
+		Error     interface{} `json:"error"`
+	}
+	jsonOK := json.Unmarshal(out, &parsed) == nil && parsed.SessionID != "" && parsed.Error == nil
+	doctorTestPath := filepath.Join(dir, "doctor-test.txt")
+	fileCreated := false
+	if _, err := os.Stat(doctorTestPath); err == nil {
+		fileCreated = true
+	}
+	statusCmd := exec.Command("git", "status", "--porcelain")
+	statusCmd.Dir = dir
+	statusOut, _ := statusCmd.Output()
+	statusOK := strings.Contains(string(statusOut), "doctor-test.txt")
+	if jsonOK && fileCreated && statusOK {
+		fmt.Println("  gemini       ✓  ok")
+		return
+	}
+	if fileCreated && statusOK && !jsonOK {
+		fmt.Println("  gemini       ⚠  compat mode (JSON parse failed, status works)")
+		return
+	}
+	fmt.Println("  gemini       ✗  harness failed (file or status missing)")
+}
+
+func checkQwen() {
+	if _, err := exec.LookPath("qwen"); err != nil {
+		fmt.Println("  qwen         not installed (skipped)")
+		return
+	}
+	dir, err := os.MkdirTemp("", "pudding-doctor-qwen-")
+	if err != nil {
+		fmt.Println("  qwen         ✗  failed to create temp dir")
+		return
+	}
+	defer os.RemoveAll(dir)
+	if err := exec.Command("git", "init", dir).Run(); err != nil {
+		fmt.Println("  qwen         ✗  git init failed")
+		return
+	}
+	initPath := filepath.Join(dir, "init.txt")
+	if err := os.WriteFile(initPath, []byte("init"), 0644); err != nil {
+		fmt.Println("  qwen         ✗  failed to write init.txt")
+		return
+	}
+	runCmd := exec.Command("qwen", "-p", "Create a file called doctor-test.txt containing pudding-ok",
+		"--output-format", "json", "--yolo",
+		"--allowed-tools", "write_file")
+	runCmd.Dir = dir
+	out, runErr := runCmd.CombinedOutput()
+	if runErr != nil {
+		fmt.Printf("  qwen         ✗  %v (harness failed)\n", runErr)
+		return
+	}
+	var parsed []struct {
+		Type    string `json:"type"`
+		IsError bool   `json:"is_error"`
+	}
+	jsonOK := false
+	if json.Unmarshal(out, &parsed) == nil && len(parsed) > 0 {
+		last := parsed[len(parsed)-1]
+		jsonOK = last.Type == "result" && !last.IsError
+	}
+	doctorTestPath := filepath.Join(dir, "doctor-test.txt")
+	fileCreated := false
+	if _, err := os.Stat(doctorTestPath); err == nil {
+		fileCreated = true
+	}
+	statusCmd := exec.Command("git", "status", "--porcelain")
+	statusCmd.Dir = dir
+	statusOut, _ := statusCmd.Output()
+	statusOK := strings.Contains(string(statusOut), "doctor-test.txt")
+	if jsonOK && fileCreated && statusOK {
+		fmt.Println("  qwen         ✓  ok")
+		return
+	}
+	if fileCreated && statusOK && !jsonOK {
+		fmt.Println("  qwen         ⚠  compat mode (JSON parse failed, status works)")
+		return
+	}
+	fmt.Println("  qwen         ✗  harness failed (file or status missing)")
+}
+
+func checkOpenCode() {
+	if _, err := exec.LookPath("opencode"); err != nil {
+		fmt.Println("  opencode     not installed (skipped)")
+		return
+	}
+	dir, err := os.MkdirTemp("", "pudding-doctor-opencode-")
+	if err != nil {
+		fmt.Println("  opencode     ✗  failed to create temp dir")
+		return
+	}
+	defer os.RemoveAll(dir)
+	if err := exec.Command("git", "init", dir).Run(); err != nil {
+		fmt.Println("  opencode     ✗  git init failed")
+		return
+	}
+	initPath := filepath.Join(dir, "init.txt")
+	if err := os.WriteFile(initPath, []byte("init"), 0644); err != nil {
+		fmt.Println("  opencode     ✗  failed to write init.txt")
+		return
+	}
+	cwd, _ := os.Getwd()
+	runCmd := exec.Command("opencode", "run", "Create a file called doctor-test.txt containing pudding-ok",
+		"--format", "json", "--dir", dir)
+	runCmd.Dir = cwd
+	out, runErr := runCmd.CombinedOutput()
+	if runErr != nil {
+		fmt.Printf("  opencode     ✗  %v (harness failed)\n", runErr)
+		return
+	}
+	hasStepFinish := strings.Contains(string(out), `"type":"step_finish"`)
+	doctorTestPath := filepath.Join(dir, "doctor-test.txt")
+	fileCreated := false
+	if _, err := os.Stat(doctorTestPath); err == nil {
+		fileCreated = true
+	}
+	statusCmd := exec.Command("git", "status", "--porcelain")
+	statusCmd.Dir = dir
+	statusOut, _ := statusCmd.Output()
+	statusOK := strings.Contains(string(statusOut), "doctor-test.txt")
+	if hasStepFinish && fileCreated && statusOK {
+		fmt.Println("  opencode     ✓  ok")
+		return
+	}
+	if fileCreated && statusOK && !hasStepFinish {
+		fmt.Println("  opencode     ⚠  compat mode (events parse failed, status works)")
+		return
+	}
+	fmt.Println("  opencode     ✗  harness failed (file or status missing)")
+}
+

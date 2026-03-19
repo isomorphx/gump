@@ -1,0 +1,155 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+
+	"github.com/BurntSushi/toml"
+)
+
+const (
+	userConfigDir  = ".pudding"
+	userConfigFile = "config.toml"
+	projectConfig  = "pudding.toml"
+)
+
+// Load merges config in priority order so project overrides user overrides defaults.
+// We do not fail when config files are missing so a fresh install works without setup.
+func Load() (*Config, *Source, error) {
+	cfg := &Config{
+		DefaultAgent: "claude-sonnet",
+		LogLevel:     "info",
+	}
+	src := &Source{
+		DefaultAgent: "default",
+		LogLevel:     "default",
+	}
+
+	// User config: ~/.pudding/config.toml
+	home, _ := os.UserHomeDir()
+	if home != "" {
+		path := filepath.Join(home, userConfigDir, userConfigFile)
+		applyFile(cfg, src, path, "~/.pudding/config.toml")
+	}
+
+	// Project config: pudding.toml from cwd upward
+	cwd, _ := os.Getwd()
+	if cwd != "" {
+		path := findProjectConfig(cwd)
+		if path != "" {
+			applyFile(cfg, src, path, "pudding.toml")
+		}
+	}
+
+	// Env overrides (highest priority)
+	applyEnv(cfg, src)
+
+	return cfg, src, nil
+}
+
+// findProjectConfig walks up from dir until it finds pudding.toml or a .git (repo root); it does not traverse above .git.
+func findProjectConfig(dir string) string {
+	for {
+		path := filepath.Join(dir, projectConfig)
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return ""
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return ""
+}
+
+type fileConfig struct {
+	DefaultAgent string `toml:"default_agent"`
+	LogLevel     string `toml:"log_level"`
+	Validation   struct {
+		CompileCmd  string `toml:"compile_cmd"`
+		TestCmd     string `toml:"test_cmd"`
+		LintCmd     string `toml:"lint_cmd"`
+		CoverageCmd string `toml:"coverage_cmd"`
+	} `toml:"validation"`
+}
+
+func applyFile(cfg *Config, src *Source, path, label string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var f fileConfig
+	if _, err := toml.Decode(string(data), &f); err != nil {
+		return
+	}
+	if f.DefaultAgent != "" {
+		cfg.DefaultAgent = f.DefaultAgent
+		src.DefaultAgent = label
+	}
+	if f.LogLevel != "" {
+		cfg.LogLevel = f.LogLevel
+		src.LogLevel = label
+	}
+	if f.Validation.CompileCmd != "" {
+		cfg.CompileCmd = f.Validation.CompileCmd
+		src.CompileCmd = label
+	}
+	if f.Validation.TestCmd != "" {
+		cfg.TestCmd = f.Validation.TestCmd
+		src.TestCmd = label
+	}
+	if f.Validation.LintCmd != "" {
+		cfg.LintCmd = f.Validation.LintCmd
+		src.LintCmd = label
+	}
+	if f.Validation.CoverageCmd != "" {
+		cfg.CoverageCmd = f.Validation.CoverageCmd
+		src.CoverageCmd = label
+	}
+}
+
+func applyEnv(cfg *Config, src *Source) {
+	if v := os.Getenv("PUDDING_DEFAULT_AGENT"); v != "" {
+		cfg.DefaultAgent = v
+		src.DefaultAgent = "env"
+	}
+	if v := os.Getenv("PUDDING_LOG_LEVEL"); v != "" {
+		cfg.LogLevel = v
+		src.LogLevel = "env"
+	}
+}
+
+// ProjectConfigPath returns the path to pudding.toml if found from cwd, else "".
+func ProjectConfigPath() string {
+	cwd, _ := os.Getwd()
+	if cwd == "" {
+		return ""
+	}
+	return findProjectConfig(cwd)
+}
+
+// ProjectRoot returns the directory containing pudding.toml or .git, or cwd if none.
+func ProjectRoot() string {
+	cwd, _ := os.Getwd()
+	if cwd == "" {
+		return ""
+	}
+	dir := cwd
+	for {
+		if _, err := os.Stat(filepath.Join(dir, projectConfig)); err == nil {
+			return dir
+		}
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return cwd
+		}
+		dir = parent
+	}
+}

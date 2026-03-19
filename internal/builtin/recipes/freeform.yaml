@@ -1,0 +1,9 @@
+name: freeform
+description: Single agent call, no plan, no decomposition
+
+steps:
+  - name: do
+    agent: claude-opus
+    prompt: "{spec}"
+    validate:
+      - compile

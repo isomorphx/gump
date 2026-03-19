@@ -1,0 +1,146 @@
+package engine
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/isomorphx/pudding/internal/ledger"
+	"github.com/isomorphx/pudding/internal/recipe"
+	"github.com/isomorphx/pudding/internal/sandbox"
+)
+
+// ErrorContext carries failed validation output so the next attempt gets {error} and {diff} in the prompt.
+// Used only when attempt > 1 to avoid repeating the same mistake.
+type ErrorContext struct {
+	Error    string
+	Diff     string
+	Attempt  int
+	Strategy string
+}
+
+// RunWithRetry runs one atomic step with the recipe retry policy.
+// runOnce runs the step once and returns (nil, _) on pass, (err, preStepCommit) on failure; preStepCommit is the worktree HEAD at start of runOnce so we can reset before the next attempt.
+func (e *Engine) RunWithRetry(step recipe.Step, scopePath string, runOnce func(attempt int, agentOverride string, errorContext *ErrorContext) (err error, preStepCommit string)) error {
+	expanded := recipe.ExpandStrategy(step.Retry.Strategy)
+	if len(expanded) == 0 {
+		expanded = []recipe.StrategyEntry{{Type: "same", Count: 1}}
+	}
+	maxAttempts := step.Retry.MaxAttempts
+	if maxAttempts <= 1 {
+		maxAttempts = 1
+	}
+	maxRetries := maxAttempts - 1
+
+	// First attempt: no override, no error context.
+	err, preCommit := runOnce(1, "", nil)
+	if err == nil {
+		e.emitStepCompletedFromLast()
+		return nil
+	}
+	// Capture error context from the last StepExecution (engine appended it on validation failure).
+	errorContext := e.lastValidationErrorContext()
+	if errorContext != nil {
+		errorContext.Attempt = 1
+	}
+
+	for retryIndex := 0; retryIndex < maxRetries; retryIndex++ {
+		idx := retryIndex
+		if idx >= len(expanded) {
+			idx = len(expanded) - 1
+		}
+		strategy := expanded[idx]
+		attempt := retryIndex + 2
+		strategyLabel := strategy.Type
+		if strategy.Agent != "" {
+			strategyLabel = strategy.Type + ": " + strategy.Agent
+		}
+		// Ledger records each retry so report can show retry rate per step and aggregate cost of retries.
+		if e.Cook.Ledger != nil {
+			_ = e.Cook.Ledger.Emit(ledger.RetryTriggered{Step: scopePath, Attempt: attempt, Strategy: strategyLabel, Scope: "step"})
+			e.retryTriggeredCount++
+		}
+		RetryTriggerLine(fmt.Sprintf("retry attempt %d/%d (%s)", attempt, maxAttempts, strategyLabel))
+
+		if strategy.Type == "replan" {
+			if err := e.Cook.ResetTo(preCommit); err != nil {
+				return fmt.Errorf("worktree reset before replan: %w", err)
+			}
+			RetryTriggerLine(fmt.Sprintf("replan (%s) — decomposing into sub-tasks", strategy.Agent))
+			if replanErr := e.ExecuteReplan(strategy.Agent, step, scopePath, errorContext); replanErr != nil {
+				if errorContext != nil {
+					errorContext.Error = e.lastValidationError()
+					errorContext.Diff = e.lastValidationDiff()
+				}
+				err = replanErr
+				continue
+			}
+			if e.Cook.Ledger != nil {
+				commit, _ := sandbox.HeadCommit(e.Cook.WorktreeDir)
+				_ = e.Cook.Ledger.Emit(ledger.StepCompleted{Step: scopePath, Status: "pass", DurationMs: 0, Artifacts: map[string]string{}, Commit: commit})
+				e.stepCompletedCount++
+				e.printCookTotal()
+			}
+			return nil
+		}
+
+		if err := e.Cook.ResetTo(preCommit); err != nil {
+			return fmt.Errorf("worktree reset before retry: %w", err)
+		}
+		if errorContext != nil {
+			errorContext.Attempt = attempt
+			errorContext.Strategy = strategyLabel
+		}
+
+		err, preCommit = runOnce(attempt, strategy.Agent, errorContext)
+		if err == nil {
+			e.emitStepCompletedFromLast()
+			return nil
+		}
+		if errorContext != nil {
+			errorContext.Error = e.lastValidationError()
+			errorContext.Diff = e.lastValidationDiff()
+		}
+	}
+
+	if e.Cook.Ledger != nil {
+		_ = e.Cook.Ledger.Emit(ledger.CircuitBreaker{
+			Step: scopePath, Scope: "step", Reason: "all attempts exhausted", TotalAttempts: maxAttempts,
+		})
+	}
+	e.emitStepCompletedFromLast()
+	fmt.Fprintf(os.Stderr, "        ✗ FATAL: all %d attempts exhausted\n", maxAttempts)
+	return fmt.Errorf("step %s: all %d attempts exhausted", step.Name, maxAttempts)
+}
+
+func (e *Engine) lastValidationErrorContext() *ErrorContext {
+	for i := len(e.Steps) - 1; i >= 0; i-- {
+		s := &e.Steps[i]
+		if s.ValidateError != "" || s.ValidateDiff != "" {
+			return &ErrorContext{Error: s.ValidateError, Diff: s.ValidateDiff}
+		}
+	}
+	return nil
+}
+
+func (e *Engine) lastValidationError() string {
+	for i := len(e.Steps) - 1; i >= 0; i-- {
+		if e.Steps[i].ValidateError != "" {
+			return e.Steps[i].ValidateError
+		}
+	}
+	return ""
+}
+
+func (e *Engine) lastValidationDiff() string {
+	for i := len(e.Steps) - 1; i >= 0; i-- {
+		if e.Steps[i].ValidateDiff != "" {
+			return e.Steps[i].ValidateDiff
+		}
+	}
+	return ""
+}
+
+// PreStepCommit returns the current worktree HEAD so a future retry can reset to it.
+func PreStepCommit(worktreeDir string) (string, error) {
+	return sandbox.HeadCommit(worktreeDir)
+}

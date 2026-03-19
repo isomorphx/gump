@@ -1,0 +1,61 @@
+package engine
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/isomorphx/pudding/internal/agent"
+	"github.com/isomorphx/pudding/internal/config"
+	"github.com/isomorphx/pudding/internal/cook"
+	"github.com/isomorphx/pudding/internal/recipe"
+	"github.com/isomorphx/pudding/internal/validate"
+)
+
+func TestNew(t *testing.T) {
+	c := &cook.Cook{ID: "test"}
+	rec := &recipe.Recipe{Name: "r", Steps: []recipe.Step{}}
+	cfg := &config.Config{}
+	e := New(c, rec, &agent.StubResolver{Stub: &agent.StubAdapter{}}, cfg, "spec content")
+	if e.Cook != c || e.Recipe != rec || e.SpecContent != "spec content" {
+		t.Errorf("New: fields not set %+v", e)
+	}
+}
+
+func TestStepStatus_Constants(t *testing.T) {
+	if StepPending != "pending" || StepRunning != "running" || StepPass != "pass" || StepFatal != "fatal" {
+		t.Error("StepStatus constants wrong")
+	}
+}
+
+func TestStepExecution_ZeroValue(t *testing.T) {
+	var se StepExecution
+	if se.Attempt != 0 {
+		t.Error("Attempt should be 0")
+	}
+	// StartedAt/FinishedAt are zero value time - no need to assert
+	_ = time.Now()
+}
+
+// T6: Validation summary with skips shows "N validators passed, M skipped"
+func TestFormatValidationPassSummary_WithSkips(t *testing.T) {
+	vr := &validate.ValidationResult{
+		Pass: true,
+		Results: []validate.SingleResult{
+			{Validator: "compile", Pass: true},
+			{Validator: "test", Pass: true},
+			{Validator: "lint (skipped)", Pass: true, Skipped: true},
+		},
+	}
+	passed, skipped := countValidationPassedSkipped(vr)
+	if passed != 2 || skipped != 1 {
+		t.Errorf("countValidationPassedSkipped: got passed=%d skipped=%d, want 2, 1", passed, skipped)
+	}
+	summary := formatValidationPassSummary(passed, skipped)
+	if !strings.Contains(summary, "2 validators passed") || !strings.Contains(summary, "1 skipped") {
+		t.Errorf("summary should contain '2 validators passed' and '1 skipped': got %q", summary)
+	}
+	if strings.Contains(summary, "failed") {
+		t.Error("summary should not contain 'failed'")
+	}
+}

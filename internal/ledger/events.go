@@ -1,0 +1,190 @@
+package ledger
+
+// Event is the common interface for all ledger events. Emit adds ts and type from EventType().
+type Event interface {
+	EventType() string
+}
+
+// CookStarted is emitted at the very start of a cook so the ledger has full run context.
+type CookStarted struct {
+	CookID    string            `json:"cook_id"`
+	Recipe    string            `json:"recipe"`
+	Spec      string            `json:"spec"`
+	Commit    string            `json:"commit"`
+	Branch    string            `json:"branch"`
+	AgentsCLI map[string]string `json:"agents_cli"`
+}
+
+func (CookStarted) EventType() string { return "cook_started" }
+
+// StepStarted marks the beginning of one step attempt; used for timing and retry counts.
+type StepStarted struct {
+	Step       string `json:"step"`
+	Agent      string `json:"agent"`
+	OutputMode string `json:"output_mode"`
+	Task       string `json:"task"`
+	Attempt    int    `json:"attempt"`
+}
+
+func (StepStarted) EventType() string { return "step_started" }
+
+// GroupStarted marks the beginning of a composite group (with optional foreach).
+type GroupStarted struct {
+	Step      string `json:"step"`
+	Foreach   string `json:"foreach"`
+	Parallel  bool   `json:"parallel"`
+	TaskCount int    `json:"task_count"`
+}
+
+func (GroupStarted) EventType() string { return "group_started" }
+
+// AgentLaunched is emitted after the agent process starts so we can correlate CLI and prompt.
+type AgentLaunched struct {
+	Step          string `json:"step"`
+	CLI           string `json:"cli"`
+	Worktree      string `json:"worktree"`
+	Agent         string `json:"agent"`
+	SessionID     string `json:"session_id"`
+	SessionSource string `json:"session_source"`
+	PromptHash    string `json:"prompt_hash"`
+}
+
+func (AgentLaunched) EventType() string { return "agent_launched" }
+
+// AgentCompleted is emitted after Wait(); artifacts must already be written (invariant).
+type AgentCompleted struct {
+	Step       string            `json:"step"`
+	ExitCode   int               `json:"exit_code"`
+	DurationMs int               `json:"duration_ms"`
+	TokensIn   int               `json:"tokens_in"`
+	TokensOut  int               `json:"tokens_out"`
+	CostUSD    float64           `json:"cost_usd"`
+	SessionID  string            `json:"session_id"`
+	IsError    bool              `json:"is_error"`
+	Artifacts  map[string]string `json:"artifacts"`
+}
+
+func (AgentCompleted) EventType() string { return "agent_completed" }
+
+// StateBagUpdated is emitted after each Set so report can show which outputs were stored.
+type StateBagUpdated struct {
+	Key      string `json:"key"`
+	Artifact string `json:"artifact"`
+}
+
+func (StateBagUpdated) EventType() string { return "state_bag_updated" }
+
+// StateBagScopeReset is emitted when a group retry resets scope (keys moved to prev).
+type StateBagScopeReset struct {
+	Group string   `json:"group"`
+	Keys  []string `json:"keys"`
+}
+
+func (StateBagScopeReset) EventType() string { return "state_bag_scope_reset" }
+
+// ValidationStarted is emitted before running validators so we know what was evaluated.
+type ValidationStarted struct {
+	Step       string   `json:"step"`
+	Validators []string `json:"validators"`
+}
+
+func (ValidationStarted) EventType() string { return "validation_started" }
+
+// ValidationPassed is emitted when all validators pass; artifact path must already exist.
+type ValidationPassed struct {
+	Step     string `json:"step"`
+	Artifact string `json:"artifact"`
+}
+
+func (ValidationPassed) EventType() string { return "validation_passed" }
+
+// ValidationFailed is emitted when at least one validator fails; reason is first stderr line.
+type ValidationFailed struct {
+	Step     string `json:"step"`
+	Reason   string `json:"reason"`
+	Artifact string `json:"artifact"`
+}
+
+func (ValidationFailed) EventType() string { return "validation_failed" }
+
+// RetryTriggered is emitted when the retry engine decides to retry (before worktree reset).
+type RetryTriggered struct {
+	Step     string `json:"step"`
+	Attempt  int    `json:"attempt"`
+	Strategy string `json:"strategy"`
+	Scope    string `json:"scope"`
+}
+
+func (RetryTriggered) EventType() string { return "retry_triggered" }
+
+// ReplanTriggered is emitted when replan produces a valid plan (artifact path must exist).
+type ReplanTriggered struct {
+	Step     string `json:"step"`
+	Agent    string `json:"agent"`
+	Artifact string `json:"artifact"`
+}
+
+func (ReplanTriggered) EventType() string { return "replan_triggered" }
+
+// StepCompleted is emitted at the end of a step (pass or fatal); artifacts already written.
+// Commit is the worktree HEAD after this step (for replay: restore worktree from this commit before next step).
+type StepCompleted struct {
+	Step       string            `json:"step"`
+	Status     string            `json:"status"`
+	DurationMs int               `json:"duration_ms"`
+	Artifacts  map[string]string `json:"artifacts"`
+	Commit     string            `json:"commit,omitempty"`
+}
+
+func (StepCompleted) EventType() string { return "step_completed" }
+
+// ReplayStarted is emitted at the start of a replay run; references the original fatal cook.
+type ReplayStarted struct {
+	OriginalCookID string `json:"original_cook_id"`
+	FromStep       string `json:"from_step"`
+	RestoredCommit string `json:"restored_commit"`
+}
+
+func (ReplayStarted) EventType() string { return "replay_started" }
+
+// GroupCompleted is emitted at the end of a composite group.
+type GroupCompleted struct {
+	Step       string `json:"step"`
+	Status     string `json:"status"`
+	Iterations int    `json:"iterations"`
+	Attempts   int    `json:"attempts"`
+	DurationMs int    `json:"duration_ms"`
+}
+
+func (GroupCompleted) EventType() string { return "group_completed" }
+
+// GroupRetry is emitted at the start of a group retry (after worktree reset, before re-run).
+type GroupRetry struct {
+	Step     string `json:"step"`
+	Attempt  int    `json:"attempt"`
+	Strategy string `json:"strategy"`
+}
+
+func (GroupRetry) EventType() string { return "group_retry" }
+
+// CircuitBreaker is emitted when all retries are exhausted and the step is marked fatal.
+type CircuitBreaker struct {
+	Step          string `json:"step"`
+	Scope         string `json:"scope"`
+	Reason        string `json:"reason"`
+	TotalAttempts int   `json:"total_attempts"`
+}
+
+func (CircuitBreaker) EventType() string { return "circuit_breaker" }
+
+// CookCompleted is emitted at the very end of Run(); state-bag and final-diff must already be written.
+type CookCompleted struct {
+	Status       string            `json:"status"`
+	DurationMs   int               `json:"duration_ms"`
+	TotalCostUSD float64           `json:"total_cost_usd"`
+	Steps        int               `json:"steps"`
+	Retries      int               `json:"retries"`
+	Artifacts    map[string]string `json:"artifacts"`
+}
+
+func (CookCompleted) EventType() string { return "cook_completed" }

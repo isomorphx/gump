@@ -1,0 +1,54 @@
+name: tdd
+description: Test-Driven Development workflow
+
+steps:
+  - name: decompose
+    agent: claude-opus
+    output: plan
+    prompt: |
+      Analyze this spec and the codebase. Decompose into independent tasks.
+      For each task, list the files that will be affected (blast radius).
+    validate:
+      - schema: plan
+
+  - name: implement
+    foreach: decompose
+    session: reuse
+    steps:
+      - name: red
+        agent: claude-haiku
+        prompt: |
+          Write failing tests for: {task.description}
+          Only create/modify test files in: {task.files}
+        validate:
+          - compile
+          - touched: "*_test.*"
+          - tests_found
+        retry:
+          max_attempts: 2
+          strategy:
+            - same
+            - escalate: claude-sonnet
+
+      - name: green
+        agent: claude-haiku
+        prompt: |
+          Implement code to make all tests pass.
+          Only modify implementation files in: {task.files}
+          Do NOT modify any test files.
+        validate:
+          - compile
+          - test
+          - untouched: "*_test.*"
+        retry:
+          max_attempts: 3
+          strategy:
+            - same
+            - escalate: claude-sonnet
+            - replan: claude-opus
+
+  - name: final-check
+    validate:
+      - compile
+      - lint
+      - test

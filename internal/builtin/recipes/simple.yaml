@@ -1,0 +1,23 @@
+name: simple
+description: Single-step implementation
+
+steps:
+  - name: decompose
+    agent: claude-sonnet
+    output: plan
+    prompt: "{spec}"
+    validate:
+      - schema: plan
+
+  - name: implement
+    foreach: decompose
+    steps:
+      - name: code
+        agent: claude-haiku
+        prompt: "Implement: {task.description}. Files: {task.files}"
+        validate:
+          - compile
+
+  - name: final-check
+    validate:
+      - compile
