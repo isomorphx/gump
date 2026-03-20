@@ -19,6 +19,7 @@ func Load() (*Config, *Source, error) {
 	cfg := &Config{
 		DefaultAgent: "claude-sonnet",
 		LogLevel:     "info",
+		UpdateCheck: true,
 	}
 	src := &Source{
 		DefaultAgent: "default",
@@ -69,6 +70,10 @@ func findProjectConfig(dir string) string {
 type fileConfig struct {
 	DefaultAgent string `toml:"default_agent"`
 	LogLevel     string `toml:"log_level"`
+	Update       struct {
+		// Pointer lets us detect "not set" vs "set to false/true".
+		Check *bool `toml:"check"`
+	} `toml:"update"`
 	Validation   struct {
 		CompileCmd  string `toml:"compile_cmd"`
 		TestCmd     string `toml:"test_cmd"`
@@ -93,6 +98,11 @@ func applyFile(cfg *Config, src *Source, path, label string) {
 	if f.LogLevel != "" {
 		cfg.LogLevel = f.LogLevel
 		src.LogLevel = label
+	}
+	// Spec semantics: if any source says `check = false`, disable update checking.
+	// This is NOT a priority/cascade; it is an OR on "false means disabled".
+	if f.Update.Check != nil && !*f.Update.Check {
+		cfg.UpdateCheck = false
 	}
 	if f.Validation.CompileCmd != "" {
 		cfg.CompileCmd = f.Validation.CompileCmd
@@ -120,6 +130,10 @@ func applyEnv(cfg *Config, src *Source) {
 	if v := os.Getenv("PUDDING_LOG_LEVEL"); v != "" {
 		cfg.LogLevel = v
 		src.LogLevel = "env"
+	}
+	// Any non-empty value disables the update check.
+	if v := os.Getenv("PUDDING_NO_UPDATE_CHECK"); v != "" {
+		cfg.UpdateCheck = false
 	}
 }
 

@@ -37,6 +37,8 @@ func envWithout(env []string, keys ...string) []string {
 
 var (
 	binaryPath string
+	binaryPathV99 string
+	binaryPathV001 string
 	stubBinDir string // PATH prefix so pudding runs stub qwen/opencode instead of real CLIs
 )
 
@@ -47,12 +49,30 @@ func TestMain(m *testing.M) {
 	}
 	defer os.RemoveAll(dir)
 	binaryPath = filepath.Join(dir, "pudding")
+	binaryPathV99 = filepath.Join(dir, "pudding-v99")
+	binaryPathV001 = filepath.Join(dir, "pudding-v0-0-1")
 	modRoot := findModuleRoot()
 	cmd := exec.Command("go", "build", "-o", binaryPath, ".")
 	cmd.Dir = modRoot
 	if out, err := cmd.CombinedOutput(); err != nil {
 		panic("go build: " + err.Error() + "\n" + string(out))
 	}
+
+	// Build ldflags variants so update-check tests can run deterministically
+	// without relying on networked GitHub releases.
+	ldflagsV99 := "-X github.com/isomorphx/pudding/internal/version.Version=v99.88.77 -X github.com/isomorphx/pudding/internal/version.Commit=abc1234 -X github.com/isomorphx/pudding/internal/version.BuildDate=2026-03-15"
+	cmd = exec.Command("go", "build", "-o", binaryPathV99, "-ldflags", ldflagsV99, ".")
+	cmd.Dir = modRoot
+	if outB, err := cmd.CombinedOutput(); err != nil {
+		panic("go build ldflags v99: " + err.Error() + "\n" + string(outB))
+	}
+	ldflagsV001 := "-X github.com/isomorphx/pudding/internal/version.Version=v0.0.1 -X github.com/isomorphx/pudding/internal/version.Commit=abc1234 -X github.com/isomorphx/pudding/internal/version.BuildDate=2026-03-15"
+	cmd = exec.Command("go", "build", "-o", binaryPathV001, "-ldflags", ldflagsV001, ".")
+	cmd.Dir = modRoot
+	if outB, err := cmd.CombinedOutput(); err != nil {
+		panic("go build ldflags v0.0.1: " + err.Error() + "\n" + string(outB))
+	}
+
 	stubBinDir, err = buildStubBinaries(modRoot)
 	if err != nil {
 		panic("build stub binaries: " + err.Error())
@@ -340,7 +360,8 @@ func TestVersion(t *testing.T) {
 	if code != 0 {
 		t.Errorf("exit code %d", code)
 	}
-	if !strings.Contains(stdout, "pudding") || !strings.Contains(stdout, "v0.1.0") {
+	// WHY: Without ldflags, we expect the "dev" build format defined by internal/version.
+	if !strings.Contains(stdout, "pudding") || !strings.Contains(stdout, "dev") {
 		t.Errorf("stdout %q", stdout)
 	}
 }

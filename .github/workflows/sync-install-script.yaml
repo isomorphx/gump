@@ -1,0 +1,24 @@
+name: Sync install script
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Push install.sh to site repo
+        uses: dmnemec/copy_file_to_another_repo_action@main
+        env:
+          API_TOKEN_GITHUB: ${{ secrets.WEB_REPO_TOKEN }}
+        with:
+          source_file: install.sh
+          destination_repo: isomorphx/pudding-web
+          destination_folder: public/
+          user_email: ci@pudding.build
+          user_name: pudding-ci
+          commit_message: "chore: sync install.sh from release ${{ github.ref_name }}"
+
