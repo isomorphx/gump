@@ -21,7 +21,7 @@ jobs:
           source_file: install.sh
           destination_repo: isomorphx/pudding-web
           destination_folder: public/
-          user_email: ci@pudding.build
-          user_name: pudding-ci
+          user_email: "41898282+github-actions[bot]@users.noreply.github.com"
+          user_name: "github-actions[bot]"
           commit_message: "chore: sync install.sh from release ${{ github.ref_name }}"
 
