@@ -3667,7 +3667,7 @@ func TestStep7L4_IndexAlimented(t *testing.T) {
 	}
 }
 
-// TestStep7L5_LedgerCapturesRetries verifies retry_triggered and validation_failed/passed appear when retries occur.
+// TestStep7L5_LedgerCapturesRetries verifies retry_triggered and gate_failed/passed appear when retries occur.
 func TestStep7L5_LedgerCapturesRetries(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "TDD")
@@ -3688,11 +3688,11 @@ func TestStep7L5_LedgerCapturesRetries(t *testing.T) {
 	if !strings.Contains(content, "retry_triggered") {
 		t.Error("manifest should contain retry_triggered when a step retries")
 	}
-	if !strings.Contains(content, "validation_failed") {
-		t.Error("manifest should contain validation_failed")
+	if !strings.Contains(content, "gate_failed") {
+		t.Error("manifest should contain gate_failed")
 	}
-	if !strings.Contains(content, "validation_passed") {
-		t.Error("manifest should contain validation_passed")
+	if !strings.Contains(content, "gate_passed") {
+		t.Error("manifest should contain gate_passed")
 	}
 	if code == 0 {
 		var cookCompleted map[string]interface{}

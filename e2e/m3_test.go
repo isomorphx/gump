@@ -97,11 +97,11 @@ steps:
 	if !strings.Contains(manifest, "retry_triggered") {
 		t.Error("ledger should contain retry_triggered")
 	}
-	if !strings.Contains(manifest, "validation_failed") {
-		t.Error("ledger should contain validation_failed")
+	if !strings.Contains(manifest, "gate_failed") {
+		t.Error("ledger should contain gate_failed")
 	}
-	if !strings.Contains(manifest, "validation_passed") {
-		t.Error("ledger should contain validation_passed")
+	if !strings.Contains(manifest, "gate_passed") {
+		t.Error("ledger should contain gate_passed")
 	}
 }
 

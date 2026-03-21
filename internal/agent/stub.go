@@ -132,7 +132,6 @@ func (s *StubAdapter) run(ctx context.Context, worktree, prompt, agentName strin
 	s.lastResultByProc[proc] = nil
 	s.mu.Unlock()
 
-	tee := io.MultiWriter(pw, stdoutFile)
 	go func() {
 		defer pw.Close()
 		defer stdoutFile.Close()
@@ -198,17 +197,20 @@ func (s *StubAdapter) run(ctx context.Context, worktree, prompt, agentName strin
 			}
 		}
 
-		writeLine(tee, `{"type":"system","subtype":"init","session_id":"`+stubSid+`"}`)
-		writeLine(tee, `{"type":"assistant","message":{"content":[{"type":"text","text":"stub done"}]}}`)
+		writeLineObserved(pw, stdoutFile, `{"type":"system","subtype":"init","session_id":"`+stubSid+`"}`)
+		writeLineObserved(pw, stdoutFile, `{"type":"assistant","message":{"content":[{"type":"text","text":"stub done"}]}}`)
 		result := fmt.Sprintf(`{"type":"result","session_id":"%s","is_error":false,"duration_ms":0,"duration_api_ms":0,"num_turns":1,"result":"ok","usage":{},"total_cost_usd":%g}`, stubSid, costUSD)
-		writeLine(tee, result)
+		writeLineObserved(pw, stdoutFile, result)
 	}()
 
 	return proc, nil
 }
 
-func writeLine(w io.Writer, line string) {
-	_, _ = w.Write([]byte(line + "\n"))
+// writeLineObserved mirrors process.Start: raw NDJSON to the stream reader, timestamp-prefixed lines to the artefact file.
+func writeLineObserved(stream io.Writer, stdoutFile *os.File, line string) {
+	ts := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+	fmt.Fprintf(stdoutFile, "%s %s\n", ts, line)
+	_, _ = stream.Write([]byte(line + "\n"))
 }
 
 func isReplanSubTaskContext(worktree string) bool {

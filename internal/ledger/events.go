@@ -13,17 +13,19 @@ type CookStarted struct {
 	Commit    string            `json:"commit"`
 	Branch    string            `json:"branch"`
 	AgentsCLI map[string]string `json:"agents_cli"`
+	MaxBudget float64           `json:"max_budget,omitempty"`
 }
 
 func (CookStarted) EventType() string { return "cook_started" }
 
 // StepStarted marks the beginning of one step attempt; used for timing and retry counts.
 type StepStarted struct {
-	Step       string `json:"step"`
-	Agent      string `json:"agent"`
-	OutputMode string `json:"output_mode"`
-	Task       string `json:"task"`
-	Attempt    int    `json:"attempt"`
+	Step        string `json:"step"`
+	Agent       string `json:"agent"`
+	OutputMode  string `json:"output_mode"`
+	Item        string `json:"item"`
+	Attempt     int    `json:"attempt"`
+	SessionMode string `json:"session_mode"`
 }
 
 func (StepStarted) EventType() string { return "step_started" }
@@ -82,30 +84,55 @@ type StateBagScopeReset struct {
 
 func (StateBagScopeReset) EventType() string { return "state_bag_scope_reset" }
 
-// ValidationStarted is emitted before running validators so we know what was evaluated.
-type ValidationStarted struct {
-	Step       string   `json:"step"`
-	Validators []string `json:"validators"`
+// GateStarted is emitted before running gate checks so audits know what was evaluated.
+type GateStarted struct {
+	Step   string   `json:"step"`
+	Checks []string `json:"checks"`
 }
 
-func (ValidationStarted) EventType() string { return "validation_started" }
+func (GateStarted) EventType() string { return "gate_started" }
 
-// ValidationPassed is emitted when all validators pass; artifact path must already exist.
-type ValidationPassed struct {
+// GatePassed is emitted when all gate checks pass; artifact path must already exist.
+type GatePassed struct {
 	Step     string `json:"step"`
 	Artifact string `json:"artifact"`
 }
 
-func (ValidationPassed) EventType() string { return "validation_passed" }
+func (GatePassed) EventType() string { return "gate_passed" }
 
-// ValidationFailed is emitted when at least one validator fails; reason is first stderr line.
-type ValidationFailed struct {
+// GateFailed is emitted when at least one gate check fails; reason is first stderr line.
+type GateFailed struct {
 	Step     string `json:"step"`
 	Reason   string `json:"reason"`
 	Artifact string `json:"artifact"`
 }
 
-func (ValidationFailed) EventType() string { return "validation_failed" }
+func (GateFailed) EventType() string { return "gate_failed" }
+
+// HITLPaused is emitted when the cook blocks for human review before continuing.
+type HITLPaused struct {
+	Step string `json:"step"`
+}
+
+func (HITLPaused) EventType() string { return "hitl_paused" }
+
+// HITLResumed is emitted after the operator continues or aborts a HITL pause.
+type HITLResumed struct {
+	Step   string `json:"step"`
+	Action string `json:"action"`
+}
+
+func (HITLResumed) EventType() string { return "hitl_resumed" }
+
+// BudgetExceeded is emitted when spend crosses a configured limit so the ledger shows why the run stopped.
+type BudgetExceeded struct {
+	Step     string  `json:"step"`
+	Scope    string  `json:"scope"`
+	MaxUSD   float64 `json:"max_usd"`
+	SpentUSD float64 `json:"spent_usd"`
+}
+
+func (BudgetExceeded) EventType() string { return "budget_exceeded" }
 
 // RetryTriggered is emitted when the retry engine decides to retry (before worktree reset).
 type RetryTriggered struct {

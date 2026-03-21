@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -14,7 +16,8 @@ const (
 	KillGrace = 5 * time.Second
 )
 
-// Start builds stdout/stderr pipes, tees stdout to the artefact file, starts the command in dir, and returns a Process.
+// Start builds stdout/stderr pipes, records each stdout line with an observation timestamp to the artefact file,
+// exposes a pipe of raw lines to the caller for streaming, starts the command in dir, and returns a Process.
 // Caller must call Wait(process) and may attach a timeout via WithTimeout(process, timeout).
 func Start(ctx context.Context, cmd *exec.Cmd, dir, stdoutPath, stderrPath string) (*Process, error) {
 	cmd.Dir = dir
@@ -38,18 +41,43 @@ func Start(ctx context.Context, cmd *exec.Cmd, dir, stdoutPath, stderrPath strin
 		return nil, err
 	}
 
-	stdoutReader := io.TeeReader(stdoutPipe, stdoutFile)
+	stdoutReader, stdoutWriter := io.Pipe()
 	stderrReader := io.TeeReader(stderrPipe, stderrFile)
 
 	if err := cmd.Start(); err != nil {
 		stdoutFile.Close()
 		stderrFile.Close()
+		stdoutReader.Close()
+		_ = stdoutPipe.Close()
 		return nil, err
 	}
 
+	go func() {
+		defer stdoutWriter.Close()
+		defer stdoutFile.Close()
+		r := bufio.NewReader(stdoutPipe)
+		for {
+			line, err := r.ReadBytes('\n')
+			if len(line) > 0 && line[len(line)-1] == '\n' {
+				line = line[:len(line)-1]
+			}
+			if len(line) > 0 {
+				// WHY: ledger consumers need when Pudding observed each line, distinct from provider timestamps.
+				ts := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+				fmt.Fprintf(stdoutFile, "%s %s\n", ts, line)
+				if _, werr := stdoutWriter.Write(append(append([]byte{}, line...), '\n')); werr != nil {
+					break
+				}
+			}
+			if err != nil {
+				break
+			}
+		}
+	}()
+
 	proc := &Process{
 		Cmd:        cmd,
-		Stdout:     &readCloserWithFile{Reader: stdoutReader, file: stdoutFile},
+		Stdout:     stdoutReader,
 		Stderr:     &readCloserWithFile{Reader: stderrReader, file: stderrFile},
 		StdoutFile: stdoutPath,
 		StderrFile: stderrPath,

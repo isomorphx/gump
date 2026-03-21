@@ -30,6 +30,31 @@ func init() {
 	rootCmd.AddCommand(reportCmd)
 }
 
+// normalizeManifestEvent maps pre-v4 ledger field names so report stays compatible with older manifests (M5 parsing contract).
+func normalizeManifestEvent(ev map[string]interface{}) {
+	t, _ := ev["type"].(string)
+	switch t {
+	case "validation_started":
+		ev["type"] = "gate_started"
+		if v, ok := ev["validators"]; ok {
+			if _, has := ev["checks"]; !has {
+				ev["checks"] = v
+			}
+		}
+	case "validation_passed":
+		ev["type"] = "gate_passed"
+	case "validation_failed":
+		ev["type"] = "gate_failed"
+	}
+	if t2, _ := ev["type"].(string); t2 == "step_started" {
+		if task, ok := ev["task"].(string); ok {
+			if _, has := ev["item"]; !has {
+				ev["item"] = task
+			}
+		}
+	}
+}
+
 func runReport(cmd *cobra.Command, args []string) error {
 	_, _, err := config.Load()
 	if err != nil {
@@ -96,6 +121,7 @@ func reportOne(cooksDir, cookID string) error {
 		if json.Unmarshal(line, &ev) != nil {
 			continue
 		}
+		normalizeManifestEvent(ev)
 		t, _ := ev["type"].(string)
 		switch t {
 		case "cook_started":
@@ -156,7 +182,7 @@ func reportOne(cooksDir, cookID string) error {
 		if agent != "" {
 			line += "  " + agent
 		} else {
-			line += "  (validation)"
+			line += "  (gate)"
 		}
 		if retriesN > 0 {
 			line += fmt.Sprintf("  (%d retries)", retriesN)
@@ -243,6 +269,7 @@ func reportAggregate(repoRoot string, cookIDs []string) error {
 			if json.Unmarshal(sc.Bytes(), &ev) != nil {
 				continue
 			}
+			normalizeManifestEvent(ev)
 			t, _ := ev["type"].(string)
 			switch t {
 			case "step_started":
@@ -256,7 +283,7 @@ func reportAggregate(repoRoot string, cookIDs []string) error {
 				st, _ := ev["status"].(string)
 				agent := lastAgent[step]
 				if agent == "" {
-					agent = "(validation)"
+					agent = "(gate)"
 				}
 				key := step + " × " + agent
 				if byStepAgent[key] == nil {
@@ -308,6 +335,7 @@ func uniqueAgentsFromManifest(manifestData []byte) []string {
 		if json.Unmarshal(sc.Bytes(), &ev) != nil {
 			continue
 		}
+		normalizeManifestEvent(ev)
 		if ev["type"] == "step_started" {
 			if a, ok := ev["agent"].(string); ok && a != "" {
 				seen[a] = struct{}{}

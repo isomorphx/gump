@@ -905,6 +905,61 @@ func TestSmokeDXStreaming(t *testing.T) {
 	}
 }
 
+// TestSmokeLedgerV4Events checks gate naming, session_mode, and observed_at-prefixed stdout lines on a live cook.
+func TestSmokeLedgerV4Events(t *testing.T) {
+	requireAgent(t, "claude")
+	dir := setupSmokeRepo(t)
+	writeSpec(t, dir, specAdd)
+	stdout, _, code := runPudding(t, dir, "cook", "spec.md", "--recipe", "freeform", "--agent", "claude-haiku")
+	if code != 0 {
+		t.Fatalf("cook exit %d: %s", code, stdout)
+	}
+	ledger := readLedger(t, dir)
+	var hasGate bool
+	var hasSessionMode bool
+	for _, ev := range ledger {
+		typ, _ := ev["type"].(string)
+		if typ == "gate_started" || typ == "gate_passed" {
+			hasGate = true
+		}
+		if typ == "step_started" {
+			if _, ok := ev["session_mode"]; ok {
+				hasSessionMode = true
+			}
+		}
+	}
+	if !hasGate {
+		t.Error("ledger should contain gate_* events")
+	}
+	if !hasSessionMode {
+		t.Error("step_started should include session_mode")
+	}
+	cookDir := latestCookDir(t, dir)
+	matches, _ := filepath.Glob(filepath.Join(cookDir, "artifacts", "*-stdout.log"))
+	if len(matches) == 0 {
+		t.Fatal("expected *-stdout.log in cook artifacts")
+	}
+	lineRe := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z `)
+	for _, p := range matches {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+			if line == "" {
+				continue
+			}
+			if !lineRe.MatchString(line) {
+				snippet := line
+				if len(snippet) > 80 {
+					snippet = snippet[:80]
+				}
+				t.Errorf("stdout line missing observed_at prefix: %q", snippet)
+			}
+		}
+	}
+}
+
 func execLookPath(name string) (string, error) {
 	return exec.LookPath(name)
 }

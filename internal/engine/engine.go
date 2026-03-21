@@ -104,6 +104,7 @@ func (e *Engine) Run() error {
 			Commit:    e.Cook.InitialCommit,
 			Branch:    e.Cook.OrigBranch,
 			AgentsCLI: e.AgentsCLI,
+			MaxBudget: e.Recipe.MaxBudget,
 		})
 		if e.FromStep != "" && e.replayOriginalCookID != "" {
 			_ = e.Cook.Ledger.Emit(ledger.ReplayStarted{
@@ -301,16 +302,16 @@ func (e *Engine) executeSteps(steps []recipe.Step, taskContext *plan.Task, pathP
 			StepHeader(e.stepRunIndex, e.stepTotalEstimate, stepPath, "validate", taskInfo, "", "")
 			startedAt := time.Now()
 			if e.Cook.Ledger != nil {
-				validators := make([]string, 0, len(step.Gate))
+				checks := make([]string, 0, len(step.Gate))
 				for _, v := range step.Gate {
 					if v.Arg != "" {
-						validators = append(validators, v.Type+":"+v.Arg)
+						checks = append(checks, v.Type+":"+v.Arg)
 					} else {
-						validators = append(validators, v.Type)
+						checks = append(checks, v.Type)
 					}
 				}
-				_ = e.Cook.Ledger.Emit(ledger.StepStarted{Step: stepPath, Agent: "", OutputMode: "", Task: taskContextName(taskContext), Attempt: 1})
-				_ = e.Cook.Ledger.Emit(ledger.ValidationStarted{Step: stepPath, Validators: validators})
+				_ = e.Cook.Ledger.Emit(ledger.StepStarted{Step: stepPath, Agent: "", OutputMode: "", Item: taskContextName(taskContext), Attempt: 1, SessionMode: sessionModeForLedger(&step, parentSession)})
+				_ = e.Cook.Ledger.Emit(ledger.GateStarted{Step: stepPath, Checks: checks})
 			}
 			dc, err := e.Cook.FinalDiff()
 			if err != nil {
@@ -327,7 +328,7 @@ func (e *Engine) executeSteps(steps []recipe.Step, taskContext *plan.Task, pathP
 			validationArtifactRel := filepath.Join("artifacts", ledger.ArtifactName(stepPath, 1, "validation", "json"))
 			if vr.Pass {
 				if e.Cook.Ledger != nil {
-					_ = e.Cook.Ledger.Emit(ledger.ValidationPassed{Step: stepPath, Artifact: validationArtifactRel})
+					_ = e.Cook.Ledger.Emit(ledger.GatePassed{Step: stepPath, Artifact: validationArtifactRel})
 					artifacts := map[string]string{"validation": validationArtifactRel}
 					commit, _ := sandbox.HeadCommit(e.Cook.WorktreeDir)
 					_ = e.Cook.Ledger.Emit(ledger.StepCompleted{Step: stepPath, Status: "pass", DurationMs: int(time.Since(startedAt).Milliseconds()), Artifacts: artifacts, Commit: commit})
@@ -371,7 +372,7 @@ func (e *Engine) executeSteps(steps []recipe.Step, taskContext *plan.Task, pathP
 						break
 					}
 				}
-				_ = e.Cook.Ledger.Emit(ledger.ValidationFailed{Step: stepPath, Reason: reason, Artifact: validationArtifactRel})
+				_ = e.Cook.Ledger.Emit(ledger.GateFailed{Step: stepPath, Reason: reason, Artifact: validationArtifactRel})
 				artifacts := map[string]string{"validation": validationArtifactRel}
 				commit, _ := sandbox.HeadCommit(e.Cook.WorktreeDir)
 				_ = e.Cook.Ledger.Emit(ledger.StepCompleted{Step: stepPath, Status: "fatal", DurationMs: int(time.Since(startedAt).Milliseconds()), Artifacts: artifacts, Commit: commit})
@@ -451,6 +452,18 @@ func taskContextName(t *plan.Task) string {
 		return ""
 	}
 	return t.Name
+}
+
+// sessionModeForLedger records the effective session strategy for white-glass tracing; v4 defaults to fresh when unset.
+func sessionModeForLedger(step *recipe.Step, parentSession recipe.SessionConfig) string {
+	eff := step.Session
+	if eff.Mode == "" {
+		eff = parentSession
+	}
+	if eff.Mode == "" {
+		return "fresh"
+	}
+	return eff.Mode
 }
 
 func (e *Engine) runAtomicStep(step *recipe.Step, stepPath string, taskContext *plan.Task, lastSessionByAgent map[string]string, parentSession recipe.SessionConfig, groupAgentOverride string) error {
@@ -639,7 +652,8 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 	}
 	if e.Cook.Ledger != nil {
 		_ = e.Cook.Ledger.Emit(ledger.StepStarted{
-			Step: stepPath, Agent: agentToUse, OutputMode: outputMode, Task: taskName, Attempt: attempt,
+			Step: stepPath, Agent: agentToUse, OutputMode: outputMode, Item: taskName, Attempt: attempt,
+			SessionMode: sessionModeForLedger(step, parentSession),
 		})
 		if agentToUse != "" {
 			e.agentsUsed[agentToUse] = struct{}{}
@@ -737,6 +751,10 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 			fmt.Fprintln(os.Stderr, w)
 		}
 		if err := e.budgetTracker.AddCost(stepPath, result.CostUSD); err != nil {
+			var be *BudgetExceededError
+			if errors.As(err, &be) && e.Cook.Ledger != nil {
+				_ = e.Cook.Ledger.Emit(be.Event)
+			}
 			exec.Status = StepFatal
 			exec.FinishedAt = time.Now()
 			e.Steps = append(e.Steps, exec)
@@ -910,7 +928,8 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 	}
 	e.StateBag.Set(stepPath, outputValue, dc.Patch, filesForBag, result.SessionID)
 	if e.Cook.Ledger != nil {
-		key := stepPath + ".output"
+		filesJoined := strings.Join(filesForBag, ", ")
+		keyOut := stepPath + ".output"
 		artifactRel := ""
 		if len(outputValue) >= 1024 {
 			name := ledger.ArtifactName(stepPath, attempt, "output", "json")
@@ -921,7 +940,18 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 				artifactRel = rel
 			}
 		}
-		_ = e.Cook.Ledger.Emit(ledger.StateBagUpdated{Key: key, Artifact: artifactRel})
+		_ = e.Cook.Ledger.Emit(ledger.StateBagUpdated{Key: keyOut, Artifact: artifactRel})
+		keyFiles := stepPath + ".files"
+		artifactFiles := ""
+		if len(filesJoined) >= 1024 {
+			name := ledger.ArtifactName(stepPath, attempt, "files", "txt")
+			if rel, _ := e.Cook.Ledger.WriteArtifact(name, []byte(filesJoined)); rel != "" {
+				artifactFiles = rel
+			}
+		}
+		_ = e.Cook.Ledger.Emit(ledger.StateBagUpdated{Key: keyFiles, Artifact: artifactFiles})
+		// WHY: session threads must be auditable alongside output and file lists without a new event type.
+		_ = e.Cook.Ledger.Emit(ledger.StateBagUpdated{Key: stepPath + ".session_id", Artifact: ""})
 	}
 
 	// Enforce task.files blast radius so agents don't modify files outside the planned scope (retry gets {error} injected).
@@ -930,7 +960,7 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 		violators, errMsg := checkBlastRadius(repoFiles, taskContext.Files)
 		if len(violators) > 0 {
 			if e.Cook.Ledger != nil {
-				_ = e.Cook.Ledger.Emit(ledger.ValidationFailed{Step: stepPath, Reason: errMsg, Artifact: ""})
+				_ = e.Cook.Ledger.Emit(ledger.GateFailed{Step: stepPath, Reason: errMsg, Artifact: ""})
 				e.emitStepCompleted(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), dc, outputMode, outputValue, true)
 				e.stepCompletedCount++
 				e.printCookTotal()
@@ -948,22 +978,22 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 
 	if len(step.Gate) > 0 {
 		if e.Cook.Ledger != nil {
-			validators := make([]string, 0, len(step.Gate))
+			checks := make([]string, 0, len(step.Gate))
 			for _, v := range step.Gate {
 				if v.Arg != "" {
-					validators = append(validators, v.Type+":"+v.Arg)
+					checks = append(checks, v.Type+":"+v.Arg)
 				} else {
-					validators = append(validators, v.Type)
+					checks = append(checks, v.Type)
 				}
 			}
-			_ = e.Cook.Ledger.Emit(ledger.ValidationStarted{Step: stepPath, Validators: validators})
+			_ = e.Cook.Ledger.Emit(ledger.GateStarted{Step: stepPath, Checks: checks})
 		}
 		vr := validate.RunValidators(step.Gate, e.Config, e.Cook.WorktreeDir, dc, e.StateBag, stepPath)
 		writeValidationArtifact(e.Cook.CookDir, stepPath, attempt, vr)
 		validationArtifactRel := filepath.Join("artifacts", ledger.ArtifactName(stepPath, attempt, "validation", "json"))
 		if vr.Pass {
 			if e.Cook.Ledger != nil {
-				_ = e.Cook.Ledger.Emit(ledger.ValidationPassed{Step: stepPath, Artifact: validationArtifactRel})
+				_ = e.Cook.Ledger.Emit(ledger.GatePassed{Step: stepPath, Artifact: validationArtifactRel})
 			}
 			exec.Status = StepPass
 			exec.CommitHash = dc.HeadCommit
@@ -1001,7 +1031,7 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 					break
 				}
 			}
-			_ = e.Cook.Ledger.Emit(ledger.ValidationFailed{Step: stepPath, Reason: reason, Artifact: validationArtifactRel})
+			_ = e.Cook.Ledger.Emit(ledger.GateFailed{Step: stepPath, Reason: reason, Artifact: validationArtifactRel})
 		}
 		exec.ValidateError = strings.Join(errParts, "\n---\n")
 		exec.ValidateDiff = dc.Patch
@@ -1073,6 +1103,9 @@ func (e *Engine) hitlPauseAfterSuccess(step *recipe.Step, stepPath string, outpu
 	}
 	fstr := strings.Join(filterRepoFilesOnly(e.Cook.WorktreeDir, filesChanged), ", ")
 	fmt.Fprintf(os.Stderr, "[pudding] HITL pause after step '%s'\n\nResult:\n  Mode:    %s\n  Status:  pass\n  Files:   %s\n\n  Review the results in the worktree: %s\n  Press Enter to continue, Ctrl+C to abort.\n", stepPath, mode, fstr, e.Cook.WorktreeDir)
+	if e.Cook.Ledger != nil {
+		_ = e.Cook.Ledger.Emit(ledger.HITLPaused{Step: stepPath})
+	}
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt)
 	defer signal.Stop(sigCh)
@@ -1083,11 +1116,17 @@ func (e *Engine) hitlPauseAfterSuccess(step *recipe.Step, stepPath string, outpu
 	}()
 	select {
 	case <-sigCh:
+		if e.Cook.Ledger != nil {
+			_ = e.Cook.Ledger.Emit(ledger.HITLResumed{Step: stepPath, Action: "abort"})
+		}
 		return ErrCookAborted
 	case err := <-readCh:
 		if err != nil && !errors.Is(err, io.EOF) {
 			return err
 		}
+	}
+	if e.Cook.Ledger != nil {
+		_ = e.Cook.Ledger.Emit(ledger.HITLResumed{Step: stepPath, Action: "continue"})
 	}
 	return nil
 }
