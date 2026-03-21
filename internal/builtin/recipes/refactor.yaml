@@ -1,5 +1,6 @@
 name: refactor
 description: Safe refactoring with test preservation
+max_budget: 5.00
 
 steps:
   - name: decompose
@@ -7,32 +8,24 @@ steps:
     output: plan
     prompt: |
       Plan refactoring for: {spec}
-      Ensure each task is independently testable.
-      All existing tests must stay green after each task.
-    validate:
-      - schema: plan
+      Ensure each item is independently testable.
+      All existing tests must stay green after each item.
+    gate: [schema]
 
   - name: refactor
     foreach: decompose
     steps:
       - name: apply
         agent: claude-haiku
+        output: diff
         prompt: |
-          Refactor according to: {task.description}
-          Only modify: {task.files}
+          Refactor according to: {item.description}
+          Only modify: {item.files}
           All existing tests must continue to pass.
-        validate:
-          - compile
-          - test
-        retry:
-          max_attempts: 3
-          strategy:
-            - same
-            - escalate: claude-sonnet
-            - replan: claude-sonnet
+        gate: [compile, test]
+        on_failure:
+          retry: 3
+          strategy: [same, "escalate: claude-sonnet", "replan: claude-sonnet"]
 
-  - name: final-check
-    validate:
-      - compile
-      - lint
-      - test
+  - name: quality
+    gate: [compile, lint, test]

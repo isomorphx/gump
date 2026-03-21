@@ -7,8 +7,8 @@ import (
 
 func TestStateBag_SetGet(t *testing.T) {
 	sb := New()
-	sb.Set("decompose", `[{"name":"t1"}]`, "")
-	sb.Set("implement/task-1/code", "", "diff --git a/x.go")
+	sb.Set("decompose", `[{"name":"t1"}]`, "", nil)
+	sb.Set("implement/task-1/code", "", "diff --git a/x.go", nil)
 	if v := sb.Get("decompose", "implement/task-1/code", "output"); v != `[{"name":"t1"}]` {
 		t.Errorf("Get output: got %q", v)
 	}
@@ -22,7 +22,7 @@ func TestStateBag_SetGet(t *testing.T) {
 
 func TestStateBag_SerializeRestore(t *testing.T) {
 	sb := New()
-	sb.Set("a", "out1", "d1")
+	sb.Set("a", "out1", "d1", nil)
 	data, err := sb.Serialize()
 	if err != nil {
 		t.Fatal(err)
@@ -45,8 +45,8 @@ func TestStateBag_SerializeRestore(t *testing.T) {
 
 func TestStateBag_ResetGroup(t *testing.T) {
 	sb := New()
-	sb.Set("converge/a", "v1", "")
-	sb.Set("converge/b", "v2", "")
+	sb.Set("converge/a", "v1", "", nil)
+	sb.Set("converge/b", "v2", "", nil)
 	moved := sb.ResetGroup("converge")
 	if len(moved) != 2 {
 		t.Errorf("expected 2 moved, got %d", len(moved))

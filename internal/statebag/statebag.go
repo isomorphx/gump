@@ -12,6 +12,7 @@ import (
 type Entry struct {
 	Value    string `json:"output"`
 	Diff     string `json:"diff"`
+	Files    string `json:"files,omitempty"`
 	StepPath string `json:"step_path"`
 }
 
@@ -30,13 +31,25 @@ func New() *StateBag {
 }
 
 // Set records output and diff for a step at fullPath (e.g. "converge/reviews/reviewer-1").
-func (sb *StateBag) Set(fullPath string, value string, diff string) {
+// files is the list of files changed by the step (for {steps.<n>.files}).
+func (sb *StateBag) Set(fullPath string, value string, diff string, files []string) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
 	if sb.entries == nil {
 		sb.entries = make(map[string]Entry)
 	}
-	sb.entries[fullPath] = Entry{Value: value, Diff: diff, StepPath: fullPath}
+	// WHY: v4 unifie {steps.<n>.diff} et {steps.<n>.output}. In "diff" output-mode
+	// the engine historically stored the patch in Diff while Value stayed empty.
+	// Copying diff → output for empty Value keeps templates consistent without
+	// needing to change runtime snapshots/ledger formats here.
+	if value == "" && diff != "" {
+		value = diff
+	}
+	filesStr := ""
+	if len(files) > 0 {
+		filesStr = strings.Join(files, ", ")
+	}
+	sb.entries[fullPath] = Entry{Value: value, Diff: diff, Files: filesStr, StepPath: fullPath}
 }
 
 // Get resolves {steps.<shortName>.output} or {steps.<shortName>.diff} using scope proximity:
@@ -50,6 +63,9 @@ func (sb *StateBag) Get(shortName string, scopePath string, field string) string
 	}
 	if field == "diff" {
 		return e.Diff
+	}
+	if field == "files" {
+		return e.Files
 	}
 	return e.Value
 }

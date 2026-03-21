@@ -1,0 +1,30 @@
+name: parallel-tasks
+description: Decompose then implement all items in parallel
+max_budget: 10.00
+
+steps:
+  - name: decompose
+    agent: claude-opus
+    output: plan
+    prompt: |
+      Decompose {spec} into independent items with strictly disjoint
+      blast radii. No two items may touch the same file.
+    gate: [schema]
+
+  - name: build
+    foreach: decompose
+    parallel: true
+    steps:
+      - name: impl
+        agent: claude-sonnet
+        output: diff
+        prompt: |
+          Implement: {item.description}
+          Only touch: {item.files}
+        gate: [compile, test]
+        on_failure:
+          retry: 3
+          strategy: [same, "escalate: claude-opus"]
+
+  - name: quality
+    gate: [compile, lint, test]

@@ -19,7 +19,7 @@ func TestRunSchemaValidator_NoOutput(t *testing.T) {
 
 func TestRunSchemaValidator_ValidPlan(t *testing.T) {
 	sb := statebag.New()
-	sb.Set("decompose", `[{"name":"t1","description":"d1","files":["a.go"]}]`, "")
+	sb.Set("decompose", `[{"name":"t1","description":"d1","files":["a.go"]}]`, "", nil)
 	r := RunSchemaValidator("decompose", sb)
 	if !r.Pass {
 		t.Errorf("expected pass: %+v", r)
@@ -28,7 +28,7 @@ func TestRunSchemaValidator_ValidPlan(t *testing.T) {
 
 func TestRunSchemaValidator_InvalidJSON(t *testing.T) {
 	sb := statebag.New()
-	sb.Set("decompose", "not json", "")
+	sb.Set("decompose", "not json", "", nil)
 	r := RunSchemaValidator("decompose", sb)
 	if r.Pass {
 		t.Error("expected fail")

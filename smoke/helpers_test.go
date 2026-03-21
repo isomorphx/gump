@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -112,13 +113,54 @@ func writeRecipe(t *testing.T, repoDir, name, yaml string) {
 	runGit(t, repoDir, "commit", "-m", "add recipe "+name)
 }
 
+var (
+	puddingBinPath string
+	puddingBinErr  error
+	puddingBinOnce sync.Once
+)
+
+func findModuleRoot() string {
+	dir, _ := os.Getwd()
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return dir
+		}
+		dir = parent
+	}
+}
+
+func ensureSmokePuddingBin() (string, error) {
+	puddingBinOnce.Do(func() {
+		tmpDir, err := os.MkdirTemp("", "pudding-smoke-bin-")
+		if err != nil {
+			puddingBinErr = err
+			return
+		}
+		puddingBinPath = filepath.Join(tmpDir, "pudding")
+
+		moduleRoot := findModuleRoot()
+		cmd := exec.Command("go", "build", "-o", puddingBinPath, ".")
+		cmd.Dir = moduleRoot
+		if out, err := cmd.CombinedOutput(); err != nil {
+			puddingBinErr = err
+			_ = out
+			return
+		}
+	})
+	return puddingBinPath, puddingBinErr
+}
+
 // runPudding runs the pudding binary from PATH (as installable by users) with a 5-minute timeout
 // so long cooks don't hang the suite.
 func runPudding(t *testing.T, repoDir string, args ...string) (stdout, stderr string, exitCode int) {
 	t.Helper()
-	bin, err := exec.LookPath("pudding")
-	if err != nil {
-		t.Fatalf("pudding not in PATH: %v (run: go install)", err)
+	bin, err := ensureSmokePuddingBin()
+	if err != nil || bin == "" {
+		t.Fatalf("failed to build pudding binary for smoke tests: %v", err)
 	}
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = repoDir

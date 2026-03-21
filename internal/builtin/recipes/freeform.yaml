@@ -1,9 +1,8 @@
 name: freeform
-description: Single agent call, no plan, no decomposition
-
+description: Single agent, no plan. For testing and quick experiments.
 steps:
-  - name: do
+  - name: execute
     agent: claude-opus
+    output: diff
     prompt: "{spec}"
-    validate:
-      - compile
+    gate: [compile]

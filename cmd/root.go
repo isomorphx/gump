@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"time"
 
 	"github.com/isomorphx/pudding/internal/config"
 	"github.com/isomorphx/pudding/internal/version"
@@ -93,8 +94,6 @@ func init() {
 			return nil
 		}
 
-		// WHY: non-blocking read prevents the update checker from slowing down
-		// the command execution.
 		select {
 		case latest := <-updateCh:
 			if latest == "" {
@@ -107,9 +106,10 @@ func init() {
 					"  curl -fsSL https://pudding.build/install.sh | bash\n\n"+
 					"  or: brew upgrade pudding\n\n",
 			)
-		default:
-			// WHY: best-effort. Never wait: if the goroutine isn't done yet,
-			// we do nothing.
+		case <-time.After(1200 * time.Millisecond):
+			// WHY: bounded wait so the HTTP fetch can complete and the cache
+			// is actually written (tests assert on checked_at). We still avoid
+			// unbounded blocking: network timeout in the checker is 1s.
 		}
 		return nil
 	}

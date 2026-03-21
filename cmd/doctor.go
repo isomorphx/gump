@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/isomorphx/pudding/internal/config"
 	"github.com/isomorphx/pudding/internal/recipe"
@@ -79,6 +81,11 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 
 // checkClaudeCode runs the spec harness: temp repo, run claude with json, verify file and is_error.
 func checkClaudeCode() {
+	if _, err := exec.LookPath("claude"); err != nil {
+		fmt.Println("  claude-code  not installed (skipped)")
+		return
+	}
+	timeout := 10 * time.Second
 	dir, err := os.MkdirTemp("", "pudding-doctor-claude-")
 	if err != nil {
 		fmt.Println("  claude-code  ✗  failed to create temp dir")
@@ -96,7 +103,11 @@ func checkClaudeCode() {
 		return
 	}
 
-	runCmd := exec.Command("claude", "-p", "Create a file called doctor-test.txt containing pudding-ok",
+	prompt := "Create a file called doctor-test.txt containing pudding-ok"
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	runCmd := exec.CommandContext(ctx, "claude", "-p", prompt,
 		"--output-format", "json",
 		"--allowedTools", "Bash,Read,Write,Edit",
 		"--permission-mode", "acceptEdits")
@@ -105,7 +116,26 @@ func checkClaudeCode() {
 	runCmd.Env = envWithout(os.Environ(), "ANTHROPIC_API_KEY")
 	out, runErr := runCmd.CombinedOutput()
 	if runErr != nil {
-		fmt.Printf("  claude-code  ✗  %v (is 'claude' installed?)\n", runErr)
+		if ctx.Err() == context.DeadlineExceeded {
+			fmt.Println("  claude-code  ✗  timeout after 10s")
+		} else {
+			fmt.Printf("  claude-code  ✗  %v\n", runErr)
+		}
+		return
+	}
+
+	doctorTestPath := filepath.Join(dir, "doctor-test.txt")
+	statusCmd := exec.Command("git", "status", "--porcelain")
+	statusCmd.Dir = dir
+	statusOut, _ := statusCmd.Output()
+
+	fileCreated := false
+	if _, err := os.Stat(doctorTestPath); err == nil {
+		fileCreated = true
+	}
+	statusOK := strings.Contains(string(statusOut), "doctor-test.txt")
+	if !fileCreated || !statusOK {
+		fmt.Println("  claude-code  ✗  doctor-test.txt missing from git status")
 		return
 	}
 
@@ -113,24 +143,11 @@ func checkClaudeCode() {
 		IsError bool `json:"is_error"`
 	}
 	if jsonErr := json.Unmarshal(out, &parsed); jsonErr != nil {
-		fmt.Println("  claude-code  ⚠  installed but JSON not parsable (compat mode)")
+		fmt.Println("  claude-code  ⚠  compat mode (JSON not parsable, status works)")
 		return
 	}
 	if parsed.IsError {
 		fmt.Println("  claude-code  ✗  run returned is_error=true")
-		return
-	}
-
-	doctorTestPath := filepath.Join(dir, "doctor-test.txt")
-	if _, err := os.Stat(doctorTestPath); err != nil {
-		fmt.Println("  claude-code  ✗  doctor-test.txt was not created")
-		return
-	}
-	statusCmd := exec.Command("git", "status", "--porcelain")
-	statusCmd.Dir = dir
-	statusOut, _ := statusCmd.Output()
-	if !strings.Contains(string(statusOut), "doctor-test.txt") {
-		fmt.Println("  claude-code  ✗  git status does not show doctor-test.txt")
 		return
 	}
 	fmt.Println("  claude-code  ✓  ok")
@@ -156,12 +173,19 @@ func checkCodex() {
 		fmt.Println("  codex        ✗  failed to write init.txt")
 		return
 	}
-	runCmd := exec.Command("codex", "exec", "Create a file called doctor-test.txt containing pudding-ok",
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	runCmd := exec.CommandContext(ctx, "codex", "exec", "Create a file called doctor-test.txt containing pudding-ok",
 		"--json", "--full-auto", "-C", dir, "--skip-git-repo-check")
 	runCmd.Dir = dir
 	out, runErr := runCmd.CombinedOutput()
 	if runErr != nil {
-		fmt.Printf("  codex        ✗  %v (harness failed)\n", runErr)
+		if ctx.Err() == context.DeadlineExceeded {
+			fmt.Println("  codex        ✗  timeout after 10s")
+		} else {
+			fmt.Printf("  codex        ✗  %v (harness failed)\n", runErr)
+		}
 		return
 	}
 	// At least one turn.completed in JSONL for green.
@@ -206,13 +230,20 @@ func checkGemini() {
 		fmt.Println("  gemini       ✗  failed to write init.txt")
 		return
 	}
-	runCmd := exec.Command("gemini", "-p", "Create a file called doctor-test.txt containing pudding-ok",
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	runCmd := exec.CommandContext(ctx, "gemini", "-p", "Create a file called doctor-test.txt containing pudding-ok",
 		"--output-format", "json", "--yolo")
 	runCmd.Dir = dir
 	// Gemini emits JSON on stdout only; stderr has "YOLO mode...", credentials, etc. (gemini-cli-reference §3).
 	out, runErr := runCmd.Output()
 	if runErr != nil {
-		fmt.Printf("  gemini       ✗  %v (harness failed)\n", runErr)
+		if ctx.Err() == context.DeadlineExceeded {
+			fmt.Println("  gemini       ✗  timeout after 10s")
+		} else {
+			fmt.Printf("  gemini       ✗  %v (harness failed)\n", runErr)
+		}
 		return
 	}
 	var parsed struct {
@@ -260,13 +291,20 @@ func checkQwen() {
 		fmt.Println("  qwen         ✗  failed to write init.txt")
 		return
 	}
-	runCmd := exec.Command("qwen", "-p", "Create a file called doctor-test.txt containing pudding-ok",
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	runCmd := exec.CommandContext(ctx, "qwen", "-p", "Create a file called doctor-test.txt containing pudding-ok",
 		"--output-format", "json", "--yolo",
 		"--allowed-tools", "write_file")
 	runCmd.Dir = dir
 	out, runErr := runCmd.CombinedOutput()
 	if runErr != nil {
-		fmt.Printf("  qwen         ✗  %v (harness failed)\n", runErr)
+		if ctx.Err() == context.DeadlineExceeded {
+			fmt.Println("  qwen         ✗  timeout after 10s")
+		} else {
+			fmt.Printf("  qwen         ✗  %v (harness failed)\n", runErr)
+		}
 		return
 	}
 	var parsed []struct {
@@ -318,13 +356,19 @@ func checkOpenCode() {
 		fmt.Println("  opencode     ✗  failed to write init.txt")
 		return
 	}
-	cwd, _ := os.Getwd()
-	runCmd := exec.Command("opencode", "run", "Create a file called doctor-test.txt containing pudding-ok",
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	runCmd := exec.CommandContext(ctx, "opencode", "run", "Create a file called doctor-test.txt containing pudding-ok",
 		"--format", "json", "--dir", dir)
-	runCmd.Dir = cwd
+	runCmd.Dir = dir
 	out, runErr := runCmd.CombinedOutput()
 	if runErr != nil {
-		fmt.Printf("  opencode     ✗  %v (harness failed)\n", runErr)
+		if ctx.Err() == context.DeadlineExceeded {
+			fmt.Println("  opencode     ✗  timeout after 10s")
+		} else {
+			fmt.Printf("  opencode     ✗  %v (harness failed)\n", runErr)
+		}
 		return
 	}
 	hasStepFinish := strings.Contains(string(out), `"type":"step_finish"`)

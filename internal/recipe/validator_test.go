@@ -43,7 +43,7 @@ func TestValidate_StepMustHaveAgentStepsOrValidate(t *testing.T) {
 	errs := Validate(r)
 	var found bool
 	for _, e := range errs {
-		if strings.Contains(e.Message, "must have") && strings.Contains(e.Message, "agent") {
+		if strings.Contains(e.Message, "has no agent") {
 			found = true
 			break
 		}
@@ -64,7 +64,7 @@ func TestValidate_CannotHaveBothAgentAndSteps(t *testing.T) {
 	errs := Validate(r)
 	var found bool
 	for _, e := range errs {
-		if strings.Contains(e.Message, "cannot have both") {
+		if strings.Contains(e.Message, "has both 'agent' and 'steps'") {
 			found = true
 			break
 		}
@@ -74,18 +74,25 @@ func TestValidate_CannotHaveBothAgentAndSteps(t *testing.T) {
 	}
 }
 
-func TestValidate_RetryMaxAttempts(t *testing.T) {
+func TestValidate_RestartFromWithoutRetry(t *testing.T) {
 	r := &Recipe{
 		Name: "x",
 		Steps: []Step{{
-			Name: "s", Agent: "a", Prompt: "p",
-			Retry: &RetryPolicy{MaxAttempts: 0, Strategy: []StrategyEntry{{Type: "same", Count: 1}}},
+			Name:   "s",
+			Agent:  "a",
+			Prompt: "p",
+			Gate:   []Validator{{Type: "compile"}},
+			OnFailure: &OnFailure{
+				Retry:       0,
+				RestartFrom: "t0",
+				Strategy:    []StrategyEntry{{Type: "same", Count: 1}},
+			},
 		}},
 	}
 	errs := Validate(r)
 	var found bool
 	for _, e := range errs {
-		if strings.Contains(e.Message, "max_attempts must be >= 1") {
+		if strings.Contains(e.Message, "restart_from without retry limit") {
 			found = true
 			break
 		}
@@ -99,14 +106,40 @@ func TestValidate_ValidRecipePasses(t *testing.T) {
 	r := &Recipe{
 		Name: "tdd",
 		Steps: []Step{
-			{Name: "plan", Agent: "opus", Output: "plan", Validate: []Validator{{Type: "schema", Arg: "plan"}}},
+			{Name: "plan", Agent: "opus", Output: "plan", Gate: []Validator{{Type: "schema", Arg: "plan"}}},
 			{Name: "impl", Foreach: "plan", Steps: []Step{
-				{Name: "code", Agent: "haiku", Prompt: "p", Validate: []Validator{{Type: "compile"}}},
+				{Name: "code", Agent: "haiku", Prompt: "p", Gate: []Validator{{Type: "compile"}}},
 			}},
 		},
 	}
 	errs := Validate(r)
 	if len(errs) != 0 {
 		t.Errorf("unexpected errs: %v", errs)
+	}
+}
+
+func TestValidate_SessionReuseTargetDifferentAgentIsError(t *testing.T) {
+	r := &Recipe{
+		Name: "x",
+		Steps: []Step{
+			{Name: "a", Agent: "claude", Prompt: "p"},
+			{
+				Name:   "b",
+				Agent:  "codex",
+				Prompt: "p",
+				Session: SessionConfig{
+					Mode:   "reuse-targeted",
+					Target: "a",
+				},
+			},
+		},
+	}
+	errs := Validate(r)
+	combined := ""
+	for _, e := range errs {
+		combined += e.Error() + "\n"
+	}
+	if !strings.Contains(combined, "has session: reuse: a") || !strings.Contains(combined, "session reuse requires the same agent") {
+		t.Fatalf("expected session reuse mismatch error, got: %s", combined)
 	}
 }

@@ -14,8 +14,8 @@ steps:
   - name: do
     agent: claude
     prompt: p
-    retry:
-      max_attempts: 2
+    on_failure:
+      retry: 2
       strategy: [same, escalate: claude-sonnet]
 `)
 	r, err := Parse(yaml, "")
@@ -43,16 +43,28 @@ steps:
   - name: do
     agent: claude
     prompt: p
-    retry:
-      max_attempts: 5
+    on_failure:
+      retry: 5
       strategy: [same: 3, escalate: claude-sonnet]
 `)
 	r, err := Parse(yaml, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Steps[0].Retry.Strategy[0].Type != "same" || r.Steps[0].Retry.Strategy[0].Count != 3 {
-		t.Errorf("same:3: got %+v", r.Steps[0].Retry.Strategy[0])
+	if r.Steps[0].Retry == nil {
+		t.Fatal("expected retry policy")
+	}
+	// WHY: v4 normalisation expands "same: 3" into 3 individual strategy slots.
+	if len(r.Steps[0].Retry.Strategy) != 4 {
+		t.Fatalf("expected 4 expanded strategy entries, got %d", len(r.Steps[0].Retry.Strategy))
+	}
+	for i := 0; i < 3; i++ {
+		if r.Steps[0].Retry.Strategy[i].Type != "same" {
+			t.Errorf("strategy[%d]: expected same, got %+v", i, r.Steps[0].Retry.Strategy[i])
+		}
+	}
+	if r.Steps[0].Retry.Strategy[3].Type != "escalate" || r.Steps[0].Retry.Strategy[3].Agent != "claude-sonnet" {
+		t.Errorf("escalate: got %+v", r.Steps[0].Retry.Strategy[3])
 	}
 }
 
@@ -63,7 +75,7 @@ steps:
   - name: do
     agent: claude
     prompt: p
-    validate: [compile, touched: "*_test.*"]
+    gate: [compile, touched: "*_test.*"]
 `)
 	r, err := Parse(yaml, "")
 	if err != nil {
@@ -105,17 +117,17 @@ steps:
   - name: do
     agent: claude
     prompt: p
-    validate: [compile, 42]
+    gate: [compile, 42]
 `)
 	_, err := Parse(yaml, "")
 	if err == nil {
-		t.Fatal("expected error for malformed validate")
+		t.Fatal("expected error for malformed gate")
 	}
 	if !strings.Contains(err.Error(), "expected string or map") {
 		t.Errorf("error should mention expected form: %v", err)
 	}
-	if !strings.Contains(err.Error(), "validate") {
-		t.Errorf("error should mention validate path: %v", err)
+	if !strings.Contains(err.Error(), "gate") {
+		t.Errorf("error should mention gate path: %v", err)
 	}
 }
 

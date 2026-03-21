@@ -1,23 +1,28 @@
 name: simple
-description: Single-step implementation
-
+description: Simple plan -> foreach -> final-check (v4)
+max_budget: 5.00
 steps:
   - name: decompose
-    agent: claude-sonnet
+    agent: claude-opus
     output: plan
-    prompt: "{spec}"
-    validate:
-      - schema: plan
+    prompt: |
+      Decompose {spec} into tasks.
+    gate: [schema]
 
   - name: implement
     foreach: decompose
     steps:
       - name: code
-        agent: claude-haiku
-        prompt: "Implement: {task.description}. Files: {task.files}"
-        validate:
-          - compile
+        agent: claude-opus
+        output: diff
+        prompt: |
+          Implement: {item.description}
+        gate: [compile]
 
   - name: final-check
-    validate:
-      - compile
+    agent: claude-opus
+    output: diff
+    prompt: |
+      Final check and cleanup.
+    gate: [compile]
+

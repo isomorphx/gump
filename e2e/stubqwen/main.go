@@ -63,7 +63,9 @@ func main() {
 		}
 	}
 	if prompt != "" && strings.Contains(prompt, "[PUDDING:plan]") {
-		planPath := filepath.Join(cwd, "plan-output.json")
+		outDir := filepath.Join(cwd, ".pudding", "out")
+		_ = os.MkdirAll(outDir, 0755)
+		planPath := filepath.Join(outDir, "plan.json")
 		_ = os.WriteFile(planPath, []byte(`[{"name":"task-1","description":"Stub task","files":["math_test.go","math.go"]}]`), 0644)
 	}
 	if prompt != "" && strings.Contains(prompt, "[PUDDING:step:red]") {

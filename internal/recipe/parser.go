@@ -4,22 +4,24 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
-// ParseWarn is called for deprecated fields (type, review). Set by cmd/cook so e2e can assert on stderr.
+// ParseWarn is called for deprecated fields (kept for compatibility with older migrations).
 var ParseWarn func(msg string)
 
-// Parse turns YAML into a Recipe (v3: no type/review; output, session config, foreach).
+// Parse turns YAML into a Recipe using YAML schema v4.
 // recipeDir is the directory of the recipe file so prompt: file: <path> can be resolved relative to the recipe and keep long prompts out of YAML; empty for built-in recipes.
 func Parse(yamlBytes []byte, recipeDir string) (*Recipe, error) {
 	raw := struct {
 		Name        string          `yaml:"name"`
 		Description string          `yaml:"description"`
+		MaxBudget   float64         `yaml:"max_budget"`
 		Steps       []rawStep       `yaml:"steps"`
-		Review      []interface{}   `yaml:"review"`
+		Review      *[]interface{}  `yaml:"review"` // legacy root-level review (M1 rejects)
 	}{}
 	if err := yaml.Unmarshal(yamlBytes, &raw); err != nil {
 		if strings.Contains(err.Error(), "mapping values are not allowed") {
@@ -27,12 +29,13 @@ func Parse(yamlBytes []byte, recipeDir string) (*Recipe, error) {
 		}
 		return nil, fmt.Errorf("recipe YAML: %w", err)
 	}
-	if len(raw.Review) > 0 && ParseWarn != nil {
-		ParseWarn("field 'review' is deprecated — add a validation step at the end of 'steps:' instead")
+	if raw.Review != nil {
+		return nil, fmt.Errorf("recipe has root-level 'review:' block which is no longer supported.\nHint: add a gate step at the end of your steps list instead.")
 	}
 	r := &Recipe{
 		Name:        raw.Name,
 		Description: raw.Description,
+		MaxBudget:   raw.MaxBudget,
 		Steps:       make([]Step, 0, len(raw.Steps)),
 	}
 	for i := range raw.Steps {
@@ -46,42 +49,87 @@ func Parse(yamlBytes []byte, recipeDir string) (*Recipe, error) {
 }
 
 type rawStep struct {
-	Name     string        `yaml:"name"`
-	Type     string        `yaml:"type"`
-	Agent    string        `yaml:"agent"`
-	Prompt   interface{}   `yaml:"prompt"` // string (inline) or map with "file": path relative to recipe dir
-	Output   string        `yaml:"output"`
-	Validate []interface{} `yaml:"validate"`
-	Retry    *struct {
-		MaxAttempts int           `yaml:"max_attempts"`
-		Strategy    []interface{} `yaml:"strategy"`
-	} `yaml:"retry"`
-	Steps    []rawStep     `yaml:"steps"`
-	Recipe   string        `yaml:"recipe"`
-	Parallel bool          `yaml:"parallel"`
-	Foreach  string        `yaml:"foreach"`
-	Session  interface{}   `yaml:"session"` // string "reuse"/"fresh" or map reuse: step-name
-	Context  []ContextSource `yaml:"context"`
-	Timeout  string        `yaml:"timeout"`
-	MaxTurns int           `yaml:"max_turns"`
+	Name       string        `yaml:"name"`
+	Type       string        `yaml:"type"`
+	Agent      string        `yaml:"agent"`
+	Prompt     interface{}   `yaml:"prompt"` // string (inline) or map with "file": path relative to recipe dir
+	Output     string        `yaml:"output"`
+	Gate       *[]interface{} `yaml:"gate"`
+	Validate   *[]interface{} `yaml:"validate"` // legacy (M1 rejects)
+	Retry      *rawRetry     `yaml:"retry"`     // legacy (M1 rejects)
+	OnFailure  *rawOnFailure `yaml:"on_failure"`
+	Steps      []rawStep     `yaml:"steps"`
+	Recipe     string        `yaml:"recipe"`
+	Parallel   bool          `yaml:"parallel"`
+	Foreach    string        `yaml:"foreach"`
+	Session    interface{}   `yaml:"session"` // string "reuse"/"fresh" etc, or map reuse: step-name
+	Context    []ContextSource `yaml:"context"`
+	Timeout    string        `yaml:"timeout"`
+	MaxBudget  float64       `yaml:"max_budget"`
+	HITL       bool          `yaml:"hitl"`
+	MaxTurns   int           `yaml:"max_turns"`
+}
+
+type rawRetry struct {
+	MaxAttempts int           `yaml:"max_attempts"`
+	Strategy    []interface{} `yaml:"strategy"`
+}
+
+type rawOnFailure struct {
+	Retry       *int           `yaml:"retry"`
+	Strategy    []interface{} `yaml:"strategy"`
+	RestartFrom string        `yaml:"restart_from"`
 }
 
 func parseStep(raw *rawStep, pathPrefix string, recipeDir string) (*Step, error) {
-	if raw.Type != "" && ParseWarn != nil {
-		ParseWarn("field 'type' is deprecated and ignored — step behavior is inferred from declared fields")
+	if raw.Type != "" {
+		return nil, fmt.Errorf("step %q uses 'type:' which is no longer needed. Pudding infers the step type from the fields present.\nHint: remove the 'type:' field. Use 'output: plan' for plan steps, 'foreach:' for iteration.", raw.Name)
 	}
 	prompt, err := resolvePrompt(raw.Prompt, pathPrefix+".prompt", recipeDir)
 	if err != nil {
 		return nil, err
 	}
-	validate, err := parseValidatorsErr(raw.Validate, pathPrefix+".validate")
+
+	// Detect v3 obsolete fields and guide migration to v4.
+	if raw.Validate != nil && raw.Retry != nil {
+		return nil, fmt.Errorf("step %q uses legacy v3 fields: validate: has been replaced by gate:.\nHint: replace validate: + retry: with gate: + on_failure: { retry: N, strategy: [...] }", raw.Name)
+	}
+	if raw.Validate != nil {
+		return nil, fmt.Errorf("step %q uses 'validate:' which has been replaced by 'gate:'.\nHint: rename 'validate:' to 'gate:' and move 'retry:' inside 'on_failure:'.", raw.Name)
+	}
+	if raw.Retry != nil {
+		return nil, fmt.Errorf("step %q uses legacy 'retry:' which has been replaced by 'on_failure:'.", raw.Name)
+	}
+
+	gateValidators, err := parseValidatorsErr(derefInterfaceSlice(raw.Gate), pathPrefix+".gate")
 	if err != nil {
 		return nil, err
 	}
-	retry, err := parseRetry(raw.Retry, pathPrefix)
-	if err != nil {
-		return nil, err
+
+	// Parse on_failure (v4). This is normalised to the legacy RetryPolicy so the runtime can keep using it.
+	var onFailure *OnFailure
+	var retry *RetryPolicy
+	if raw.OnFailure != nil {
+		strategy, err := parseStrategy(raw.OnFailure.Strategy, pathPrefix+".on_failure.strategy")
+		if err != nil {
+			return nil, err
+		}
+		on := &OnFailure{
+			Retry:       0,
+			Strategy:    strategy,
+			RestartFrom: raw.OnFailure.RestartFrom,
+		}
+		if raw.OnFailure.Retry != nil {
+			on.Retry = *raw.OnFailure.Retry
+		}
+		onFailure = on
+		if on.Retry > 0 {
+			retry = &RetryPolicy{MaxAttempts: on.Retry, Strategy: ExpandStrategy(on.Strategy)}
+			// WHY: engine expects strategy entries with Count expanded when max_attempts>1.
+			// We expand here to preserve old runtime semantics while keeping v4 YAML clean.
+		}
 	}
+
 	subSteps := make([]Step, 0, len(raw.Steps))
 	for i := range raw.Steps {
 		s, err := parseStep(&raw.Steps[i], pathPrefix+fmt.Sprintf(".steps[%d]", i), recipeDir)
@@ -96,21 +144,35 @@ func parseStep(raw *rawStep, pathPrefix string, recipeDir string) (*Step, error)
 		output = "diff"
 	}
 	return &Step{
-		Name:     raw.Name,
-		Agent:    raw.Agent,
-		Prompt:   prompt,
-		Output:   output,
-		Validate: validate,
-		Retry:    retry,
-		Steps:    subSteps,
-		Recipe:   raw.Recipe,
-		Parallel: raw.Parallel,
+		Name:      raw.Name,
+		Agent:     raw.Agent,
+		Prompt:    prompt,
+		Output:    output,
+		Steps:     subSteps,
+		Recipe:    raw.Recipe,
+		Parallel:  raw.Parallel,
 		Foreach:   strings.TrimSpace(raw.Foreach),
-		Session:  session,
-		Context:  raw.Context,
-		Timeout:  raw.Timeout,
-		MaxTurns: raw.MaxTurns,
+		Session:   session,
+		Context:   raw.Context,
+		Timeout:   raw.Timeout,
+		MaxBudget: raw.MaxBudget,
+		HITL:      raw.HITL,
+		MaxTurns:  raw.MaxTurns,
+
+		Gate:      gateValidators,
+		OnFailure: onFailure,
+
+		// Legacy normalisation for the current runtime.
+		Validate: gateValidators,
+		Retry:    retry,
 	}, nil
+}
+
+func derefInterfaceSlice(p *[]interface{}) []interface{} {
+	if p == nil {
+		return nil
+	}
+	return *p
 }
 
 // resolvePrompt turns YAML prompt (string or {file: path}) into one string so downstream only ever sees inline content; external files keep recipes readable.
@@ -154,7 +216,17 @@ func parseSession(v interface{}) SessionConfig {
 		if s == "" {
 			return SessionConfig{Mode: "fresh"}
 		}
-		return SessionConfig{Mode: s}
+		switch s {
+		case "fresh", "reuse", "reuse-on-retry":
+			return SessionConfig{Mode: s}
+		default:
+			// v4: `session: reuse: <step>` string form.
+			if strings.HasPrefix(s, "reuse:") {
+				target := strings.TrimSpace(strings.TrimPrefix(s, "reuse:"))
+				return SessionConfig{Mode: "reuse-targeted", Target: target}
+			}
+			return SessionConfig{Mode: s}
+		}
 	case map[string]interface{}:
 		for k, val := range x {
 			if strings.TrimSpace(k) == "reuse" && val != nil {
@@ -213,7 +285,10 @@ func parseRetry(r *struct {
 	}, nil
 }
 
-// parseStrategy supports: "same", "escalate: claude-sonnet", and map form same: 3, escalate: claude-sonnet.
+// parseStrategy supports v3/v4 forms:
+// - "same" or "same: N" (N repeats)
+// - "escalate: <agent>" / "replan: <agent>"
+// - map form: same: 3, escalate: <agent>
 func parseStrategy(list []interface{}, ctx string) ([]StrategyEntry, error) {
 	if len(list) == 0 {
 		return nil, nil
@@ -225,8 +300,16 @@ func parseStrategy(list []interface{}, ctx string) ([]StrategyEntry, error) {
 			s := strings.TrimSpace(v)
 			if idx := strings.IndexByte(s, ':'); idx >= 0 {
 				typ := strings.TrimSpace(s[:idx])
-				agent := strings.TrimSpace(s[idx+1:])
-				out = append(out, StrategyEntry{Type: typ, Agent: agent, Count: 1})
+				rest := strings.TrimSpace(s[idx+1:])
+				if typ == "same" {
+					n, err := strconv.Atoi(rest)
+					if err != nil || n <= 0 {
+						return nil, fmt.Errorf("%s[%d]: same: <count> must be a positive integer", ctx, i)
+					}
+					out = append(out, StrategyEntry{Type: typ, Count: n})
+				} else {
+					out = append(out, StrategyEntry{Type: typ, Agent: rest, Count: 1})
+				}
 			} else {
 				out = append(out, StrategyEntry{Type: s, Count: 1})
 			}

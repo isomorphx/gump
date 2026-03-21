@@ -82,7 +82,7 @@ func Build(outputMode string, prompt string, contextSources []recipe.ContextSour
 		b.WriteString(sectionPlan)
 	case "artifact":
 		b.WriteString(sectionArtifact)
-	case "diff", "":
+	case "diff", "review", "":
 		b.WriteString(sectionDiff)
 	}
 

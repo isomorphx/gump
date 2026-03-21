@@ -680,7 +680,7 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 		return fmt.Errorf("snapshot after step %s: %w", step.Name, err), preStepCommit
 	}
 
-	e.StateBag.Set(stepPath, outputValue, dc.Patch)
+	e.StateBag.Set(stepPath, outputValue, dc.Patch, dc.FilesChanged)
 	if e.Cook.Ledger != nil {
 		key := stepPath + ".output"
 		artifactRel := ""

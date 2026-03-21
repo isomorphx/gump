@@ -12,6 +12,34 @@ import (
 
 const stableSessionID = "ses_test_stable_id"
 
+func firstBlastRadiusFile(prompt string) string {
+	// WHY: Pudding's context builder includes a "## Blast Radius" section
+	// listing allowed files. We pick the first listed file so blast-radius
+	// validators don't fail in cross-provider tests.
+	lines := strings.Split(prompt, "\n")
+	in := false
+	for _, line := range lines {
+		trim := strings.TrimSpace(line)
+		if strings.Contains(line, "## Blast Radius") {
+			in = true
+			continue
+		}
+		if !in {
+			continue
+		}
+		if strings.Contains(trim, "Stay within this scope") {
+			break
+		}
+		if strings.HasPrefix(trim, "- ") {
+			f := strings.TrimSpace(strings.TrimPrefix(trim, "- "))
+			if f != "" {
+				return f
+			}
+		}
+	}
+	return ""
+}
+
 func main() {
 	var dir string
 	flag.StringVar(&dir, "dir", "", "dir")
@@ -85,7 +113,9 @@ func main() {
 		}
 	}
 	if prompt != "" && strings.Contains(prompt, "[PUDDING:plan]") {
-		_ = os.WriteFile(filepath.Join(cwd, "plan-output.json"), []byte(`[{"name":"task-1","description":"Stub task","files":["math_test.go","math.go"]}]`), 0644)
+		outDir := filepath.Join(cwd, ".pudding", "out")
+		_ = os.MkdirAll(outDir, 0755)
+		_ = os.WriteFile(filepath.Join(outDir, "plan.json"), []byte(`[{"name":"task-1","description":"Stub task","files":["math_test.go","math.go"]}]`), 0644)
 	}
 	if prompt != "" && strings.Contains(prompt, "[PUDDING:step:red]") {
 		_ = os.WriteFile(filepath.Join(cwd, "math_test.go"), []byte("package math\n\nimport \"testing\"\nfunc TestAdd(t *testing.T) {}\n"), 0644)
@@ -95,7 +125,24 @@ func main() {
 	}
 	if prompt != "" && !strings.Contains(prompt, "[PUDDING:plan]") && !strings.Contains(prompt, "[PUDDING:step:red]") && !strings.Contains(prompt, "[PUDDING:step:green]") {
 		_ = os.MkdirAll(cwd, 0755)
-		_ = os.WriteFile(filepath.Join(cwd, "hello.go"), []byte("package main\n\nfunc main() { println(\"hello world\") }\n"), 0644)
+		wroteAllowed := false
+		// For cross-provider tests, the allowed files are communicated via the provider context file.
+		// The CLI prompt argument doesn't include the "## Blast Radius" section.
+		if ctxBytes, err := os.ReadFile(filepath.Join(cwd, "AGENTS.md")); err == nil {
+			if f := firstBlastRadiusFile(string(ctxBytes)); f != "" {
+				full := filepath.Join(cwd, f)
+				_ = os.MkdirAll(filepath.Dir(full), 0755)
+				if strings.HasSuffix(f, "_test.go") {
+					_ = os.WriteFile(full, []byte("package main\n\nimport \"testing\"\n\nfunc TestStub(t *testing.T) { t.Log(\"stub\") }\n"), 0644)
+				} else {
+					_ = os.WriteFile(full, []byte("package main\n\nfunc Stub() {}\n"), 0644)
+				}
+				wroteAllowed = true
+			}
+		}
+		if !wroteAllowed {
+			_ = os.WriteFile(filepath.Join(cwd, "hello.go"), []byte("package main\n\nfunc main() { println(\"hello world\") }\n"), 0644)
+		}
 	}
 	emitOpenCodeNDJSON(cwd, sessionID)
 }

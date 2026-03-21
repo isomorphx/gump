@@ -83,7 +83,7 @@ func (e *Engine) ExecuteReplan(replanAgent string, step recipe.Step, scopePath s
 	if _, err := e.Cook.Snapshot(step.Name+"/replan", taskName, 1); err != nil {
 		return fmt.Errorf("snapshot replan: %w", err)
 	}
-	e.StateBag.Set(scopePath+"/replan", raw, "")
+	e.StateBag.Set(scopePath+"/replan", raw, "", nil)
 
 	// Run each sub-task with the original step agent; no retry on sub-tasks.
 	sessionMap := make(map[string]string)

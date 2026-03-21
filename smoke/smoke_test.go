@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -38,15 +40,15 @@ steps:
     output: plan
     prompt: |
       Analyze this spec. Produce a single task with the function name and affected files.
-    validate:
+    gate:
       - schema: plan
   - name: implement
     foreach: decompose
     steps:
       - name: code
         agent: gemini
-        prompt: "Implement: {task.description}. Files: {task.files}"
-        validate:
+        prompt: "Implement: {item.description}. Files: {item.files}"
+        gate:
           - compile
           - test
 `
@@ -60,7 +62,7 @@ steps:
     prompt: |
       Write tests for a Calculator struct with Add and Subtract methods.
       Only create test files.
-    validate:
+    gate:
       - compile
   - name: implement
     agent: claude-sonnet
@@ -68,7 +70,7 @@ steps:
     prompt: |
       Implement the Calculator struct to make all tests pass.
       Do NOT modify test files.
-    validate:
+    gate:
       - compile
       - test
 `
@@ -81,11 +83,11 @@ steps:
     prompt: |
       {spec}
       IMPORTANT: You must also handle edge cases like empty strings and single characters.
-    validate:
+    gate:
       - compile
       - test
-    retry:
-      max_attempts: 3
+    on_failure:
+      retry: 3
       strategy:
         - same
         - escalate: claude-sonnet
@@ -102,10 +104,40 @@ func TestSmokeDoctor(t *testing.T) {
 	if !strings.Contains(stdout, "git") || !strings.Contains(stdout, "✓") {
 		t.Errorf("stdout should contain git and ✓: %s", stdout)
 	}
-	for _, name := range []string{"claude", "codex", "gemini", "qwen", "opencode"} {
-		if !strings.Contains(stdout, name) {
-			t.Logf("doctor output may not list %s", name)
+	// WHY: Doctor uses harnesses with explicit labels; we assert on labels rather than exit codes.
+	for _, label := range []string{"claude-code", "codex", "gemini", "qwen", "opencode"} {
+		if !strings.Contains(stdout, label) {
+			t.Errorf("stdout should contain %q: %s", label, stdout)
 		}
+	}
+	re := regexp.MustCompile(`recipes\s+✓\s+(\d+)\s+built-in recipes loaded`)
+	m := re.FindStringSubmatch(stdout)
+	if len(m) != 2 {
+		t.Errorf("stdout should contain recipes count (e.g. 'recipes ✓ N built-in recipes loaded'): %s", stdout)
+	} else {
+		n, err := strconv.Atoi(m[1])
+		if err != nil || n <= 0 {
+			t.Errorf("built-in recipes count should be > 0, got %q (err=%v): %s", m[1], err, stdout)
+		}
+	}
+}
+
+// TestSmokeDryRunV4: smoke test live du dry-run v4.
+func TestSmokeDryRunV4(t *testing.T) {
+	requireAgent(t, "claude")
+	dir := setupSmokeRepo(t)
+	writeSpec(t, dir, "Implement a function")
+	stdout, _, code := runPudding(t, dir, "cook", "spec.md", "--recipe", "tdd", "--dry-run")
+	if code != 0 {
+		t.Fatalf("cook exit %d: %s", code, stdout)
+	}
+	for _, s := range []string{"Budget:", "$5.00", "gate=", "on_failure:", "State Bag resolutions:"} {
+		if !strings.Contains(stdout, s) {
+			t.Errorf("stdout missing %q: %s", s, stdout)
+		}
+	}
+	if strings.Contains(stdout, "validate:") || strings.Contains(stdout, "retry:") {
+		t.Errorf("stdout must not contain validate/retry: %s", stdout)
 	}
 }
 
@@ -221,9 +253,9 @@ func TestSmokeTDD(t *testing.T) {
 	}
 	ledger := readLedger(t, dir)
 	hasDecompose := false
-	hasRed := false
-	hasGreen := false
-	hasFinalCheck := false
+	hasTests := false
+	hasImpl := false
+	hasQuality := false
 	for _, ev := range ledger {
 		if ev["type"] != "step_started" {
 			continue
@@ -232,14 +264,14 @@ func TestSmokeTDD(t *testing.T) {
 		if step == "decompose" {
 			hasDecompose = true
 		}
-		if strings.Contains(step, "red") {
-			hasRed = true
+		if strings.Contains(step, "/tests") || step == "tests" {
+			hasTests = true
 		}
-		if strings.Contains(step, "green") {
-			hasGreen = true
+		if strings.Contains(step, "/impl") || step == "impl" {
+			hasImpl = true
 		}
-		if step == "final-check" {
-			hasFinalCheck = true
+		if step == "quality" || strings.Contains(step, "/quality") {
+			hasQuality = true
 		}
 	}
 	assertLedger := func(cond bool, msg string) {
@@ -253,9 +285,9 @@ func TestSmokeTDD(t *testing.T) {
 		}
 	}
 	assertLedger(hasDecompose, "ledger should contain step_started for decompose")
-	assertLedger(hasRed, "ledger should contain step_started for at least one step containing red")
-	assertLedger(hasGreen, "ledger should contain step_started for at least one step containing green")
-	assertLedger(hasFinalCheck, "ledger should contain step_started for final-check")
+	assertLedger(hasTests, "ledger should contain step_started for at least one step containing tests")
+	assertLedger(hasImpl, "ledger should contain step_started for at least one step containing impl")
+	assertLedger(hasQuality, "ledger should contain step_started for quality")
 }
 
 // TestSmokeCrossProvider ensures two different agents are used in one cook so
@@ -515,7 +547,7 @@ steps:
   - name: step-b
     agent: stub
     prompt: "Create goodbye.go"
-    validate:
+    gate:
       - bash: "exit 1"
 `)
 
@@ -660,11 +692,11 @@ steps:
     agent: stub
     session: reuse-on-retry
     prompt: "Implement math.go"
-    validate:
+    gate:
       - compile
       - test
-    retry:
-      max_attempts: 2
+    on_failure:
+      retry: 2
       strategy:
         - same
 `)
@@ -743,18 +775,18 @@ steps:
 	}
 	assertCookPass(t, dir)
 	ledger := readLedger(t, dir)
-	hasDoStep := false
+	hasExecuteStep := false
 	for _, ev := range ledger {
 		if ev["type"] == "step_started" {
 			step, _ := ev["step"].(string)
-			if step == "do" || strings.Contains(step, "implement/do") {
-				hasDoStep = true
+			if step == "execute" || strings.Contains(step, "implement/execute") {
+				hasExecuteStep = true
 				break
 			}
 		}
 	}
-	if !hasDoStep {
-		t.Error("ledger should contain step_started from freeform (e.g. do or implement/do)")
+	if !hasExecuteStep {
+		t.Error("ledger should contain step_started from freeform (e.g. execute or implement/execute)")
 	}
 }
 

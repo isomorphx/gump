@@ -96,28 +96,28 @@ steps:
   - name: spec-build
     agent: claude-sonnet
     prompt: build
-    validate: []
+    gate: []
   - name: spec-refine
     agent: claude-sonnet
     prompt: refine
-    validate: []
+    gate: []
   - name: step-self-reuse
     agent: claude-sonnet
     prompt: self
     session: reuse
-    validate: []
+    gate: []
   - name: step-reuse-build
     agent: claude-sonnet
     prompt: use build session
     session:
       reuse: spec-build
-    validate: []
+    gate: []
   - name: step-reuse-refine
     agent: claude-sonnet
     prompt: use refine session
     session:
       reuse: spec-refine
-    validate: []
+    gate: []
 `)
 	r, err := Parse(yaml, "")
 	if err != nil {

@@ -1,54 +1,44 @@
 name: tdd
 description: Test-Driven Development workflow
+max_budget: 5.00
 
 steps:
   - name: decompose
     agent: claude-opus
     output: plan
     prompt: |
-      Analyze this spec and the codebase. Decompose into independent tasks.
-      For each task, list the files that will be affected (blast radius).
-    validate:
-      - schema: plan
+      Analyze this spec and the codebase. Decompose into independent items.
+      For each item, list the files that will be affected.
+    gate: [schema]
 
-  - name: implement
+  - name: build
     foreach: decompose
-    session: reuse
     steps:
-      - name: red
+      - name: tests
         agent: claude-haiku
+        output: diff
         prompt: |
-          Write failing tests for: {task.description}
-          Only create/modify test files in: {task.files}
-        validate:
-          - compile
-          - touched: "*_test.*"
-          - tests_found
-        retry:
-          max_attempts: 2
-          strategy:
-            - same
-            - escalate: claude-sonnet
+          Write comprehensive tests for: {item.description}
+          Cover edge cases and error conditions.
+          Only create/modify test files in: {item.files}
+        gate: [compile, "touched: *_test.*", tests_found]
+        on_failure:
+          retry: 2
+          strategy: [same, "escalate: claude-sonnet"]
 
-      - name: green
+      - name: impl
         agent: claude-haiku
+        output: diff
+        session: reuse
         prompt: |
-          Implement code to make all tests pass.
-          Only modify implementation files in: {task.files}
-          Do NOT modify any test files.
-        validate:
-          - compile
-          - test
-          - untouched: "*_test.*"
-        retry:
-          max_attempts: 3
-          strategy:
-            - same
-            - escalate: claude-sonnet
-            - replan: claude-opus
+          Implement code to pass all tests.
+          Do not modify the tests.
+          Only modify implementation files in: {item.files}
+        gate: [compile, test, "untouched: *_test.*"]
+        on_failure:
+          retry: 5
+          strategy: ["same: 3", "escalate: claude-sonnet"]
+          restart_from: tests
 
-  - name: final-check
-    validate:
-      - compile
-      - lint
-      - test
+  - name: quality
+    gate: [compile, lint, test]

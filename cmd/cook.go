@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/isomorphx/pudding/internal/agent"
@@ -242,10 +244,16 @@ func runCook(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Printf("Spec:      %s (%d bytes)\n", specPath, specSize)
 		fmt.Printf("Config:    %s\n", configSource)
+		if rec.MaxBudget > 0 {
+			fmt.Printf("Budget:    $%.2f\n", rec.MaxBudget)
+		} else {
+			fmt.Printf("Budget:    $0.00\n")
+		}
 		fmt.Println()
 		fmt.Println("Steps:")
-		printSteps(rec.Steps, "  ")
+		printStepsV4(rec.Steps, "  ", 1)
 		fmt.Println()
+		printStateBagResolutionsV4(rec)
 		return nil
 	}
 
@@ -328,53 +336,62 @@ func walkStepNames(steps []recipe.Step, fn func(name string)) {
 	}
 }
 
-func printSteps(steps []recipe.Step, indent string) {
+func printStepsV4(steps []recipe.Step, indent string, startIdx int) {
 	for i, s := range steps {
-		prefix := indent + fmt.Sprintf("%d. ", i+1)
+		stepIdx := startIdx + i
+		prefix := indent + fmt.Sprintf("%d. ", stepIdx)
 		fmt.Printf("%s%s", prefix, s.Name)
-		if s.Output != "" && s.Output != "diff" {
-			fmt.Printf("  output=%s", s.Output)
+
+		// Gate step / agent step: v4 uses `gate` keyword; parser normalises into Step.Gate.
+		if len(s.Gate) > 0 {
+			fmt.Printf("  gate=%s", formatValidators(s.Gate))
 		}
+		// Orchestration fields.
 		if s.Foreach != "" {
 			fmt.Printf("  foreach=%s", s.Foreach)
 		}
+		if s.Parallel {
+			fmt.Printf("  parallel=true")
+		}
+		if s.Recipe != "" {
+			fmt.Printf("  recipe=%s", s.Recipe)
+		}
+		// Agent step fields.
 		if s.Agent != "" {
 			fmt.Printf("  agent=%s", s.Agent)
+			if strings.TrimSpace(s.Output) != "" {
+				fmt.Printf("  output=%s", s.Output)
+			}
+		} else if strings.TrimSpace(s.Output) != "" {
+			// WHY: gate steps can omit output, but we still print it if present
+			// so dry-run stays faithful to the YAML.
+			fmt.Printf("  output=%s", s.Output)
 		}
-		if len(s.Validate) > 0 && s.Agent == "" && len(s.Steps) == 0 {
-			fmt.Printf("  validate=%s", formatValidators(s.Validate))
-		} else if len(s.Validate) > 0 {
-			fmt.Printf("  validate=%s", formatValidators(s.Validate))
-		}
-		if s.Retry != nil {
-			fmt.Printf("  retry=%d", s.Retry.MaxAttempts)
-		}
-		if s.Session.Mode != "" && s.Session.Mode != "reuse" {
+
+		// Session is optional; show non-default modes (including `reuse`).
+		if s.Session.Mode != "" && s.Session.Mode != "fresh" {
 			if s.Session.Mode == "reuse-targeted" {
 				fmt.Printf("  session=reuse:%s", s.Session.Target)
 			} else {
 				fmt.Printf("  session=%s", s.Session.Mode)
 			}
 		}
+
+		// v4 retry policy is moved under `on_failure:`.
+		if s.OnFailure != nil {
+			fmt.Printf("\n")
+			fmt.Printf("%s  on_failure:\n", indent+fmt.Sprintf("%d. ", stepIdx))
+			fmt.Printf("%s    retry=%d\n", indent+fmt.Sprintf("%d. ", stepIdx), s.OnFailure.Retry)
+			fmt.Printf("%s    strategy=%s\n", indent+fmt.Sprintf("%d. ", stepIdx), formatStrategyV4(s.OnFailure.Strategy))
+			if s.OnFailure.RestartFrom != "" {
+				fmt.Printf("%s    restart_from=%s\n", indent+fmt.Sprintf("%d. ", stepIdx), s.OnFailure.RestartFrom)
+			}
+		}
 		fmt.Println()
+
 		if len(s.Steps) > 0 {
 			subIndent := indent + "     "
-			for j, sub := range s.Steps {
-				fmt.Printf("%s%d.%d %s", subIndent, i+1, j+1, sub.Name)
-				if sub.Output != "" && sub.Output != "diff" {
-					fmt.Printf("  output=%s", sub.Output)
-				}
-				if sub.Agent != "" {
-					fmt.Printf("  agent=%s", sub.Agent)
-				}
-				if len(sub.Validate) > 0 {
-					fmt.Printf("  validate=%s", formatValidators(sub.Validate))
-				}
-				if sub.Retry != nil {
-					fmt.Printf("  retry=%d", sub.Retry.MaxAttempts)
-				}
-				fmt.Println()
-			}
+			printStepsV4(s.Steps, subIndent, 1)
 		}
 	}
 }
@@ -389,4 +406,133 @@ func formatValidators(v []recipe.Validator) string {
 		}
 	}
 	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+func formatStrategyV4(entries []recipe.StrategyEntry) string {
+	if len(entries) == 0 {
+		return "[]"
+	}
+	parts := make([]string, 0, len(entries))
+	for _, e := range entries {
+		switch e.Type {
+		case "same":
+			if e.Count > 1 {
+				parts = append(parts, fmt.Sprintf("same×%d", e.Count))
+			} else {
+				parts = append(parts, "same")
+			}
+		case "escalate":
+			parts = append(parts, fmt.Sprintf("escalate: %s", e.Agent))
+		case "replan":
+			parts = append(parts, fmt.Sprintf("replan: %s", e.Agent))
+		default:
+			parts = append(parts, e.Type)
+		}
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+// printStateBagResolutionsV4 prints which `{steps.<name>.output}` placeholders
+// resolve to which fully-qualified step outputs under StateBag scope rules.
+func printStateBagResolutionsV4(rec *recipe.Recipe) {
+	refsRe := regexp.MustCompile(`\{steps\.([^}.]+)\.(output|diff|files)\}`)
+
+	type node struct {
+		fullPath string
+		name     string
+		prompt   string
+	}
+	var nodes []node
+	var collect func(steps []recipe.Step, prefix string)
+	collect = func(steps []recipe.Step, prefix string) {
+		for _, s := range steps {
+			full := s.Name
+			if prefix != "" {
+				full = prefix + "/" + s.Name
+			}
+			nodes = append(nodes, node{fullPath: full, name: s.Name, prompt: s.Prompt})
+			if len(s.Steps) > 0 {
+				collect(s.Steps, full)
+			}
+		}
+	}
+	collect(rec.Steps, "")
+
+	// WHY: reuse the StateBag scoping rule so the dry-run matches runtime resolution.
+	buildScopeChain := func(scopePath string) []string {
+		if scopePath == "" {
+			return []string{""}
+		}
+		parts := strings.Split(scopePath, "/")
+		out := make([]string, 0, len(parts)+1)
+		for i := len(parts); i >= 0; i-- {
+			out = append(out, strings.Join(parts[:i], "/"))
+		}
+		return out
+	}
+
+	resolve := func(refName, scopePath string) (string, bool) {
+		var candidates []string
+		for _, n := range nodes {
+			base := path.Base(n.fullPath)
+			if base == refName || n.fullPath == refName {
+				candidates = append(candidates, n.fullPath)
+			}
+		}
+		if len(candidates) == 0 {
+			return "", false
+		}
+		for _, scope := range buildScopeChain(scopePath) {
+			var atScope []string
+			for _, c := range candidates {
+				inScope := (scope == "" && !strings.Contains(c, "/")) || (scope != "" && (c == scope || strings.HasPrefix(c, scope+"/")))
+				if inScope {
+					atScope = append(atScope, c)
+				}
+			}
+			if len(atScope) == 1 {
+				return atScope[0], true
+			}
+			if len(atScope) > 1 {
+				return "", false
+			}
+		}
+		if len(candidates) == 1 {
+			return candidates[0], true
+		}
+		return "", false
+	}
+
+	var any bool
+	fmt.Println("State Bag resolutions:")
+	for _, n := range nodes {
+		if n.prompt == "" {
+			continue
+		}
+		matches := refsRe.FindAllStringSubmatch(n.prompt, -1)
+		for _, m := range matches {
+			if len(m) != 3 {
+				continue
+			}
+			refName := m[1]
+			field := m[2]
+			resolvedFull, ok := resolve(refName, n.fullPath)
+			if !ok {
+				continue
+			}
+			placeholder := fmt.Sprintf("{steps.%s.%s}", refName, field)
+			// WHY: `{steps.<n>.diff}` is deprecated in v4, but dry-run resolution
+			// still displays it as `.output` to match the compatibility behavior.
+			targetField := field
+			if field == "diff" {
+				targetField = "output"
+			}
+			fmt.Printf("  %s: %s → %s.%s\n", n.fullPath, placeholder, resolvedFull, targetField)
+			any = true
+		}
+	}
+	if !any {
+		// Keep output deterministic: print header even if nothing was found.
+		_ = 0
+	}
 }
