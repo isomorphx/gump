@@ -3770,10 +3770,16 @@ func TestStep7L7_ReportShowsLastCook(t *testing.T) {
 		t.Fatalf("report exit %d: %s", reportCode, reportOut)
 	}
 	cookID := extractCookID(stdout)
-	if cookID != "" && !strings.Contains(reportOut, cookID) {
-		t.Errorf("report should contain cook ID %s: %s", cookID, reportOut)
+	if cookID != "" {
+		short := cookID
+		if len(short) > 8 {
+			short = short[:8]
+		}
+		if !strings.Contains(reportOut, short) {
+			t.Errorf("report should contain cook id prefix %s: %s", short, reportOut)
+		}
 	}
-	if !strings.Contains(reportOut, "pass") {
+	if !strings.Contains(strings.ToLower(reportOut), "pass") {
 		t.Error("report should contain pass")
 	}
 	if !strings.Contains(reportOut, "simple") {

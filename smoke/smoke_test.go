@@ -963,3 +963,46 @@ func TestSmokeLedgerV4Events(t *testing.T) {
 func execLookPath(name string) (string, error) {
 	return exec.LookPath(name)
 }
+
+// TestSmokeReportLive checks that pudding report runs after a real cook (M5 TUI).
+func TestSmokeReportLive(t *testing.T) {
+	requireAgent(t, "claude")
+	dir := setupSmokeRepo(t)
+	writeSpec(t, dir, specAdd)
+	_, _, code1 := runPudding(t, dir, "cook", "spec.md", "--recipe", "freeform", "--agent", "claude-haiku")
+	if code1 != 0 {
+		t.Fatalf("cook exit %d", code1)
+	}
+	stdout, _, code2 := runPudding(t, dir, "report")
+	if code2 != 0 {
+		t.Fatalf("report exit %d: %s", code2, stdout)
+	}
+	low := strings.ToLower(stdout)
+	if !strings.Contains(low, "pass") {
+		t.Errorf("report should contain pass: %s", stdout)
+	}
+	for _, s := range []string{"Duration", "Cost", "Tokens", "Steps"} {
+		if !strings.Contains(stdout, s) {
+			t.Errorf("report should contain %q: %s", s, stdout)
+		}
+	}
+}
+
+// TestSmokeReportLastN checks cross-cook aggregation (M5).
+func TestSmokeReportLastN(t *testing.T) {
+	requireAgent(t, "claude")
+	dir := setupSmokeRepo(t)
+	writeSpec(t, dir, specAdd)
+	runPudding(t, dir, "cook", "spec.md", "--recipe", "freeform", "--agent", "claude-haiku")
+	runPudding(t, dir, "cook", "spec.md", "--recipe", "freeform", "--agent", "claude-haiku")
+	stdout, _, code := runPudding(t, dir, "report", "--last", "2")
+	if code != 0 {
+		t.Fatalf("report exit %d: %s", code, stdout)
+	}
+	if !strings.Contains(stdout, "Last 2 cooks") {
+		t.Errorf("report should mention Last 2 cooks: %s", stdout)
+	}
+	if !strings.Contains(stdout, "Success rate") {
+		t.Errorf("report should contain Success rate: %s", stdout)
+	}
+}

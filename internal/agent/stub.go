@@ -17,6 +17,35 @@ import (
 	"time"
 )
 
+func scenarioTokensFromFile(worktree string) (tokensIn, tokensOut int) {
+	data, err := os.ReadFile(filepath.Join(worktree, ".pudding-test-scenario.json"))
+	if err != nil {
+		return 0, 0
+	}
+	var sc struct {
+		TokensIn  int `json:"tokens_in"`
+		TokensOut int `json:"tokens_out"`
+	}
+	if json.Unmarshal(data, &sc) != nil {
+		return 0, 0
+	}
+	return sc.TokensIn, sc.TokensOut
+}
+
+func scenarioStdoutExtraJSONLines(worktree string) []string {
+	data, err := os.ReadFile(filepath.Join(worktree, ".pudding-test-scenario.json"))
+	if err != nil {
+		return nil
+	}
+	var sc struct {
+		Lines []string `json:"stdout_extra_json_lines"`
+	}
+	if json.Unmarshal(data, &sc) != nil || len(sc.Lines) == 0 {
+		return nil
+	}
+	return sc.Lines
+}
+
 func scenarioCostAndSessionForStep(worktree, stepName string) (cost float64, sessionID string) {
 	data, err := os.ReadFile(filepath.Join(worktree, ".pudding-test-scenario.json"))
 	if err != nil {
@@ -197,9 +226,20 @@ func (s *StubAdapter) run(ctx context.Context, worktree, prompt, agentName strin
 			}
 		}
 
+		tokensIn, tokensOut := scenarioTokensFromFile(worktree)
 		writeLineObserved(pw, stdoutFile, `{"type":"system","subtype":"init","session_id":"`+stubSid+`"}`)
-		writeLineObserved(pw, stdoutFile, `{"type":"assistant","message":{"content":[{"type":"text","text":"stub done"}]}}`)
-		result := fmt.Sprintf(`{"type":"result","session_id":"%s","is_error":false,"duration_ms":0,"duration_api_ms":0,"num_turns":1,"result":"ok","usage":{},"total_cost_usd":%g}`, stubSid, costUSD)
+		if extras := scenarioStdoutExtraJSONLines(worktree); len(extras) > 0 {
+			for _, line := range extras {
+				writeLineObserved(pw, stdoutFile, line)
+			}
+		} else {
+			writeLineObserved(pw, stdoutFile, `{"type":"assistant","message":{"content":[{"type":"text","text":"stub done"}]}}`)
+		}
+		usage := `,"usage":{}`
+		if tokensIn > 0 || tokensOut > 0 {
+			usage = fmt.Sprintf(`,"usage":{"input_tokens":%d,"output_tokens":%d}`, tokensIn, tokensOut)
+		}
+		result := fmt.Sprintf(`{"type":"result","session_id":"%s","is_error":false,"duration_ms":0,"duration_api_ms":0,"num_turns":1,"result":"ok"%s,"total_cost_usd":%g}`, stubSid, usage, costUSD)
 		writeLineObserved(pw, stdoutFile, result)
 	}()
 
