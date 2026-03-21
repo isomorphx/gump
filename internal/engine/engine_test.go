@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -57,5 +59,33 @@ func TestFormatValidationPassSummary_WithSkips(t *testing.T) {
 	}
 	if strings.Contains(summary, "failed") {
 		t.Error("summary should not contain 'failed'")
+	}
+}
+
+func TestGoModuleRootBinaryName(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/smoketest\n\ngo 1.22\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if got := goModuleRootBinaryName(dir); got != "smoketest" {
+		t.Errorf("got %q, want smoketest", got)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module lone\n\ngo 1.22\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if got := goModuleRootBinaryName(dir); got != "lone" {
+		t.Errorf("got %q, want lone", got)
+	}
+}
+
+func TestFilterRepoFilesOnly_ExcludesGoModuleBinary(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/smoketest\n\ngo 1.22\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	in := []string{"math.go", "smoketest", "CLAUDE.md"}
+	out := filterRepoFilesOnly(dir, in)
+	if len(out) != 1 || out[0] != "math.go" {
+		t.Errorf("got %v, want [math.go]", out)
 	}
 }

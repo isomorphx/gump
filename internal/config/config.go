@@ -10,6 +10,9 @@ type Config struct {
 	TestCmd      string
 	LintCmd      string
 	CoverageCmd  string
+	// ErrorContextMax* bound gate stderr and diff injected on retry so huge validator output cannot blow the model budget.
+	ErrorContextMaxErrorChars int
+	ErrorContextMaxDiffChars  int
 	// UpdateCheck controls whether the CLI performs a best-effort remote update check.
 	// It is intentionally a simple bool so the update-check logic stays fully decoupled
 	// from config parsing (internal/version must not import internal/config).

@@ -20,6 +20,7 @@ import (
 const (
 	planMarker     = "[PUDDING:plan]"
 	artifactMarker = "[PUDDING:artifact]"
+	reviewMarker   = "[PUDDING:review]"
 	stubSessionID  = "stub-session-id"
 )
 
@@ -109,6 +110,7 @@ func (s *StubAdapter) run(ctx context.Context, worktree, prompt, agentName strin
 		stepName := extractStepNameFromPrompt(prompt)
 		isPlan := strings.Contains(prompt, planMarker)
 		isArtifact := strings.Contains(prompt, artifactMarker)
+		isReview := strings.Contains(prompt, reviewMarker)
 		if isPlan {
 			planPath := filepath.Join(outDir, "plan.json")
 			planContent := []byte(`[
@@ -132,6 +134,18 @@ func (s *StubAdapter) run(ctx context.Context, worktree, prompt, agentName strin
 				filename = "step.stub"
 			}
 			_ = os.WriteFile(filepath.Join(worktree, filename), []byte("stub output"), 0644)
+		} else if isReview {
+			reviewPath := filepath.Join(outDir, "review.json")
+			_ = os.WriteFile(reviewPath, []byte(`{"pass":true,"comment":"stub review ok"}`), 0644)
+			if applyTestScenarioWithStep(worktree, stepName) {
+				// scenario supplies files (e.g. compile gate)
+			} else {
+				filename := stepName + ".stub"
+				if stepName == "" {
+					filename = "step.stub"
+				}
+				_ = os.WriteFile(filepath.Join(worktree, filename), []byte("stub output"), 0644)
+			}
 		} else {
 			if applyTestScenarioWithStep(worktree, stepName) {
 				// Scenario file defined code files; no .stub
@@ -177,9 +191,14 @@ func attemptFromContextFile(worktree string) int {
 		if err != nil {
 			continue
 		}
-		re := regexp.MustCompile(`Attempt (\d+)/(\d+)`)
-		if m := re.FindSubmatch(body); len(m) >= 2 {
-			if n, err := strconv.Atoi(string(m[1])); err == nil {
+		s := string(body)
+		if m := regexp.MustCompile(`(?i)(?:retry )?attempt (\d+) of (\d+)`).FindStringSubmatch(s); len(m) >= 2 {
+			if n, err := strconv.Atoi(m[1]); err == nil {
+				return n
+			}
+		}
+		if m := regexp.MustCompile(`Attempt (\d+)/(\d+)`).FindStringSubmatch(s); len(m) >= 2 {
+			if n, err := strconv.Atoi(m[1]); err == nil {
 				return n
 			}
 		}

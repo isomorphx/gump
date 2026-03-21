@@ -34,4 +34,5 @@ type StepExecution struct {
 	FinishedAt    time.Time
 	ValidateError string // aggregated stderr of failed validators
 	ValidateDiff  string // worktree diff at fail time for retry context
+	ReviewComment string // reviewer feedback when output: review fails (injected on retry only)
 }

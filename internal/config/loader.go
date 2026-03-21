@@ -80,6 +80,10 @@ type fileConfig struct {
 		LintCmd     string `toml:"lint_cmd"`
 		CoverageCmd string `toml:"coverage_cmd"`
 	} `toml:"validation"`
+	ErrorContext struct {
+		MaxErrorChars int `toml:"max_error_chars"`
+		MaxDiffChars  int `toml:"max_diff_chars"`
+	} `toml:"error_context"`
 }
 
 func applyFile(cfg *Config, src *Source, path, label string) {
@@ -119,6 +123,12 @@ func applyFile(cfg *Config, src *Source, path, label string) {
 	if f.Validation.CoverageCmd != "" {
 		cfg.CoverageCmd = f.Validation.CoverageCmd
 		src.CoverageCmd = label
+	}
+	if f.ErrorContext.MaxErrorChars > 0 {
+		cfg.ErrorContextMaxErrorChars = f.ErrorContext.MaxErrorChars
+	}
+	if f.ErrorContext.MaxDiffChars > 0 {
+		cfg.ErrorContextMaxDiffChars = f.ErrorContext.MaxDiffChars
 	}
 }
 

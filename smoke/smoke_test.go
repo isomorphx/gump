@@ -200,9 +200,9 @@ func TestSmokeSimple(t *testing.T) {
 	requireAgent(t, "claude")
 	dir := setupSmokeRepo(t)
 	writeSpec(t, dir, specMathLib)
-	stdout, _, code := runPudding(t, dir, "cook", "spec.md", "--recipe", "simple", "--agent", "claude-sonnet")
+	stdout, stderr, code := runPudding(t, dir, "cook", "spec.md", "--recipe", "simple", "--agent", "claude-sonnet")
 	if code != 0 {
-		t.Fatalf("cook exit %d: %s", code, stdout)
+		t.Fatalf("cook exit %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
 	assertCookPass(t, dir)
 	ledger := readLedger(t, dir)
@@ -648,6 +648,100 @@ steps:
 	}
 	if !strings.Contains(string(data), marker) {
 		t.Errorf("context file should contain marker %q", marker)
+	}
+}
+
+// TestSmokeContextBuilderV4Modes: diff and review modes must produce distinct provider prompts so agents never mix output contracts.
+func TestSmokeContextBuilderV4Modes(t *testing.T) {
+	dir := setupSmokeRepo(t)
+	writeSpec(t, dir, "Create a simple Go function.")
+	writeFile(t, dir, ".pudding-test-scenario.json", `{"files": {"add.go": "package main\n\nfunc Add(a, b int) int { return a + b }\n"}}`)
+	writeRecipe(t, dir, "test-diff", `name: test-diff
+steps:
+  - name: s
+    agent: claude-haiku
+    output: diff
+    prompt: "x"
+    gate: [compile]
+`)
+	stdout, stderr, code := runPudding(t, dir, "cook", "spec.md", "--recipe", "test-diff", "--agent-stub")
+	if code != 0 {
+		t.Fatalf("cook exit %d: %s %s", code, stdout, stderr)
+	}
+	cookID := filepath.Base(latestCookDir(t, dir))
+	wtDir := filepath.Join(dir, ".pudding", "worktrees", "cook-"+cookID)
+	data1, err := os.ReadFile(filepath.Join(wtDir, "CLAUDE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s1 := string(data1)
+	if !strings.Contains(s1, "code step") || !strings.Contains(s1, "git diff") {
+		t.Errorf("diff mode: expected code step and git diff markers")
+	}
+	writeRecipe(t, dir, "test-review", `name: test-review
+steps:
+  - name: r
+    agent: claude-haiku
+    output: review
+    prompt: "Review"
+    gate: [compile]
+`)
+	stdout, stderr, code = runPudding(t, dir, "cook", "spec.md", "--recipe", "test-review", "--agent-stub")
+	if code != 0 {
+		t.Fatalf("cook exit %d: %s %s", code, stdout, stderr)
+	}
+	cookID2 := filepath.Base(latestCookDir(t, dir))
+	wtDir2 := filepath.Join(dir, ".pudding", "worktrees", "cook-"+cookID2)
+	data2, err := os.ReadFile(filepath.Join(wtDir2, "CLAUDE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s2 := string(data2)
+	if !strings.Contains(s2, "review step") || !strings.Contains(s2, "review.json") {
+		t.Errorf("review mode: expected review step and review.json markers")
+	}
+	writeRecipe(t, dir, "test-plan", `name: test-plan
+steps:
+  - name: p
+    agent: claude-haiku
+    output: plan
+    prompt: "Plan"
+`)
+	stdout, stderr, code = runPudding(t, dir, "cook", "spec.md", "--recipe", "test-plan", "--agent-stub")
+	if code != 0 {
+		t.Fatalf("cook exit %d: %s %s", code, stdout, stderr)
+	}
+	cookID3 := filepath.Base(latestCookDir(t, dir))
+	wtDir3 := filepath.Join(dir, ".pudding", "worktrees", "cook-"+cookID3)
+	data3, err := os.ReadFile(filepath.Join(wtDir3, "CLAUDE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s3 := string(data3)
+	if !strings.Contains(s3, "plan step") || !strings.Contains(s3, ".pudding/out/plan.json") {
+		t.Errorf("plan mode: expected plan step and plan.json markers")
+	}
+	writeRecipe(t, dir, "test-artifact", `name: test-artifact
+steps:
+  - name: a
+    agent: claude-haiku
+    output: artifact
+    prompt: "Write artifact"
+    gate: [compile]
+`)
+	stdout, stderr, code = runPudding(t, dir, "cook", "spec.md", "--recipe", "test-artifact", "--agent-stub")
+	if code != 0 {
+		t.Fatalf("cook exit %d: %s %s", code, stdout, stderr)
+	}
+	cookID4 := filepath.Base(latestCookDir(t, dir))
+	wtDir4 := filepath.Join(dir, ".pudding", "worktrees", "cook-"+cookID4)
+	data4, err := os.ReadFile(filepath.Join(wtDir4, "CLAUDE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s4 := string(data4)
+	if !strings.Contains(s4, "artifact step") || !strings.Contains(s4, ".pudding/out/artifact.txt") {
+		t.Errorf("artifact mode: expected artifact step and artifact.txt markers")
 	}
 }
 

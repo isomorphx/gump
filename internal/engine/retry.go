@@ -5,22 +5,24 @@ import (
 	"os"
 
 	"github.com/isomorphx/pudding/internal/ledger"
+	"github.com/isomorphx/pudding/internal/plan"
 	"github.com/isomorphx/pudding/internal/recipe"
 	"github.com/isomorphx/pudding/internal/sandbox"
 )
 
 // ErrorContext carries failed validation output so the next attempt gets {error} and {diff} in the prompt.
-// Used only when attempt > 1 to avoid repeating the same mistake.
+// ReviewComment is set when a review step failed so the retry prompt can surface the reviewer’s feedback.
 type ErrorContext struct {
-	Error    string
-	Diff     string
-	Attempt  int
-	Strategy string
+	Error          string
+	Diff           string
+	ReviewComment  string
+	Attempt        int
+	Strategy       string
 }
 
 // RunWithRetry runs one atomic step with the recipe retry policy.
 // runOnce runs the step once and returns (nil, _) on pass, (err, preStepCommit) on failure; preStepCommit is the worktree HEAD at start of runOnce so we can reset before the next attempt.
-func (e *Engine) RunWithRetry(step recipe.Step, scopePath string, runOnce func(attempt int, agentOverride string, errorContext *ErrorContext) (err error, preStepCommit string)) error {
+func (e *Engine) RunWithRetry(step recipe.Step, scopePath string, taskContext *plan.Task, runOnce func(attempt int, agentOverride string, errorContext *ErrorContext) (err error, preStepCommit string)) error {
 	expanded := recipe.ExpandStrategy(step.Retry.Strategy)
 	if len(expanded) == 0 {
 		expanded = []recipe.StrategyEntry{{Type: "same", Count: 1}}
@@ -66,7 +68,7 @@ func (e *Engine) RunWithRetry(step recipe.Step, scopePath string, runOnce func(a
 				return fmt.Errorf("worktree reset before replan: %w", err)
 			}
 			RetryTriggerLine(fmt.Sprintf("replan (%s) — decomposing into sub-tasks", strategy.Agent))
-			if replanErr := e.ExecuteReplan(strategy.Agent, step, scopePath, errorContext); replanErr != nil {
+			if replanErr := e.ExecuteReplan(strategy.Agent, step, scopePath, errorContext, taskContext); replanErr != nil {
 				if errorContext != nil {
 					errorContext.Error = e.lastValidationError()
 					errorContext.Diff = e.lastValidationDiff()
@@ -97,8 +99,11 @@ func (e *Engine) RunWithRetry(step recipe.Step, scopePath string, runOnce func(a
 			return nil
 		}
 		if errorContext != nil {
-			errorContext.Error = e.lastValidationError()
-			errorContext.Diff = e.lastValidationDiff()
+			if ctx := e.lastValidationErrorContext(); ctx != nil {
+				errorContext.Error = ctx.Error
+				errorContext.Diff = ctx.Diff
+				errorContext.ReviewComment = ctx.ReviewComment
+			}
 		}
 	}
 
@@ -115,8 +120,8 @@ func (e *Engine) RunWithRetry(step recipe.Step, scopePath string, runOnce func(a
 func (e *Engine) lastValidationErrorContext() *ErrorContext {
 	for i := len(e.Steps) - 1; i >= 0; i-- {
 		s := &e.Steps[i]
-		if s.ValidateError != "" || s.ValidateDiff != "" {
-			return &ErrorContext{Error: s.ValidateError, Diff: s.ValidateDiff}
+		if s.ValidateError != "" || s.ValidateDiff != "" || s.ReviewComment != "" {
+			return &ErrorContext{Error: s.ValidateError, Diff: s.ValidateDiff, ReviewComment: s.ReviewComment}
 		}
 	}
 	return nil

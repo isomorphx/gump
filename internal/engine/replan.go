@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/isomorphx/pudding/internal/agent"
 	pkgcontext "github.com/isomorphx/pudding/internal/context"
@@ -13,13 +14,22 @@ import (
 )
 
 // ExecuteReplan runs the replan agent to produce a new plan, then runs each sub-task with the original step agent (no retry on sub-tasks).
-func (e *Engine) ExecuteReplan(replanAgent string, step recipe.Step, scopePath string, errorContext *ErrorContext) error {
+func (e *Engine) ExecuteReplan(replanAgent string, step recipe.Step, scopePath string, errorContext *ErrorContext, task *plan.Task) error {
 	originalPrompt := step.Prompt
 	if step.Output == "plan" && originalPrompt == "" {
 		originalPrompt = "Analyze the following specification and produce a plan.\n\n{spec}"
 	}
 	vars := e.buildVars(nil, nil, nil)
 	originalResolved := template.Resolve(originalPrompt, vars, e.StateBag, scopePath)
+	itemName, itemDesc, itemFiles := "", originalResolved, ""
+	if task != nil {
+		itemName = task.Name
+		itemDesc = task.Description
+		if itemDesc == "" {
+			itemDesc = originalResolved
+		}
+		itemFiles = strings.Join(task.Files, ", ")
+	}
 	diffStr := ""
 	errStr := ""
 	if errorContext != nil {
@@ -32,7 +42,16 @@ func (e *Engine) ExecuteReplan(replanAgent string, step recipe.Step, scopePath s
 	if err := PrepareOutputDir(e.Cook.WorktreeDir); err != nil {
 		return fmt.Errorf("prepare output dir for replan: %w", err)
 	}
-	replanBody, err := pkgcontext.BuildReplan(e.Cook.WorktreeDir, originalResolved, diffStr, errStr, contextFile)
+	maxErr, maxDiff := 2000, 3000
+	if e.Config != nil {
+		if e.Config.ErrorContextMaxErrorChars > 0 {
+			maxErr = e.Config.ErrorContextMaxErrorChars
+		}
+		if e.Config.ErrorContextMaxDiffChars > 0 {
+			maxDiff = e.Config.ErrorContextMaxDiffChars
+		}
+	}
+	replanBody, err := pkgcontext.BuildReplan(e.Cook.WorktreeDir, itemName, itemDesc, itemFiles, diffStr, errStr, contextFile, maxErr, maxDiff)
 	if err != nil {
 		return fmt.Errorf("write replan context: %w", err)
 	}

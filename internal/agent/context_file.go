@@ -13,6 +13,14 @@ const (
 
 // originalBackupByContextFile keeps provider-specific backups so cleanup restores the user's file, not another provider's.
 var originalBackupByContextFile = map[string]string{
+	"CLAUDE.md":  ".pudding-original-CLAUDE.md",
+	"AGENTS.md":  ".pudding-original-AGENTS.md",
+	"GEMINI.md":  ".pudding-original-GEMINI.md",
+	"QWEN.md":   ".pudding-original-QWEN.md",
+}
+
+// legacyOriginalBackupByContextFile is the pre-spec backup filename (lowercase) per context file.
+var legacyOriginalBackupByContextFile = map[string]string{
 	"CLAUDE.md":  ".pudding-original-claude.md",
 	"AGENTS.md":  ".pudding-original-agents.md",
 	"GEMINI.md":  ".pudding-original-gemini.md",
@@ -43,6 +51,8 @@ func WriteReplanContext(worktreeDir, taskName, taskDesc string, taskFiles []stri
 	return writeWithBackup(worktreeDir, replanTemplate(taskName, taskDesc, taskFiles, diff, errMsg), contextFile)
 }
 
+const puddingContextFileHeader = "# Pudding — Agent Instructions"
+
 func writeWithBackup(worktreeDir, content, contextFile string) error {
 	path := filepath.Join(worktreeDir, contextFile)
 	backupName := originalBackupByContextFile[contextFile]
@@ -53,7 +63,9 @@ func writeWithBackup(worktreeDir, content, contextFile string) error {
 	if _, err := os.Stat(path); err == nil {
 		if _, err := os.Stat(backupPath); os.IsNotExist(err) {
 			data, _ := os.ReadFile(path)
-			_ = os.WriteFile(backupPath, data, 0644)
+			if !strings.HasPrefix(strings.TrimSpace(string(data)), puddingContextFileHeader) {
+				_ = os.WriteFile(backupPath, data, 0644)
+			}
 		}
 	}
 	return os.WriteFile(path, []byte(content), 0644)
@@ -75,6 +87,15 @@ func RestoreAllContextFiles(worktreeDir string) {
 	for contextFile, backupName := range originalBackupByContextFile {
 		backupPath := filepath.Join(worktreeDir, backupName)
 		data, err := os.ReadFile(backupPath)
+		if err != nil {
+			if legacy, ok := legacyOriginalBackupByContextFile[contextFile]; ok {
+				legacyPath := filepath.Join(worktreeDir, legacy)
+				data, err = os.ReadFile(legacyPath)
+				if err == nil {
+					backupPath = legacyPath
+				}
+			}
+		}
 		if err != nil {
 			continue
 		}

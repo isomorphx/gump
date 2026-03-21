@@ -376,7 +376,7 @@ func taskContextName(t *plan.Task) string {
 
 func (e *Engine) runAtomicStep(step *recipe.Step, stepPath string, taskContext *plan.Task, lastSessionByAgent map[string]string, parentSession recipe.SessionConfig, groupAgentOverride string) error {
 	if step.Retry != nil && step.Retry.MaxAttempts > 1 {
-		return e.RunWithRetry(*step, stepPath, func(attempt int, agentOverride string, errorContext *ErrorContext) (err error, preStepCommit string) {
+		return e.RunWithRetry(*step, stepPath, taskContext, func(attempt int, agentOverride string, errorContext *ErrorContext) (err error, preStepCommit string) {
 			override := agentOverride
 			if override == "" && groupAgentOverride != "" {
 				override = groupAgentOverride
@@ -400,10 +400,13 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 		outputMode = "diff"
 	}
 	prompt := step.Prompt
-	if step.Output == "plan" && prompt == "" {
-		prompt = "Analyze the following specification and produce a plan.\n\n{spec}"
-	}
 	resolvedPrompt := template.Resolve(prompt, vars, e.StateBag, stepPath)
+
+	effectiveSession := step.Session
+	if effectiveSession.Mode == "" {
+		effectiveSession = parentSession
+	}
+	sessionReuse := attempt == 1 && (effectiveSession.Mode == "reuse" || effectiveSession.Mode == "reuse-targeted")
 
 	var taskFiles []string
 	if taskContext != nil && len(taskContext.Files) > 0 {
@@ -428,20 +431,25 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 	var retrySection *pkgcontext.RetrySection
 	if attempt > 1 && errorContext != nil && step.Retry != nil {
 		retrySection = &pkgcontext.RetrySection{
-			Attempt:     attempt,
-			MaxAttempts:  step.Retry.MaxAttempts,
-			Diff:        errorContext.Diff,
-			Error:       errorContext.Error,
-			Remaining:   step.Retry.MaxAttempts - attempt,
-			EscalateTo:   agentOverride,
-			EscalateFrom: step.Agent,
+			Attempt:        attempt,
+			MaxAttempts:    step.Retry.MaxAttempts,
+			Diff:           errorContext.Diff,
+			Error:          errorContext.Error,
+			ReviewComment:  errorContext.ReviewComment,
+			Remaining:      step.Retry.MaxAttempts - attempt,
+			EscalateTo:     agentOverride,
+			EscalateFrom:   step.Agent,
 		}
 		if agentOverride == "" {
 			retrySection.EscalateTo = ""
 			retrySection.EscalateFrom = ""
 		}
 	}
-	if err := pkgcontext.Build(outputMode, resolvedPrompt, step.Context, e.Cook.WorktreeDir, e.Config, taskFiles, vars, contextFile, retrySection); err != nil {
+	var buildOpts *pkgcontext.BuildOptions
+	if sessionReuse {
+		buildOpts = &pkgcontext.BuildOptions{SessionReuse: true}
+	}
+	if err := pkgcontext.Build(outputMode, resolvedPrompt, step.Context, e.Cook.WorktreeDir, e.Config, taskFiles, vars, contextFile, retrySection, buildOpts); err != nil {
 		return fmt.Errorf("write context: %w", err), preStepCommit
 	}
 
@@ -454,10 +462,6 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 		}
 	}
 
-	effectiveSession := step.Session
-	if effectiveSession.Mode == "" {
-		effectiveSession = parentSession
-	}
 	sessionID := ""
 	switch effectiveSession.Mode {
 	case "fresh":
@@ -487,6 +491,8 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 		promptForAgent += "\n[PUDDING:plan]"
 	} else if outputMode == "artifact" {
 		promptForAgent += "\n[PUDDING:artifact]"
+	} else if outputMode == "review" {
+		promptForAgent += "\n[PUDDING:review]"
 	}
 	promptForAgent += "\n[PUDDING:step:" + step.Name + "]"
 	if timeout > 0 {
@@ -668,6 +674,39 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 			return fmt.Errorf("artifact step failed: %w", err), preStepCommit
 		}
 		outputValue = text
+	case "review":
+		rev, err := ExtractReviewOutput(e.Cook.WorktreeDir)
+		if err != nil {
+			exec.Status = StepFatal
+			exec.FinishedAt = time.Now()
+			e.Steps = append(e.Steps, exec)
+			e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), nil, outputMode, "", false)
+			fmt.Fprintf(os.Stderr, "[%s]\tfatal\tFATAL: %v\n", stepPath, err)
+			return fmt.Errorf("review step failed: %w", err), preStepCommit
+		}
+		outputValue = rev.Raw
+		if !rev.Pass {
+			dc, snapErr := e.Cook.Snapshot(step.Name, taskName, attempt)
+			if snapErr != nil {
+				exec.Status = StepFatal
+				exec.FinishedAt = time.Now()
+				e.Steps = append(e.Steps, exec)
+				e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), nil, outputMode, "", false)
+				fmt.Fprintf(os.Stderr, "[%s]\tfatal\tFATAL: %v\n", stepPath, snapErr)
+				return fmt.Errorf("snapshot after failed review: %w", snapErr), preStepCommit
+			}
+			errMsg := fmt.Sprintf("review did not pass: %s", rev.Comment)
+			exec.ValidateError = errMsg
+			exec.ValidateDiff = dc.Patch
+			exec.ReviewComment = rev.Comment
+			exec.Status = StepFatal
+			exec.FinishedAt = time.Now()
+			e.Steps = append(e.Steps, exec)
+			e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), dc, outputMode, outputValue, true)
+			fmt.Fprintf(os.Stderr, "[%s]\tFAIL\t%s\n", stepPath, errMsg)
+			RetryValidationFailed("review did not pass", "")
+			return fmt.Errorf("step %s: review did not pass", step.Name), preStepCommit
+		}
 	}
 
 	dc, err := e.Cook.Snapshot(step.Name, taskName, attempt)
@@ -698,7 +737,7 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 
 	// Enforce task.files blast radius so agents don't modify files outside the planned scope (retry gets {error} injected).
 	if taskContext != nil && len(taskContext.Files) > 0 {
-		repoFiles := filterRepoFilesOnly(dc.FilesChanged)
+		repoFiles := filterRepoFilesOnly(e.Cook.WorktreeDir, dc.FilesChanged)
 		violators, errMsg := checkBlastRadius(repoFiles, taskContext.Files)
 		if len(violators) > 0 {
 			if e.Cook.Ledger != nil {
@@ -795,6 +834,8 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 			ContextLine("plan", len(tasks), 0)
 			detail = fmt.Sprintf("%d tasks planned", len(tasks))
 		}
+	} else if outputMode == "review" && outputValue != "" {
+		detail = "review.json recorded"
 	} else if outputMode != "plan" && dc != nil {
 		n := len(dc.FilesChanged)
 		ContextLine("diff", 0, n)
@@ -951,7 +992,10 @@ func buildValidationPassDetail(outputMode, outputValue string, dc *diff.DiffCont
 			parts = append(parts, fmt.Sprintf("%d tasks planned", len(tasks)))
 		}
 	}
-	if outputMode != "plan" && dc != nil {
+	if outputMode == "review" && outputValue != "" {
+		parts = append(parts, "review passed")
+	}
+	if outputMode != "plan" && outputMode != "review" && dc != nil {
 		n := len(dc.FilesChanged)
 		if n == 0 {
 			parts = append(parts, "no changes")
@@ -1023,8 +1067,39 @@ func (e *Engine) lastSessionIDForStep(stepPath string) string {
 	return ""
 }
 
-// buildVars builds template variables; errorContext and extraVars are optional (retry and replan sub-tasks).
-func filterRepoFilesOnly(files []string) []string {
+// goModuleRootBinaryName returns the default `go build` / `go test` binary basename at module root
+// (last path segment of the module path, e.g. example.com/smoketest -> smoketest). Such files are not
+// source edits and must not trigger blast-radius violations when validators run `go test`.
+func goModuleRootBinaryName(worktreeDir string) string {
+	data, err := os.ReadFile(filepath.Join(worktreeDir, "go.mod"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "//") {
+			continue
+		}
+		if strings.HasPrefix(line, "module ") {
+			mod := strings.TrimSpace(strings.TrimPrefix(line, "module"))
+			mod = strings.Trim(mod, `"`)
+			if mod == "" {
+				return ""
+			}
+			if i := strings.LastIndex(mod, "/"); i >= 0 {
+				return mod[i+1:]
+			}
+			return mod
+		}
+	}
+	return ""
+}
+
+func filterRepoFilesOnly(worktreeDir string, files []string) []string {
+	goBin := ""
+	if worktreeDir != "" {
+		goBin = goModuleRootBinaryName(worktreeDir)
+	}
 	var out []string
 	for _, f := range files {
 		norm := filepath.ToSlash(f)
@@ -1038,7 +1113,15 @@ func filterRepoFilesOnly(files []string) []string {
 		if strings.HasSuffix(norm, ".stub") {
 			continue
 		}
-		// Go build produces a binary named after the module (e.g. testproject in e2e); exclude from blast radius.
+		// Provider context backups live next to CLAUDE.md; they are Pudding metadata, not task edits.
+		if strings.HasPrefix(norm, ".pudding-original-") {
+			continue
+		}
+		// Go build/test produces a binary named after the module path's last segment (see `go help build`).
+		if goBin != "" && (norm == goBin || norm == goBin+".exe" || strings.HasPrefix(norm, goBin+"/") || strings.HasPrefix(norm, goBin+".exe/")) {
+			continue
+		}
+		// Legacy e2e module name (testproject) before go.mod-based detection.
 		if norm == "testproject" || strings.HasPrefix(norm, "testproject/") {
 			continue
 		}
@@ -1075,6 +1158,7 @@ func checkBlastRadius(filesChanged, allowedPatterns []string) (violators []strin
 	return violators, b.String()
 }
 
+// buildVars builds template variables; errorContext and extraVars are optional (retry and replan sub-tasks).
 func (e *Engine) buildVars(taskContext *plan.Task, errorContext *ErrorContext, extraVars map[string]string) map[string]string {
 	vars := map[string]string{
 		"spec":  e.SpecContent,
@@ -1085,6 +1169,9 @@ func (e *Engine) buildVars(taskContext *plan.Task, errorContext *ErrorContext, e
 		vars["task.name"] = taskContext.Name
 		vars["task.description"] = taskContext.Description
 		vars["task.files"] = strings.Join(taskContext.Files, ", ")
+		vars["item.name"] = taskContext.Name
+		vars["item.description"] = taskContext.Description
+		vars["item.files"] = strings.Join(taskContext.Files, ", ")
 	}
 	if errorContext != nil {
 		vars["error"] = errorContext.Error
