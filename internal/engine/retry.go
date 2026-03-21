@@ -1,8 +1,10 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/isomorphx/pudding/internal/ledger"
 	"github.com/isomorphx/pudding/internal/plan"
@@ -13,33 +15,38 @@ import (
 // ErrorContext carries failed validation output so the next attempt gets {error} and {diff} in the prompt.
 // ReviewComment is set when a review step failed so the retry prompt can surface the reviewer’s feedback.
 type ErrorContext struct {
-	Error          string
-	Diff           string
-	ReviewComment  string
-	Attempt        int
-	Strategy       string
+	Error         string
+	Diff          string
+	ReviewComment string
+	Attempt       int
+	Strategy      string
+	// FromRestart is set when this context was stashed after a restart_from jump so attempt 1 still gets retry markdown.
+	FromRestart bool
 }
 
-// RunWithRetry runs one atomic step with the recipe retry policy.
+// RunWithRetry runs one atomic step with the recipe on_failure policy.
 // runOnce runs the step once and returns (nil, _) on pass, (err, preStepCommit) on failure; preStepCommit is the worktree HEAD at start of runOnce so we can reset before the next attempt.
 func (e *Engine) RunWithRetry(step recipe.Step, scopePath string, taskContext *plan.Task, runOnce func(attempt int, agentOverride string, errorContext *ErrorContext) (err error, preStepCommit string)) error {
-	expanded := recipe.ExpandStrategy(step.Retry.Strategy)
-	if len(expanded) == 0 {
+	expanded := step.ExpandedOnFailureStrategy()
+	hasRestartOnly := step.OnFailure != nil && strings.TrimSpace(step.OnFailure.RestartFrom) != "" && len(expanded) == 0
+	if len(expanded) == 0 && !hasRestartOnly {
 		expanded = []recipe.StrategyEntry{{Type: "same", Count: 1}}
 	}
-	maxAttempts := step.Retry.MaxAttempts
+	maxAttempts := step.MaxAttempts()
 	if maxAttempts <= 1 {
 		maxAttempts = 1
 	}
 	maxRetries := maxAttempts - 1
+	if hasRestartOnly {
+		// WHY: on_failure with restart_from but no strategy triggers restart on first gate failure (no same/escalate retries).
+		maxRetries = 0
+	}
 
-	// First attempt: no override, no error context.
 	err, preCommit := runOnce(1, "", nil)
 	if err == nil {
 		e.emitStepCompletedFromLast()
 		return nil
 	}
-	// Capture error context from the last StepExecution (engine appended it on validation failure).
 	errorContext := e.lastValidationErrorContext()
 	if errorContext != nil {
 		errorContext.Attempt = 1
@@ -47,16 +54,24 @@ func (e *Engine) RunWithRetry(step recipe.Step, scopePath string, taskContext *p
 
 	for retryIndex := 0; retryIndex < maxRetries; retryIndex++ {
 		idx := retryIndex
-		if idx >= len(expanded) {
-			idx = len(expanded) - 1
+		if len(expanded) > 0 {
+			if idx >= len(expanded) {
+				idx = len(expanded) - 1
+			}
+		} else {
+			idx = 0
 		}
-		strategy := expanded[idx]
+		var strategy recipe.StrategyEntry
+		if len(expanded) > 0 {
+			strategy = expanded[idx]
+		} else {
+			strategy = recipe.StrategyEntry{Type: "same", Count: 1}
+		}
 		attempt := retryIndex + 2
 		strategyLabel := strategy.Type
 		if strategy.Agent != "" {
 			strategyLabel = strategy.Type + ": " + strategy.Agent
 		}
-		// Ledger records each retry so report can show retry rate per step and aggregate cost of retries.
 		if e.Cook.Ledger != nil {
 			_ = e.Cook.Ledger.Emit(ledger.RetryTriggered{Step: scopePath, Attempt: attempt, Strategy: strategyLabel, Scope: "step"})
 			e.retryTriggeredCount++
@@ -107,6 +122,10 @@ func (e *Engine) RunWithRetry(step recipe.Step, scopePath string, taskContext *p
 		}
 	}
 
+	if step.OnFailure != nil && strings.TrimSpace(step.OnFailure.RestartFrom) != "" {
+		return &ErrRestartFrom{TargetName: strings.TrimSpace(step.OnFailure.RestartFrom), CurrentPath: scopePath}
+	}
+
 	if e.Cook.Ledger != nil {
 		_ = e.Cook.Ledger.Emit(ledger.CircuitBreaker{
 			Step: scopePath, Scope: "step", Reason: "all attempts exhausted", TotalAttempts: maxAttempts,
@@ -148,4 +167,13 @@ func (e *Engine) lastValidationDiff() string {
 // PreStepCommit returns the current worktree HEAD so a future retry can reset to it.
 func PreStepCommit(worktreeDir string) (string, error) {
 	return sandbox.HeadCommit(worktreeDir)
+}
+
+// IsRestartFrom reports whether err requests a restart_from sibling jump.
+func IsRestartFrom(err error) (*ErrRestartFrom, bool) {
+	var rf *ErrRestartFrom
+	if errors.As(err, &rf) {
+		return rf, true
+	}
+	return nil, false
 }

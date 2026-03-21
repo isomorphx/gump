@@ -102,7 +102,7 @@ func (e *Engine) ExecuteReplan(replanAgent string, step recipe.Step, scopePath s
 	if _, err := e.Cook.Snapshot(step.Name+"/replan", taskName, 1); err != nil {
 		return fmt.Errorf("snapshot replan: %w", err)
 	}
-	e.StateBag.Set(scopePath+"/replan", raw, "", nil)
+	e.StateBag.Set(scopePath+"/replan", raw, "", nil, "")
 
 	// Run each sub-task with the original step agent; no retry on sub-tasks.
 	sessionMap := make(map[string]string)
@@ -111,12 +111,11 @@ func (e *Engine) ExecuteReplan(replanAgent string, step recipe.Step, scopePath s
 		ephemeralName := step.Name + "/replan-task-" + task.Name
 		subPath := scopePath + "/replan-task-" + task.Name
 		ephemeral := recipe.Step{
-			Name:     ephemeralName,
-			Agent:    step.Agent,
-			Output:   step.Output,
-			Prompt:   replanSubTaskPrompt,
-			Validate: step.Validate,
-			Retry:    nil,
+			Name:   ephemeralName,
+			Agent:  step.Agent,
+			Output: step.Output,
+			Prompt: replanSubTaskPrompt,
+			Gate:   step.Gate,
 		}
 		if ephemeral.Output == "" {
 			ephemeral.Output = "diff"

@@ -10,10 +10,11 @@ import (
 // Entry holds the output and diff for one step, keyed by fully-qualified path.
 // We store StepPath so Get can resolve by short name and scope (same group, parent, root).
 type Entry struct {
-	Value    string `json:"output"`
-	Diff     string `json:"diff"`
-	Files    string `json:"files,omitempty"`
-	StepPath string `json:"step_path"`
+	Value     string `json:"output"`
+	Diff      string `json:"diff"`
+	Files     string `json:"files,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	StepPath  string `json:"step_path"`
 }
 
 // StateBag stores step outputs keyed by fully-qualified path so prompts can reference {steps.<name>.output} and {steps.<name>.diff} without a global "plan" variable.
@@ -30,9 +31,8 @@ func New() *StateBag {
 	return &StateBag{entries: make(map[string]Entry), prev: make(map[string]Entry)}
 }
 
-// Set records output and diff for a step at fullPath (e.g. "converge/reviews/reviewer-1").
-// files is the list of files changed by the step (for {steps.<n>.files}).
-func (sb *StateBag) Set(fullPath string, value string, diff string, files []string) {
+// Set records output, diff, changed files, and optional session id for a step at fullPath.
+func (sb *StateBag) Set(fullPath string, value string, diff string, files []string, sessionID string) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
 	if sb.entries == nil {
@@ -49,7 +49,7 @@ func (sb *StateBag) Set(fullPath string, value string, diff string, files []stri
 	if len(files) > 0 {
 		filesStr = strings.Join(files, ", ")
 	}
-	sb.entries[fullPath] = Entry{Value: value, Diff: diff, Files: filesStr, StepPath: fullPath}
+	sb.entries[fullPath] = Entry{Value: value, Diff: diff, Files: filesStr, SessionID: sessionID, StepPath: fullPath}
 }
 
 // Get resolves {steps.<shortName>.output} or {steps.<shortName>.diff} using scope proximity:
@@ -66,6 +66,9 @@ func (sb *StateBag) Get(shortName string, scopePath string, field string) string
 	}
 	if field == "files" {
 		return e.Files
+	}
+	if field == "session_id" {
+		return e.SessionID
 	}
 	return e.Value
 }
@@ -139,6 +142,36 @@ func (sb *StateBag) ResetGroup(groupPath string) []string {
 		}
 	}
 	return moved
+}
+
+// DeleteStepOutputsForRestart removes current entries for paths; session ids are copied into prev so reuse-on-retry can resume after restart_from.
+func (sb *StateBag) DeleteStepOutputsForRestart(paths []string) {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	if sb.prev == nil {
+		sb.prev = make(map[string]Entry)
+	}
+	for _, p := range paths {
+		if e, ok := sb.entries[p]; ok {
+			if e.SessionID != "" {
+				prev := sb.prev[p]
+				prev.SessionID = e.SessionID
+				prev.StepPath = p
+				sb.prev[p] = prev
+			}
+			delete(sb.entries, p)
+		}
+	}
+}
+
+// PrevSessionID returns the session id stored in prev for a full step path (reuse-on-retry after restart_from).
+func (sb *StateBag) PrevSessionID(fullPath string) string {
+	sb.mu.RLock()
+	defer sb.mu.RUnlock()
+	if sb.prev == nil {
+		return ""
+	}
+	return sb.prev[fullPath].SessionID
 }
 
 // Serialize exports the State Bag to JSON for persistence in state-bag.json.

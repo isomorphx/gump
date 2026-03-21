@@ -32,8 +32,8 @@ var validValidatorTypes = map[string]bool{
 	"touched": true, "untouched": true, "tests_found": true, "coverage": true, "bash": true,
 }
 
-// stepsRefRegex matches {steps.<name>.output}, {steps.<name>.diff}, or {steps.<name>.files}
-var stepsRefRegex = regexp.MustCompile(`\{steps\.([^}.]+)\.(output|diff|files)\}`)
+// stepsRefRegex matches {steps.<name>.output|diff|files|session_id}
+var stepsRefRegex = regexp.MustCompile(`\{steps\.([^}.]+)\.(output|diff|files|session_id)\}`)
 
 // Validate runs v4 structural rules.
 func Validate(r *Recipe) []ValidationError {
@@ -330,6 +330,11 @@ func findStepByName(steps []Step, name string, prefix string) *Step {
 		}
 	}
 	return nil
+}
+
+// FindStepByName is exported for CLI and tools that resolve a step by short name.
+func FindStepByName(steps []Step, name string, prefix string) *Step {
+	return findStepByName(steps, name, prefix)
 }
 
 func findStepPathsByName(stepNamesByPath map[string]string, name string) []string {

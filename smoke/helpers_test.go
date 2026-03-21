@@ -54,7 +54,17 @@ func setupSmokeRepo(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".pudding\n"), 0644); err != nil {
+	// Ignore only cook state (not all of .pudding) so we can commit .pudding/conventions.md for the agent context.
+	// Ignore cook state and agent output dirs; keep .pudding/recipes and .pudding/conventions.md committable.
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".pudding/cooks/\n.pudding/worktrees/\n.pudding/out/\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	conventionsDir := filepath.Join(dir, ".pudding")
+	if err := os.MkdirAll(conventionsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// WHY: module path example.com/smoketest leads models to emit package smoketest; root must stay package main with main.go.
+	if err := os.WriteFile(filepath.Join(conventionsDir, "conventions.md"), []byte("# Conventions\n\nAll Go files in the repository root must use `package main` (same as main.go) so `go build` and `go test` succeed.\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	runGit(t, dir, "init")

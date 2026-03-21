@@ -10,10 +10,10 @@ import (
 )
 
 // Outputs live under .pudding/out/ so they are gitignored and not snapshotted; the engine reads them before snapshot and stores content in the State Bag.
-const outDir = ".pudding/out"
-const planFile = ".pudding/out/plan.json"
-const artifactFile = ".pudding/out/artifact.txt"
-const reviewFile = ".pudding/out/review.json"
+// WHY: build paths with filepath.Join(worktree, ".pudding", "out", name) — not Join(worktree, ".pudding/out/name") — so the worktree is always the root on every GOOS (no cwd, no ambiguous multi-segment join).
+func outDirPath(worktreeDir string) string {
+	return filepath.Join(worktreeDir, ".pudding", "out")
+}
 
 // ReviewOutput is the agent contract for output: review steps (stored in State Bag as raw JSON).
 type ReviewOutput struct {
@@ -24,7 +24,7 @@ type ReviewOutput struct {
 
 // ExtractReviewOutput reads and parses .pudding/out/review.json so review steps feed the State Bag and gate retries.
 func ExtractReviewOutput(worktreeDir string) (ReviewOutput, error) {
-	p := filepath.Join(worktreeDir, reviewFile)
+	p := filepath.Join(outDirPath(worktreeDir), "review.json")
 	data, err := os.ReadFile(p)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -44,7 +44,7 @@ func ExtractReviewOutput(worktreeDir string) (ReviewOutput, error) {
 
 // PrepareOutputDir creates and empties .pudding/out/ in the worktree so each step writes into a clean dir.
 func PrepareOutputDir(worktreeDir string) error {
-	dir := filepath.Join(worktreeDir, outDir)
+	dir := outDirPath(worktreeDir)
 	if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -53,7 +53,7 @@ func PrepareOutputDir(worktreeDir string) error {
 
 // ExtractPlanOutput reads and parses .pudding/out/plan.json. No fallback to stdout.
 func ExtractPlanOutput(worktreeDir string) ([]plan.Task, string, error) {
-	p := filepath.Join(worktreeDir, planFile)
+	p := filepath.Join(outDirPath(worktreeDir), "plan.json")
 	data, err := os.ReadFile(p)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -73,7 +73,7 @@ func ExtractPlanOutput(worktreeDir string) ([]plan.Task, string, error) {
 
 // ExtractArtifactOutput reads .pudding/out/artifact.txt.
 func ExtractArtifactOutput(worktreeDir string) (string, error) {
-	p := filepath.Join(worktreeDir, artifactFile)
+	p := filepath.Join(outDirPath(worktreeDir), "artifact.txt")
 	data, err := os.ReadFile(p)
 	if err != nil {
 		if os.IsNotExist(err) {

@@ -1,13 +1,16 @@
 package engine
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path"
 	"path/filepath"
 	"strings"
@@ -26,6 +29,9 @@ import (
 	"github.com/isomorphx/pudding/internal/template"
 	"github.com/isomorphx/pudding/internal/validate"
 )
+
+// ErrCookAborted is returned when the user aborts during HITL (Ctrl+C).
+var ErrCookAborted = errors.New("aborted")
 
 // lastStepOutcome holds the result of the last runAtomicStepOnce so we emit step_completed only once after the retry loop (not per attempt).
 type lastStepOutcome struct {
@@ -63,6 +69,14 @@ type Engine struct {
 	replayReachedStart    bool // true once we've reached FromStep in executeSteps
 	stepRunIndex          int  // 1-based index of current step for [N/total] header (Feature 12)
 	stepTotalEstimate     int  // total steps when known (e.g. after group_started with task_count)
+	globalStepAttempts    map[string]int
+	budgetTracker         *BudgetTracker
+	budgetWarnOnce        bool
+	// pendingRestartFrom delivers review/gate failure context to the first attempt after restart_from.
+	pendingRestartFrom map[string]*ErrorContext
+	restartCycle       int
+	// PauseAfterStep is set by CLI --pause-after to force HITL on that step name (in-memory only).
+	PauseAfterStep string
 }
 
 // New builds an engine with an empty State Bag and counters for ledger/index.
@@ -71,6 +85,9 @@ func New(c *cook.Cook, rec *recipe.Recipe, r agent.AdapterResolver, cfg *config.
 		Cook: c, Recipe: rec, Resolver: r, Config: cfg, SpecContent: specContent,
 		Steps: nil, StateBag: statebag.New(),
 		agentsUsed: make(map[string]struct{}),
+		globalStepAttempts: make(map[string]int),
+		budgetTracker:      NewBudgetTracker(rec.MaxBudget),
+		pendingRestartFrom: make(map[string]*ErrorContext),
 	}
 }
 
@@ -102,10 +119,12 @@ func (e *Engine) Run() error {
 	return err
 }
 
-// executeSteps runs steps; composite (steps:) with optional foreach, atomic (agent:), or validation-only (validate:).
+// executeSteps runs steps; composite (steps:) with optional foreach, atomic (agent:), or validation-only (gate:).
 // groupAgentOverride is set when we're inside a group retry with strategy "escalate"; atomic steps in this subtree use that agent.
 func (e *Engine) executeSteps(steps []recipe.Step, taskContext *plan.Task, pathPrefix string, lastSessionByAgent map[string]string, parentSession recipe.SessionConfig, groupAgentOverride string) error {
-	for _, step := range steps {
+	groupBaseCommit, _ := PreStepCommit(e.Cook.WorktreeDir)
+	for i := 0; i < len(steps); i++ {
+		step := steps[i]
 		stepPath := pathPrefix
 		if stepPath != "" {
 			stepPath += "/"
@@ -179,10 +198,10 @@ func (e *Engine) executeSteps(steps []recipe.Step, taskContext *plan.Task, pathP
 				}
 				return e.executeSteps(subSteps, nil, stepPath, sessionMap, step.Session, agentOverride)
 			}
-			if step.Retry != nil && step.Retry.MaxAttempts > 1 {
+			if step.OnFailure != nil && step.OnFailure.Retry > 1 {
 				preGroupCommit, _ := PreStepCommit(e.Cook.WorktreeDir)
-				maxAttempts := step.Retry.MaxAttempts
-				expanded := recipe.ExpandStrategy(step.Retry.Strategy)
+				maxAttempts := step.OnFailure.Retry
+				expanded := recipe.ExpandStrategy(step.OnFailure.Strategy)
 				if len(expanded) == 0 {
 					expanded = []recipe.StrategyEntry{{Type: "same", Count: 1}}
 				}
@@ -204,6 +223,13 @@ func (e *Engine) executeSteps(steps []recipe.Step, taskContext *plan.Task, pathP
 							agentOverride = strategy.Agent
 						}
 						_ = e.Cook.ResetTo(preGroupCommit)
+						// WHY: group retry re-runs the subtree; global step attempt counters must not block this fresh pass (unlike restart_from, which preserves the target budget).
+						prefix := stepPath + "/"
+						for k := range e.globalStepAttempts {
+							if k == stepPath || strings.HasPrefix(k, prefix) {
+								e.globalStepAttempts[k] = 0
+							}
+						}
 						keys := e.StateBag.ResetGroup(stepPath)
 						if e.Cook.Ledger != nil {
 							_ = e.Cook.Ledger.Emit(ledger.StateBagScopeReset{Group: stepPath, Keys: keys})
@@ -266,7 +292,7 @@ func (e *Engine) executeSteps(steps []recipe.Step, taskContext *plan.Task, pathP
 		}
 
 		// Validation pure: no agent; run validators on the worktree state (cumulative diff).
-		if step.Agent == "" && len(step.Validate) > 0 {
+		if step.Agent == "" && len(step.Gate) > 0 {
 			e.stepRunIndex++
 			taskInfo := ""
 			if taskContext != nil && taskContext.Name != "" {
@@ -275,8 +301,8 @@ func (e *Engine) executeSteps(steps []recipe.Step, taskContext *plan.Task, pathP
 			StepHeader(e.stepRunIndex, e.stepTotalEstimate, stepPath, "validate", taskInfo, "", "")
 			startedAt := time.Now()
 			if e.Cook.Ledger != nil {
-				validators := make([]string, 0, len(step.Validate))
-				for _, v := range step.Validate {
+				validators := make([]string, 0, len(step.Gate))
+				for _, v := range step.Gate {
 					if v.Arg != "" {
 						validators = append(validators, v.Type+":"+v.Arg)
 					} else {
@@ -296,7 +322,7 @@ func (e *Engine) executeSteps(steps []recipe.Step, taskContext *plan.Task, pathP
 				}
 				return fmt.Errorf("final diff for validation step: %w", err)
 			}
-			vr := validate.RunValidators(step.Validate, e.Config, e.Cook.WorktreeDir, dc, e.StateBag, stepPath)
+			vr := validate.RunValidators(step.Gate, e.Config, e.Cook.WorktreeDir, dc, e.StateBag, stepPath)
 			writeValidationArtifact(e.Cook.CookDir, stepPath, 1, vr)
 			validationArtifactRel := filepath.Join("artifacts", ledger.ArtifactName(stepPath, 1, "validation", "json"))
 			if vr.Pass {
@@ -361,6 +387,59 @@ func (e *Engine) executeSteps(steps []recipe.Step, taskContext *plan.Task, pathP
 
 		// Atomic step with agent. groupAgentOverride applies when we're in a group retry with strategy "escalate".
 		if err := e.runAtomicStep(&step, stepPath, taskContext, lastSessionByAgent, parentSession, groupAgentOverride); err != nil {
+			if rf, ok := IsRestartFrom(err); ok {
+				targetIdx := findStepIndexByName(steps, rf.TargetName)
+				if targetIdx < 0 || targetIdx > i {
+					return fmt.Errorf("restart_from: step %q not found or invalid in scope", rf.TargetName)
+				}
+				targetPath := joinStepPath(pathPrefix, steps[targetIdx].Name)
+				targetStep := &steps[targetIdx]
+				maxTarget := targetStep.MaxAttempts()
+				if maxTarget < 1 {
+					maxTarget = 1
+				}
+				if e.globalStepAttempts[targetPath] >= maxTarget {
+					if e.Cook.Ledger != nil {
+						_ = e.Cook.Ledger.Emit(ledger.CircuitBreaker{
+							Step: targetPath, Scope: "step", Reason: "restart_from blocked: target global step attempts exhausted", TotalAttempts: e.globalStepAttempts[targetPath],
+						})
+					}
+					fmt.Fprintf(os.Stderr, "        ✗ FATAL: restart_from blocked — target %q exhausted global attempts (%d/%d)\n", rf.TargetName, e.globalStepAttempts[targetPath], maxTarget)
+					return fmt.Errorf("step %s: restart_from blocked: target %q exhausted global step attempts (%d/%d)", step.Name, rf.TargetName, e.globalStepAttempts[targetPath], maxTarget)
+				}
+				if ctx := e.lastValidationErrorContext(); ctx != nil {
+					c := *ctx
+					e.pendingRestartFrom[targetPath] = &c
+				}
+				commit, okSnap, err := CommitBeforeLatestStepSnapshot(e.Cook.WorktreeDir, rf.TargetName)
+				if err != nil {
+					return err
+				}
+				if !okSnap {
+					commit = groupBaseCommit
+				}
+				if err := e.Cook.ResetTo(commit); err != nil {
+					return err
+				}
+				if err := gitCleanFD(e.Cook.WorktreeDir); err != nil {
+					return err
+				}
+				var paths []string
+				for j := targetIdx; j <= i; j++ {
+					paths = append(paths, joinStepPath(pathPrefix, steps[j].Name))
+				}
+				e.StateBag.DeleteStepOutputsForRestart(paths)
+				// WHY: do not reset the target step's attempt counter — restarts must not grant a fresh retry budget on that step.
+				for j := targetIdx + 1; j < i; j++ {
+					e.globalStepAttempts[joinStepPath(pathPrefix, steps[j].Name)] = 0
+				}
+				e.restartCycle++
+				if err := e.writeRestartCycleMarker(); err != nil {
+					return err
+				}
+				i = targetIdx - 1
+				continue
+			}
 			return err
 		}
 	}
@@ -375,17 +454,28 @@ func taskContextName(t *plan.Task) string {
 }
 
 func (e *Engine) runAtomicStep(step *recipe.Step, stepPath string, taskContext *plan.Task, lastSessionByAgent map[string]string, parentSession recipe.SessionConfig, groupAgentOverride string) error {
-	if step.Retry != nil && step.Retry.MaxAttempts > 1 {
+	if step.ShouldRunWithRetryLoop() {
 		return e.RunWithRetry(*step, stepPath, taskContext, func(attempt int, agentOverride string, errorContext *ErrorContext) (err error, preStepCommit string) {
 			override := agentOverride
 			if override == "" && groupAgentOverride != "" {
 				override = groupAgentOverride
 			}
+			if attempt == 1 && errorContext == nil {
+				if c := e.consumePendingRestartFrom(stepPath); c != nil {
+					c.FromRestart = true
+					errorContext = c
+				}
+			}
 			return e.runAtomicStepOnce(step, stepPath, taskContext, lastSessionByAgent, parentSession, attempt, override, errorContext, nil)
 		})
 	}
 	override := groupAgentOverride
-	err, _ := e.runAtomicStepOnce(step, stepPath, taskContext, lastSessionByAgent, parentSession, 1, override, nil, nil)
+	var errCtx *ErrorContext
+	if c := e.consumePendingRestartFrom(stepPath); c != nil {
+		c.FromRestart = true
+		errCtx = c
+	}
+	err, _ := e.runAtomicStepOnce(step, stepPath, taskContext, lastSessionByAgent, parentSession, 1, override, errCtx, nil)
 	e.emitStepCompletedFromLast()
 	return err
 }
@@ -393,7 +483,26 @@ func (e *Engine) runAtomicStep(step *recipe.Step, stepPath string, taskContext *
 // runAtomicStepOnce runs one attempt of an atomic step; returns (err, preStepCommit) so retry can reset. preStepCommit is captured at start.
 func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskContext *plan.Task, lastSessionByAgent map[string]string, parentSession recipe.SessionConfig, attempt int, agentOverride string, errorContext *ErrorContext, extraVars map[string]string) (err error, preStepCommit string) {
 	preStepCommit, _ = PreStepCommit(e.Cook.WorktreeDir)
+	maxGlobal := step.MaxAttempts()
+	if maxGlobal < 1 {
+		maxGlobal = 1
+	}
+	cur := e.globalStepAttempts[stepPath]
+	if cur >= maxGlobal {
+		if e.Cook.Ledger != nil {
+			_ = e.Cook.Ledger.Emit(ledger.CircuitBreaker{
+				Step: stepPath, Scope: "step", Reason: "global step attempts exhausted before agent run", TotalAttempts: cur,
+			})
+		}
+		fmt.Fprintf(os.Stderr, "        ✗ FATAL: global step attempts exhausted for %s (%d/%d)\n", stepPath, cur, maxGlobal)
+		return fmt.Errorf("step %s: all %d attempts exhausted", step.Name, maxGlobal), preStepCommit
+	}
+	e.globalStepAttempts[stepPath]++
+	e.writeEngineStepAttemptMarker(step.Name, e.globalStepAttempts[stepPath])
 	taskName := taskContextName(taskContext)
+	if step.MaxBudget > 0 && e.budgetTracker != nil {
+		e.budgetTracker.SetStepBudget(stepPath, step.MaxBudget)
+	}
 	vars := e.buildVars(taskContext, errorContext, extraVars)
 	outputMode := step.Output
 	if outputMode == "" {
@@ -429,16 +538,25 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 		return fmt.Errorf("prepare output dir: %w", err), preStepCommit
 	}
 	var retrySection *pkgcontext.RetrySection
-	if attempt > 1 && errorContext != nil && step.Retry != nil {
+	if errorContext != nil && step.OnFailure != nil && (attempt > 1 || errorContext.FromRestart) {
+		ra := attempt
+		maxA := step.MaxAttempts()
+		if errorContext.FromRestart && attempt == 1 {
+			// WHY: after restart_from the stub and templates see a follow-up attempt, not a blind first run.
+			ra = 2
+			if maxA < 2 {
+				maxA = 2
+			}
+		}
 		retrySection = &pkgcontext.RetrySection{
-			Attempt:        attempt,
-			MaxAttempts:    step.Retry.MaxAttempts,
-			Diff:           errorContext.Diff,
-			Error:          errorContext.Error,
-			ReviewComment:  errorContext.ReviewComment,
-			Remaining:      step.Retry.MaxAttempts - attempt,
-			EscalateTo:     agentOverride,
-			EscalateFrom:   step.Agent,
+			Attempt:       ra,
+			MaxAttempts:   maxA,
+			Diff:          errorContext.Diff,
+			Error:         errorContext.Error,
+			ReviewComment: errorContext.ReviewComment,
+			Remaining:     maxA - ra,
+			EscalateTo:    agentOverride,
+			EscalateFrom:  step.Agent,
 		}
 		if agentOverride == "" {
 			retrySection.EscalateTo = ""
@@ -467,9 +585,11 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 	case "fresh":
 		sessionID = ""
 	case "reuse-on-retry":
-		// So the agent gets a fresh context on first try but keeps conversation state on retries (e.g. after validation failure).
 		if attempt > 1 {
 			sessionID = e.lastSessionIDForStep(stepPath)
+		} else if sid := e.StateBag.PrevSessionID(stepPath); sid != "" {
+			// WHY: after restart_from, the prior session id lives in prev so attempt 1 can resume the review thread.
+			sessionID = sid
 		}
 	case "reuse":
 		if attempt == 1 && lastSessionByAgent != nil {
@@ -502,6 +622,9 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 	strategyLabel := ""
 	if errorContext != nil {
 		strategyLabel = errorContext.Strategy
+		if errorContext.FromRestart && strategyLabel == "" {
+			strategyLabel = "restart_from"
+		}
 	}
 	exec := StepExecution{
 		StepPath:      stepPath,
@@ -528,8 +651,16 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 		taskInfo = "[task " + taskContext.Name + "]"
 	}
 	retryInfo := ""
-	if attempt > 1 && step.Retry != nil {
-		retryInfo = fmt.Sprintf("[retry %d/%d (%s)]", attempt, step.Retry.MaxAttempts, strategyLabel)
+	if step.OnFailure != nil && (attempt > 1 || (errorContext != nil && errorContext.FromRestart)) {
+		shAttempt := attempt
+		shMax := step.MaxAttempts()
+		if errorContext != nil && errorContext.FromRestart && attempt == 1 {
+			shAttempt = 2
+			if shMax < 2 {
+				shMax = 2
+			}
+		}
+		retryInfo = fmt.Sprintf("[retry %d/%d (%s)]", shAttempt, shMax, strategyLabel)
 	}
 	sessionInfo := ""
 	if sessionID != "" {
@@ -599,6 +730,23 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 		e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), nil, outputMode, "", false)
 		fmt.Fprintf(os.Stderr, "[%s]\tfatal\tFATAL: %v\n", stepPath, err)
 		return fmt.Errorf("step %s: %w", step.Name, err), preStepCommit
+	}
+	if e.budgetTracker != nil {
+		if w := e.budgetTracker.WarningIfUnavailable(result.CostUSD); w != "" && !e.budgetWarnOnce {
+			e.budgetWarnOnce = true
+			fmt.Fprintln(os.Stderr, w)
+		}
+		if err := e.budgetTracker.AddCost(stepPath, result.CostUSD); err != nil {
+			exec.Status = StepFatal
+			exec.FinishedAt = time.Now()
+			e.Steps = append(e.Steps, exec)
+			e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), nil, outputMode, "", false)
+			fmt.Fprintf(os.Stderr, "[%s]\tfatal\tFATAL: %v\n", stepPath, err)
+			if e.Cook.Ledger != nil {
+				_ = e.Cook.Ledger.Emit(ledger.CircuitBreaker{Step: stepPath, Scope: "step", Reason: err.Error(), TotalAttempts: attempt})
+			}
+			return fmt.Errorf("step %s: %w", step.Name, err), preStepCommit
+		}
 	}
 	e.totalCostUSD += result.CostUSD
 	AgentResultText(result.Result)
@@ -675,17 +823,43 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 		}
 		outputValue = text
 	case "review":
-		rev, err := ExtractReviewOutput(e.Cook.WorktreeDir)
+		pass, comment, raw, err := ParseReviewJSON(e.Cook.WorktreeDir)
 		if err != nil {
+			dc, snapErr := e.Cook.Snapshot(step.Name, taskName, attempt)
+			if snapErr != nil {
+				exec.Status = StepFatal
+				exec.FinishedAt = time.Now()
+				e.Steps = append(e.Steps, exec)
+				e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), nil, outputMode, "", false)
+				fmt.Fprintf(os.Stderr, "[%s]\tfatal\tFATAL: %v\n", stepPath, snapErr)
+				return fmt.Errorf("snapshot after invalid review.json: %w", snapErr), preStepCommit
+			}
+			errMsg := err.Error()
+			exec.ValidateError = errMsg
+			exec.ValidateDiff = dc.Patch
 			exec.Status = StepFatal
 			exec.FinishedAt = time.Now()
 			e.Steps = append(e.Steps, exec)
-			e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), nil, outputMode, "", false)
-			fmt.Fprintf(os.Stderr, "[%s]\tfatal\tFATAL: %v\n", stepPath, err)
-			return fmt.Errorf("review step failed: %w", err), preStepCommit
+			e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), dc, outputMode, raw, true)
+			fmt.Fprintf(os.Stderr, "[%s]\tFAIL\t%s\n", stepPath, errMsg)
+			RetryValidationFailed(errMsg, "")
+			if raw != "" {
+				filesForBag := dc.FilesChanged
+				if list, err2 := gitDiffNameOnly(e.Cook.WorktreeDir, dc.BaseCommit, dc.HeadCommit); err2 == nil {
+					filesForBag = list
+				}
+				e.StateBag.Set(stepPath, raw, dc.Patch, filesForBag, result.SessionID)
+			}
+			if e.globalStepAttempts[stepPath] > step.MaxAttempts() {
+				if e.Cook.Ledger != nil {
+					_ = e.Cook.Ledger.Emit(ledger.CircuitBreaker{Step: stepPath, Scope: "step", Reason: "budget exhausted after invalid review.json", TotalAttempts: attempt})
+				}
+				return fmt.Errorf("step %s: all attempts exhausted", step.Name), preStepCommit
+			}
+			return fmt.Errorf("step %s: review step failed: %w", step.Name, err), preStepCommit
 		}
-		outputValue = rev.Raw
-		if !rev.Pass {
+		outputValue = raw
+		if !pass {
 			dc, snapErr := e.Cook.Snapshot(step.Name, taskName, attempt)
 			if snapErr != nil {
 				exec.Status = StepFatal
@@ -695,16 +869,27 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 				fmt.Fprintf(os.Stderr, "[%s]\tfatal\tFATAL: %v\n", stepPath, snapErr)
 				return fmt.Errorf("snapshot after failed review: %w", snapErr), preStepCommit
 			}
-			errMsg := fmt.Sprintf("review did not pass: %s", rev.Comment)
+			filesForBag := dc.FilesChanged
+			if list, err2 := gitDiffNameOnly(e.Cook.WorktreeDir, dc.BaseCommit, dc.HeadCommit); err2 == nil {
+				filesForBag = list
+			}
+			e.StateBag.Set(stepPath, outputValue, dc.Patch, filesForBag, result.SessionID)
+			errMsg := fmt.Sprintf("review did not pass: %s", comment)
 			exec.ValidateError = errMsg
 			exec.ValidateDiff = dc.Patch
-			exec.ReviewComment = rev.Comment
+			exec.ReviewComment = comment
 			exec.Status = StepFatal
 			exec.FinishedAt = time.Now()
 			e.Steps = append(e.Steps, exec)
 			e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), dc, outputMode, outputValue, true)
 			fmt.Fprintf(os.Stderr, "[%s]\tFAIL\t%s\n", stepPath, errMsg)
 			RetryValidationFailed("review did not pass", "")
+			if e.globalStepAttempts[stepPath] > step.MaxAttempts() {
+				if e.Cook.Ledger != nil {
+					_ = e.Cook.Ledger.Emit(ledger.CircuitBreaker{Step: stepPath, Scope: "step", Reason: "budget exhausted after failed review", TotalAttempts: attempt})
+				}
+				return fmt.Errorf("step %s: all attempts exhausted", step.Name), preStepCommit
+			}
 			return fmt.Errorf("step %s: review did not pass", step.Name), preStepCommit
 		}
 	}
@@ -719,7 +904,11 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 		return fmt.Errorf("snapshot after step %s: %w", step.Name, err), preStepCommit
 	}
 
-	e.StateBag.Set(stepPath, outputValue, dc.Patch, dc.FilesChanged)
+	filesForBag := dc.FilesChanged
+	if list, err := gitDiffNameOnly(e.Cook.WorktreeDir, dc.BaseCommit, dc.HeadCommit); err == nil {
+		filesForBag = list
+	}
+	e.StateBag.Set(stepPath, outputValue, dc.Patch, filesForBag, result.SessionID)
 	if e.Cook.Ledger != nil {
 		key := stepPath + ".output"
 		artifactRel := ""
@@ -757,10 +946,10 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 		}
 	}
 
-	if len(step.Validate) > 0 {
+	if len(step.Gate) > 0 {
 		if e.Cook.Ledger != nil {
-			validators := make([]string, 0, len(step.Validate))
-			for _, v := range step.Validate {
+			validators := make([]string, 0, len(step.Gate))
+			for _, v := range step.Gate {
 				if v.Arg != "" {
 					validators = append(validators, v.Type+":"+v.Arg)
 				} else {
@@ -769,7 +958,7 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 			}
 			_ = e.Cook.Ledger.Emit(ledger.ValidationStarted{Step: stepPath, Validators: validators})
 		}
-		vr := validate.RunValidators(step.Validate, e.Config, e.Cook.WorktreeDir, dc, e.StateBag, stepPath)
+		vr := validate.RunValidators(step.Gate, e.Config, e.Cook.WorktreeDir, dc, e.StateBag, stepPath)
 		writeValidationArtifact(e.Cook.CookDir, stepPath, attempt, vr)
 		validationArtifactRel := filepath.Join("artifacts", ledger.ArtifactName(stepPath, attempt, "validation", "json"))
 		if vr.Pass {
@@ -786,6 +975,9 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 			_, nSkipped := countValidationPassedSkipped(vr)
 			if nSkipped > 0 {
 				formatValidationDetails(os.Stderr, stepPath, vr)
+			}
+			if err := e.hitlPauseAfterSuccess(step, stepPath, outputMode, dc.FilesChanged); err != nil {
+				return err, ""
 			}
 			return nil, ""
 		}
@@ -819,6 +1011,12 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 		e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), dc, outputMode, outputValue, true)
 		formatValidationDetails(os.Stderr, stepPath, vr)
 		RetryValidationFailed("validation failed: "+strings.Join(failedNames, ", "), "")
+		if e.globalStepAttempts[stepPath] > step.MaxAttempts() {
+			if e.Cook.Ledger != nil {
+				_ = e.Cook.Ledger.Emit(ledger.CircuitBreaker{Step: stepPath, Scope: "step", Reason: "budget exhausted after failed gate", TotalAttempts: attempt})
+			}
+			return fmt.Errorf("step %s: all attempts exhausted", step.Name), preStepCommit
+		}
 		return fmt.Errorf("step %s: validation failed: %s", step.Name, strings.Join(failedNames, ", ")), preStepCommit
 	}
 
@@ -848,6 +1046,9 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 	if detail != "" {
 		fmt.Fprintf(os.Stderr, "[%s]\tpass\t%s\n", stepPath, detail)
 	}
+	if err := e.hitlPauseAfterSuccess(step, stepPath, outputMode, dc.FilesChanged); err != nil {
+		return err, ""
+	}
 	return nil, ""
 }
 
@@ -856,6 +1057,45 @@ func (e *Engine) runAtomicStepWithVars(step *recipe.Step, stepPath string, taskC
 	err, _ := e.runAtomicStepOnce(step, stepPath, taskContext, lastSessionByAgent, parentSession, 1, "", nil, extraVars)
 	e.emitStepCompletedFromLast()
 	return err
+}
+
+func (e *Engine) hitlPauseAfterSuccess(step *recipe.Step, stepPath string, outputMode string, filesChanged []string) error {
+	need := step.HITL
+	if e.PauseAfterStep != "" && step.Name == e.PauseAfterStep {
+		need = true
+	}
+	if !need {
+		return nil
+	}
+	mode := outputMode
+	if mode == "" {
+		mode = "diff"
+	}
+	fstr := strings.Join(filterRepoFilesOnly(e.Cook.WorktreeDir, filesChanged), ", ")
+	fmt.Fprintf(os.Stderr, "[pudding] HITL pause after step '%s'\n\nResult:\n  Mode:    %s\n  Status:  pass\n  Files:   %s\n\n  Review the results in the worktree: %s\n  Press Enter to continue, Ctrl+C to abort.\n", stepPath, mode, fstr, e.Cook.WorktreeDir)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt)
+	defer signal.Stop(sigCh)
+	readCh := make(chan error, 1)
+	go func() {
+		_, err := bufio.NewReader(os.Stdin).ReadString('\n')
+		readCh <- err
+	}()
+	select {
+	case <-sigCh:
+		return ErrCookAborted
+	case err := <-readCh:
+		if err != nil && !errors.Is(err, io.EOF) {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *Engine) writeEngineStepAttemptMarker(stepName string, n int) {
+	p := filepath.Join(e.Cook.WorktreeDir, ".pudding", "engine-step-attempt.json")
+	_ = os.MkdirAll(filepath.Dir(p), 0755)
+	_ = os.WriteFile(p, []byte(fmt.Sprintf(`{"step":%q,"n":%d}`, stepName, n)), 0644)
 }
 
 // writeValidationArtifact persists validation result under the step’s artifact dir.
@@ -1156,6 +1396,27 @@ func checkBlastRadius(filesChanged, allowedPatterns []string) (violators []strin
 	}
 	b.WriteString("Allowed: " + strings.Join(allowedPatterns, ", "))
 	return violators, b.String()
+}
+
+func (e *Engine) writeRestartCycleMarker() error {
+	p := filepath.Join(e.Cook.WorktreeDir, ".pudding", "restart-cycle")
+	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(p, []byte(fmt.Sprintf("%d", e.restartCycle)), 0644)
+}
+
+func (e *Engine) consumePendingRestartFrom(stepPath string) *ErrorContext {
+	if e.pendingRestartFrom == nil {
+		return nil
+	}
+	ctx := e.pendingRestartFrom[stepPath]
+	delete(e.pendingRestartFrom, stepPath)
+	if ctx == nil {
+		return nil
+	}
+	c := *ctx
+	return &c
 }
 
 // buildVars builds template variables; errorContext and extraVars are optional (retry and replan sub-tasks).
@@ -1488,7 +1749,11 @@ func (e *Engine) finishCook(runErr error) {
 	cookDir := e.Cook.CookDir
 	status := "pass"
 	if runErr != nil {
-		status = "fatal"
+		if errors.Is(runErr, ErrCookAborted) {
+			status = "aborted"
+		} else {
+			status = "fatal"
+		}
 	}
 	durationMs := int(time.Since(e.cookRunStartedAt).Milliseconds())
 

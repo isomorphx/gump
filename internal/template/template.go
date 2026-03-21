@@ -9,7 +9,7 @@ import (
 	"github.com/isomorphx/pudding/internal/statebag"
 )
 
-var stepsRefRegex = regexp.MustCompile(`\{steps\.([^}.]+)\.(output|diff|files)\}`)
+var stepsRefRegex = regexp.MustCompile(`\{steps\.([^}.]+)\.(output|diff|files|session_id)\}`)
 var taskVarRegex = regexp.MustCompile(`\{task\.([a-zA-Z0-9_]+)\}`)
 
 // Resolve replaces {key} placeholders. vars are resolved first; then {steps.<name>.output|diff} via stateBag when non-nil.

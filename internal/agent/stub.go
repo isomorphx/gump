@@ -17,6 +17,37 @@ import (
 	"time"
 )
 
+func scenarioCostAndSessionForStep(worktree, stepName string) (cost float64, sessionID string) {
+	data, err := os.ReadFile(filepath.Join(worktree, ".pudding-test-scenario.json"))
+	if err != nil {
+		return 0, ""
+	}
+	var scenario struct {
+		CostUSD           float64            `json:"cost_usd"`
+		CostUSDByStep     map[string]float64 `json:"cost_usd_by_step"`
+		SessionIDByStep   map[string]string  `json:"session_id_by_step"`
+		UniqueSessionEach bool               `json:"unique_session_each_call"`
+	}
+	if json.Unmarshal(data, &scenario) != nil {
+		return 0, ""
+	}
+	if scenario.CostUSDByStep != nil {
+		if v, ok := scenario.CostUSDByStep[stepName]; ok {
+			cost = v
+		}
+	}
+	if cost == 0 && scenario.CostUSD > 0 {
+		cost = scenario.CostUSD
+	}
+	if scenario.UniqueSessionEach {
+		return cost, fmt.Sprintf("stub-%d", time.Now().UnixNano())
+	}
+	if scenario.SessionIDByStep != nil {
+		sessionID = scenario.SessionIDByStep[stepName]
+	}
+	return cost, sessionID
+}
+
 const (
 	planMarker     = "[PUDDING:plan]"
 	artifactMarker = "[PUDDING:artifact]"
@@ -108,6 +139,11 @@ func (s *StubAdapter) run(ctx context.Context, worktree, prompt, agentName strin
 		defer stderrFile.Close()
 
 		stepName := extractStepNameFromPrompt(prompt)
+		costUSD, sessOverride := scenarioCostAndSessionForStep(worktree, stepName)
+		stubSid := stubSessionID
+		if sessOverride != "" {
+			stubSid = sessOverride
+		}
 		isPlan := strings.Contains(prompt, planMarker)
 		isArtifact := strings.Contains(prompt, artifactMarker)
 		isReview := strings.Contains(prompt, reviewMarker)
@@ -136,7 +172,11 @@ func (s *StubAdapter) run(ctx context.Context, worktree, prompt, agentName strin
 			_ = os.WriteFile(filepath.Join(worktree, filename), []byte("stub output"), 0644)
 		} else if isReview {
 			reviewPath := filepath.Join(outDir, "review.json")
-			_ = os.WriteFile(reviewPath, []byte(`{"pass":true,"comment":"stub review ok"}`), 0644)
+			if body := reviewJSONFromScenario(worktree, stepName); body != "" {
+				_ = os.WriteFile(reviewPath, []byte(body), 0644)
+			} else {
+				_ = os.WriteFile(reviewPath, []byte(`{"pass":true,"comment":"stub review ok"}`), 0644)
+			}
 			if applyTestScenarioWithStep(worktree, stepName) {
 				// scenario supplies files (e.g. compile gate)
 			} else {
@@ -158,9 +198,9 @@ func (s *StubAdapter) run(ctx context.Context, worktree, prompt, agentName strin
 			}
 		}
 
-		writeLine(tee, `{"type":"system","subtype":"init","session_id":"`+stubSessionID+`"}`)
+		writeLine(tee, `{"type":"system","subtype":"init","session_id":"`+stubSid+`"}`)
 		writeLine(tee, `{"type":"assistant","message":{"content":[{"type":"text","text":"stub done"}]}}`)
-		result := fmt.Sprintf(`{"type":"result","session_id":"%s","is_error":false,"duration_ms":0,"duration_api_ms":0,"num_turns":1,"result":"ok","usage":{},"total_cost_usd":0}`, stubSessionID)
+		result := fmt.Sprintf(`{"type":"result","session_id":"%s","is_error":false,"duration_ms":0,"duration_api_ms":0,"num_turns":1,"result":"ok","usage":{},"total_cost_usd":%g}`, stubSid, costUSD)
 		writeLine(tee, result)
 	}()
 
@@ -185,6 +225,43 @@ func isReplanSubTaskContext(worktree string) bool {
 }
 
 // attemptFromContextFile reads provider context files in worktree and returns the attempt number if "Attempt N/M" is present, else 1.
+func restartCycleFromWorktree(worktree string) int {
+	b, err := os.ReadFile(filepath.Join(worktree, ".pudding", "restart-cycle"))
+	if err != nil {
+		return 0
+	}
+	var n int
+	_, _ = fmt.Sscanf(strings.TrimSpace(string(b)), "%d", &n)
+	return n
+}
+
+// reviewJSONFromScenario returns custom review.json body when scenario sets review_by_cycle or review_by_step.
+func reviewJSONFromScenario(worktree, stepName string) string {
+	data, err := os.ReadFile(filepath.Join(worktree, ".pudding-test-scenario.json"))
+	if err != nil {
+		return ""
+	}
+	var scenario struct {
+		ReviewByCycle map[string]string `json:"review_by_cycle"`
+		ReviewByStep  map[string]string `json:"review_by_step"`
+	}
+	if json.Unmarshal(data, &scenario) != nil {
+		return ""
+	}
+	cycle := restartCycleFromWorktree(worktree)
+	if scenario.ReviewByCycle != nil {
+		if body, ok := scenario.ReviewByCycle[strconv.Itoa(cycle)]; ok && body != "" {
+			return body
+		}
+	}
+	if stepName != "" && scenario.ReviewByStep != nil {
+		if body, ok := scenario.ReviewByStep[stepName]; ok && body != "" {
+			return body
+		}
+	}
+	return ""
+}
+
 func attemptFromContextFile(worktree string) int {
 	for _, name := range AllProviderContextFiles {
 		body, err := os.ReadFile(filepath.Join(worktree, name))
@@ -221,6 +298,7 @@ func applyTestScenarioWithStep(worktree string, stepName string) bool {
 		Files     map[string]string            `json:"files"`
 		ByAttempt map[string]struct{ Files map[string]string `json:"files"` } `json:"by_attempt"`
 		ByStep    map[string]struct{ Files map[string]string `json:"files"` } `json:"by_step"`
+		ByRestart map[string]struct{ Files map[string]string `json:"files"` } `json:"by_restart"`
 	}
 	if err := json.Unmarshal(data, &scenario); err != nil {
 		return false
@@ -248,6 +326,15 @@ func applyTestScenarioWithStep(worktree string, stepName string) bool {
 		}
 		key := strconv.Itoa(attempt)
 		if a, ok := scenario.ByAttempt[key]; ok && a.Files != nil {
+			for k, v := range a.Files {
+				merged[k] = v
+			}
+		}
+	}
+	cycle := restartCycleFromWorktree(worktree)
+	if len(scenario.ByRestart) > 0 && cycle > 0 {
+		key := strconv.Itoa(cycle)
+		if a, ok := scenario.ByRestart[key]; ok && a.Files != nil {
 			for k, v := range a.Files {
 				merged[k] = v
 			}

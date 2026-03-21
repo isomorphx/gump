@@ -22,17 +22,17 @@ steps:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(r.Steps) != 1 || r.Steps[0].Retry == nil {
-		t.Fatal("expected one step with retry")
+	if len(r.Steps) != 1 || r.Steps[0].OnFailure == nil {
+		t.Fatal("expected one step with on_failure")
 	}
-	if len(r.Steps[0].Retry.Strategy) != 2 {
-		t.Fatalf("strategy len: got %d", len(r.Steps[0].Retry.Strategy))
+	if len(r.Steps[0].OnFailure.Strategy) != 2 {
+		t.Fatalf("strategy len: got %d", len(r.Steps[0].OnFailure.Strategy))
 	}
-	if r.Steps[0].Retry.Strategy[0].Type != "same" || r.Steps[0].Retry.Strategy[0].Count != 1 {
-		t.Errorf("first: got %+v", r.Steps[0].Retry.Strategy[0])
+	if r.Steps[0].OnFailure.Strategy[0].Type != "same" || r.Steps[0].OnFailure.Strategy[0].Count != 1 {
+		t.Errorf("first: got %+v", r.Steps[0].OnFailure.Strategy[0])
 	}
-	if r.Steps[0].Retry.Strategy[1].Type != "escalate" || r.Steps[0].Retry.Strategy[1].Agent != "claude-sonnet" {
-		t.Errorf("second: got %+v", r.Steps[0].Retry.Strategy[1])
+	if r.Steps[0].OnFailure.Strategy[1].Type != "escalate" || r.Steps[0].OnFailure.Strategy[1].Agent != "claude-sonnet" {
+		t.Errorf("second: got %+v", r.Steps[0].OnFailure.Strategy[1])
 	}
 }
 
@@ -51,20 +51,21 @@ steps:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Steps[0].Retry == nil {
-		t.Fatal("expected retry policy")
+	if r.Steps[0].OnFailure == nil {
+		t.Fatal("expected on_failure")
 	}
-	// WHY: v4 normalisation expands "same: 3" into 3 individual strategy slots.
-	if len(r.Steps[0].Retry.Strategy) != 4 {
-		t.Fatalf("expected 4 expanded strategy entries, got %d", len(r.Steps[0].Retry.Strategy))
+	// WHY: v4 expands "same: 3" at runtime into 3 individual strategy slots.
+	exp := r.Steps[0].ExpandedOnFailureStrategy()
+	if len(exp) != 4 {
+		t.Fatalf("expected 4 expanded strategy entries, got %d", len(exp))
 	}
 	for i := 0; i < 3; i++ {
-		if r.Steps[0].Retry.Strategy[i].Type != "same" {
-			t.Errorf("strategy[%d]: expected same, got %+v", i, r.Steps[0].Retry.Strategy[i])
+		if exp[i].Type != "same" {
+			t.Errorf("strategy[%d]: expected same, got %+v", i, exp[i])
 		}
 	}
-	if r.Steps[0].Retry.Strategy[3].Type != "escalate" || r.Steps[0].Retry.Strategy[3].Agent != "claude-sonnet" {
-		t.Errorf("escalate: got %+v", r.Steps[0].Retry.Strategy[3])
+	if exp[3].Type != "escalate" || exp[3].Agent != "claude-sonnet" {
+		t.Errorf("escalate: got %+v", exp[3])
 	}
 }
 
@@ -81,14 +82,14 @@ steps:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(r.Steps[0].Validate) != 2 {
-		t.Fatalf("validate len: %d", len(r.Steps[0].Validate))
+	if len(r.Steps[0].Gate) != 2 {
+		t.Fatalf("gate len: %d", len(r.Steps[0].Gate))
 	}
-	if r.Steps[0].Validate[0].Type != "compile" {
-		t.Errorf("first validator: %+v", r.Steps[0].Validate[0])
+	if r.Steps[0].Gate[0].Type != "compile" {
+		t.Errorf("first validator: %+v", r.Steps[0].Gate[0])
 	}
-	if r.Steps[0].Validate[1].Type != "touched" || r.Steps[0].Validate[1].Arg != "*_test.*" {
-		t.Errorf("second: %+v", r.Steps[0].Validate[1])
+	if r.Steps[0].Gate[1].Type != "touched" || r.Steps[0].Gate[1].Arg != "*_test.*" {
+		t.Errorf("second: %+v", r.Steps[0].Gate[1])
 	}
 }
 

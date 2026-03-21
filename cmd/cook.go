@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -27,6 +28,7 @@ var (
 	cookFromStep  string
 	cookCookID    string
 	cookVerbose   bool
+	cookPauseAfter string
 )
 
 var cookCmd = &cobra.Command{
@@ -51,6 +53,7 @@ func init() {
 	cookCmd.Flags().StringVar(&cookFromStep, "from-step", "", "Step path or short name to start from (required for --replay)")
 	cookCmd.Flags().StringVar(&cookCookID, "cook", "", "Cook UUID to replay (default: last fatal cook)")
 	cookCmd.Flags().BoolVar(&cookVerbose, "verbose", false, "Full streaming output (no truncation)")
+	cookCmd.Flags().StringVar(&cookPauseAfter, "pause-after", "", "Inject HITL pause after the given step name; the step must exist in the recipe")
 	rootCmd.AddCommand(cookCmd)
 }
 
@@ -289,7 +292,17 @@ func runCook(cmd *cobra.Command, args []string) error {
 	eng.AgentsCLI = agentsCLIFromRecipe(rec, cookAgentStub)
 	eng.CookAgentOverride = cookAgent
 	engine.Verbose = cookVerbose
+	if cookPauseAfter != "" {
+		if recipe.FindStepByName(rec.Steps, cookPauseAfter, "") == nil {
+			return fmt.Errorf("--pause-after: step %q not found in recipe", cookPauseAfter)
+		}
+		eng.PauseAfterStep = cookPauseAfter
+	}
 	if err := eng.Run(); err != nil {
+		if errors.Is(err, engine.ErrCookAborted) {
+			_ = cook.WriteStatus(c.CookDir, "aborted")
+			return err
+		}
 		_ = cook.WriteStatus(c.CookDir, "fatal")
 		return err
 	}

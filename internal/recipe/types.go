@@ -1,5 +1,7 @@
 package recipe
 
+import "strings"
+
 // Recipe is the v4 mapping: name, description, steps, with optional max_budget.
 type Recipe struct {
 	Name        string  `yaml:"name"`
@@ -42,19 +44,41 @@ type Step struct {
 	Parallel bool   `yaml:"parallel"`
 
 	MaxTurns int `yaml:"max_turns"`
-
-	// Legacy fields used by the current engine (spec M3 updates engine; in M1 we only normalise).
-	Validate []Validator  `yaml:"-"`
-	Retry    *RetryPolicy `yaml:"-"`
 }
 
-// RetryPolicy defines max attempts and the strategy list (same / escalate / replan).
-type RetryPolicy struct {
-	MaxAttempts int             `yaml:"max_attempts"`
-	Strategy    []StrategyEntry `yaml:"strategy"`
+// MaxAttempts is the total allowed gate attempts for this step (first try + retries); 1 means no retry loop.
+func (s *Step) MaxAttempts() int {
+	if s.OnFailure == nil || s.OnFailure.Retry <= 0 {
+		return 1
+	}
+	return s.OnFailure.Retry
 }
 
-// OnFailure is the v4 replacement for RetryPolicy (parser normalises it).
+// RestartFromWithoutStrategy is true when on_failure only requests restart_from (no same/escalate/replan slots).
+func (s *Step) RestartFromWithoutStrategy() bool {
+	if s.OnFailure == nil || strings.TrimSpace(s.OnFailure.RestartFrom) == "" {
+		return false
+	}
+	return len(s.ExpandedOnFailureStrategy()) == 0
+}
+
+// ShouldRunWithRetryLoop is true when the step uses RunWithRetry (retries and/or restart_from-only).
+func (s *Step) ShouldRunWithRetryLoop() bool {
+	if s.OnFailure == nil {
+		return false
+	}
+	return s.MaxAttempts() > 1 || s.RestartFromWithoutStrategy()
+}
+
+// ExpandedOnFailureStrategy expands shorthand strategy entries for the engine retry loop.
+func (s *Step) ExpandedOnFailureStrategy() []StrategyEntry {
+	if s.OnFailure == nil {
+		return nil
+	}
+	return ExpandStrategy(s.OnFailure.Strategy)
+}
+
+// OnFailure is the v4 replacement for legacy v3 retry (parser normalises it).
 type OnFailure struct {
 	Retry       int             `yaml:"retry"`        // max attempts (incl. first)
 	Strategy    []StrategyEntry `yaml:"strategy"`

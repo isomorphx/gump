@@ -50,7 +50,7 @@ func TestResolve_StepsRefWhenNilStateBag(t *testing.T) {
 
 func TestResolve_StepsRefFromStateBag(t *testing.T) {
 	sb := statebag.New()
-	sb.Set("analyze", "stub artifact output for analyze", "", nil)
+	sb.Set("analyze", "stub artifact output for analyze", "", nil, "")
 	vars := map[string]string{}
 	out := Resolve("Use: {steps.analyze.output}", vars, sb, "code")
 	if out != "Use: stub artifact output for analyze" {

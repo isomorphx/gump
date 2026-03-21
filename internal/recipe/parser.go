@@ -106,9 +106,7 @@ func parseStep(raw *rawStep, pathPrefix string, recipeDir string) (*Step, error)
 		return nil, err
 	}
 
-	// Parse on_failure (v4). This is normalised to the legacy RetryPolicy so the runtime can keep using it.
 	var onFailure *OnFailure
-	var retry *RetryPolicy
 	if raw.OnFailure != nil {
 		strategy, err := parseStrategy(raw.OnFailure.Strategy, pathPrefix+".on_failure.strategy")
 		if err != nil {
@@ -123,11 +121,6 @@ func parseStep(raw *rawStep, pathPrefix string, recipeDir string) (*Step, error)
 			on.Retry = *raw.OnFailure.Retry
 		}
 		onFailure = on
-		if on.Retry > 0 {
-			retry = &RetryPolicy{MaxAttempts: on.Retry, Strategy: ExpandStrategy(on.Strategy)}
-			// WHY: engine expects strategy entries with Count expanded when max_attempts>1.
-			// We expand here to preserve old runtime semantics while keeping v4 YAML clean.
-		}
 	}
 
 	subSteps := make([]Step, 0, len(raw.Steps))
@@ -161,10 +154,6 @@ func parseStep(raw *rawStep, pathPrefix string, recipeDir string) (*Step, error)
 
 		Gate:      gateValidators,
 		OnFailure: onFailure,
-
-		// Legacy normalisation for the current runtime.
-		Validate: gateValidators,
-		Retry:    retry,
 	}, nil
 }
 
@@ -266,23 +255,6 @@ func parseValidatorsErr(list []interface{}, ctx string) ([]Validator, error) {
 		}
 	}
 	return out, nil
-}
-
-func parseRetry(r *struct {
-	MaxAttempts int           `yaml:"max_attempts"`
-	Strategy    []interface{} `yaml:"strategy"`
-}, pathPrefix string) (*RetryPolicy, error) {
-	if r == nil {
-		return nil, nil
-	}
-	strategy, err := parseStrategy(r.Strategy, pathPrefix+".retry.strategy")
-	if err != nil {
-		return nil, err
-	}
-	return &RetryPolicy{
-		MaxAttempts: r.MaxAttempts,
-		Strategy:    strategy,
-	}, nil
 }
 
 // parseStrategy supports v3/v4 forms:

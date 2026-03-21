@@ -385,9 +385,9 @@ func TestSmokeGC(t *testing.T) {
 	dir := setupSmokeRepo(t)
 	writeSpec(t, dir, specAdd)
 	for i := 0; i < 3; i++ {
-		stdout, _, code := runPudding(t, dir, "cook", "spec.md", "--recipe", "freeform", "--agent", "claude-sonnet")
+		stdout, stderr, code := runPudding(t, dir, "cook", "spec.md", "--recipe", "freeform", "--agent", "claude-sonnet")
 		if code != 0 {
-			t.Fatalf("cook %d exit %d: %s", i+1, code, stdout)
+			t.Fatalf("cook %d exit %d:\nstdout: %s\nstderr: %s", i+1, code, stdout, stderr)
 		}
 	}
 	stdout, _, code := runPudding(t, dir, "gc", "--keep-last", "1")
