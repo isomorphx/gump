@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/isomorphx/pudding/internal/plan"
-	"github.com/isomorphx/pudding/internal/statebag"
+	"github.com/isomorphx/gump/internal/plan"
+	"github.com/isomorphx/gump/internal/statebag"
 )
 
 const planSchemaArg = "plan"

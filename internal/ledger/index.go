@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+
+	"github.com/isomorphx/gump/internal/brand"
 )
 
 const indexName = "index.ndjson"
 
-// IndexEntry is one line in the cross-cook index for aggregation and report --last N.
+// IndexEntry is one line in the cross-run index for aggregation and report --last N.
 type IndexEntry struct {
 	CookID     string   `json:"cook_id"`
 	Timestamp  string   `json:"ts"`
@@ -23,11 +25,11 @@ type IndexEntry struct {
 	Agents     []string `json:"agents"`
 }
 
-// AppendIndex appends one NDJSON line to .pudding/cooks/index.ndjson so we can aggregate over cooks.
-// One line per cook lets report --last N and success-rate metrics without scanning every cook dir.
-// puddingDir is the repo root (directory containing .pudding).
-func AppendIndex(puddingDir string, entry IndexEntry) error {
-	indexPath := filepath.Join(puddingDir, ".pudding", "cooks", indexName)
+// AppendIndex appends one NDJSON line to .gump/runs/index.ndjson so we can aggregate over runs.
+// One line per run lets report --last N and success-rate metrics without scanning every run dir.
+// repoRoot is the repository root (directory containing .gump).
+func AppendIndex(repoRoot string, entry IndexEntry) error {
+	indexPath := filepath.Join(repoRoot, brand.StateDir(), brand.RunsDir(), indexName)
 	if err := os.MkdirAll(filepath.Dir(indexPath), 0755); err != nil {
 		return err
 	}
@@ -45,9 +47,9 @@ func AppendIndex(puddingDir string, entry IndexEntry) error {
 }
 
 // ReadIndex reads all lines from index.ndjson; invalid lines are skipped for crash tolerance.
-// puddingDir is the repo root (directory containing .pudding).
-func ReadIndex(puddingDir string) ([]IndexEntry, error) {
-	indexPath := filepath.Join(puddingDir, ".pudding", "cooks", indexName)
+// repoRoot is the repository root (directory containing .gump).
+func ReadIndex(repoRoot string) ([]IndexEntry, error) {
+	indexPath := filepath.Join(repoRoot, brand.StateDir(), brand.RunsDir(), indexName)
 	f, err := os.Open(indexPath)
 	if err != nil {
 		if os.IsNotExist(err) {

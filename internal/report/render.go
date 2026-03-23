@@ -100,19 +100,19 @@ func (o RenderOpts) colorReset() string {
 	return "\033[0m"
 }
 
-// RenderCookReport builds the single-cook TUI (spec §7).
+// RenderCookReport builds the single-run TUI (spec §7).
 func RenderCookReport(cr *CookReport, o RenderOpts) string {
 	var b strings.Builder
 
 	h := o.hBar()
 	fmt.Fprintf(&b, "%s%s%s\n", o.topLeft(), h, o.topRight())
-	fmt.Fprintf(&b, "%s  Pudding Report%*s%s\n", o.vBar(), boxWidth-16, "", o.vBar())
+	fmt.Fprintf(&b, "%s  Gump Report%*s%s\n", o.vBar(), boxWidth-16, "", o.vBar())
 	cid := cr.CookID
 	if len(cid) > 8 {
 		cid = cid[:8]
 	}
-	fmt.Fprintf(&b, "%s  Cook:   %-*s%s\n", o.vBar(), boxWidth-10, cid, o.vBar())
-	fmt.Fprintf(&b, "%s  Recipe: %-*s%s\n", o.vBar(), boxWidth-10, cr.Recipe, o.vBar())
+	fmt.Fprintf(&b, "%s  Run:    %-*s%s\n", o.vBar(), boxWidth-10, cid, o.vBar())
+	fmt.Fprintf(&b, "%s  Workflow: %-*s%s\n", o.vBar(), boxWidth-12, cr.Recipe, o.vBar())
 	st := strings.ToUpper(cr.Status)
 	stCol := ""
 	switch strings.ToLower(cr.Status) {

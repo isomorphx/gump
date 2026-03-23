@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/isomorphx/gump/internal/brand"
 )
 
 // ResolvedRecipe carries source and path so the UI and future ledger can show provenance.
@@ -19,9 +21,15 @@ type ResolvedRecipe struct {
 func Resolve(name string, projectRoot string) (*ResolvedRecipe, error) {
 	var searched []string
 
-	// 1. Project: <repo-root>/.pudding/recipes/<name>.yaml
+	primaryDir := brand.StateDir() // ".gump" in gump mode, legacy state dir otherwise
+	primarySubdir := "recipes"
+	if brand.Lower() == "gump" {
+		primarySubdir = "workflows"
+	}
+
+	// 1. Project: <repo-root>/<primaryDir>/<primarySubdir>/<name>.yaml
 	if projectRoot != "" {
-		p := filepath.Join(projectRoot, ".pudding", "recipes", name+".yaml")
+		p := filepath.Join(projectRoot, primaryDir, primarySubdir, name+".yaml")
 		searched = append(searched, p)
 		raw, err := os.ReadFile(p)
 		if err == nil {
@@ -29,10 +37,10 @@ func Resolve(name string, projectRoot string) (*ResolvedRecipe, error) {
 		}
 	}
 
-	// 2. User: ~/.pudding/recipes/<name>.yaml
+	// 2. User: ~/<primaryDir>/<primarySubdir>/<name>.yaml
 	home, _ := os.UserHomeDir()
 	if home != "" {
-		p := filepath.Join(home, ".pudding", "recipes", name+".yaml")
+		p := filepath.Join(home, primaryDir, primarySubdir, name+".yaml")
 		searched = append(searched, p)
 		raw, err := os.ReadFile(p)
 		if err == nil {
@@ -40,7 +48,30 @@ func Resolve(name string, projectRoot string) (*ResolvedRecipe, error) {
 		}
 	}
 
-	// 3. Built-in
+	// 3. Legacy fallback (gump mode only): .pudding/recipes/<name>.yaml
+	if brand.Lower() == "gump" {
+		if projectRoot != "" {
+			p := filepath.Join(projectRoot, ".pudding/recipes", name+".yaml")
+			searched = append(searched, p)
+			raw, err := os.ReadFile(p)
+			if err == nil {
+				fmt.Fprintf(os.Stderr, "warning: workflow %q not found in .gump/workflows/, falling back to legacy .pudding/recipes/ (compat)\n", name)
+				return &ResolvedRecipe{Name: name, Source: "project", Path: p, Raw: raw}, nil
+			}
+		}
+
+		if home != "" {
+			p := filepath.Join(home, ".pudding/recipes", name+".yaml")
+			searched = append(searched, p)
+			raw, err := os.ReadFile(p)
+			if err == nil {
+				fmt.Fprintf(os.Stderr, "warning: workflow %q not found in .gump/workflows/, falling back to legacy .pudding/recipes/ (compat)\n", name)
+				return &ResolvedRecipe{Name: name, Source: "user", Path: p, Raw: raw}, nil
+			}
+		}
+	}
+
+	// 4. Built-in
 	raw, ok := BuiltinRecipes[name+".yaml"]
 	if ok {
 		return &ResolvedRecipe{Name: name, Source: "built-in", Path: "", Raw: raw}, nil

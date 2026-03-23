@@ -2,7 +2,9 @@ package statebag
 
 import (
 	"encoding/json"
+	"fmt"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -15,6 +17,19 @@ type Entry struct {
 	Files     string `json:"files,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
 	StepPath  string `json:"step_path"`
+
+	// Metrics captured during execution (Part B).
+	// Stored as strings because the template engine expects string interpolation.
+	Status      string `json:"status"`
+	Duration    string `json:"duration"`
+	Cost        string `json:"cost"`
+	Turns       string `json:"turns"`
+	Retries     string `json:"retries"`
+	TokensIn    string `json:"tokens_in"`
+	TokensOut   string `json:"tokens_out"`
+	CacheRead   string `json:"cache_read"`
+	CacheWrite  string `json:"cache_write"`
+	CheckResult string `json:"check_result"`
 }
 
 // StateBag stores step outputs keyed by fully-qualified path so prompts can reference {steps.<name>.output} and {steps.<name>.diff} without a global "plan" variable.
@@ -24,11 +39,30 @@ type StateBag struct {
 	entries map[string]Entry
 	// prev holds entries moved by ResetGroup so retry can resolve "previous" vs "current" (step 6).
 	prev map[string]Entry
+	// run holds run-level metrics for templates (run.* placeholders).
+	run map[string]string
+
+	// Numeric accumulators used to safely update run.cost/tokens across parallel steps.
+	runCostUSD  float64
+	runTokensIn int
+	runTokensOut int
+	runRetries int
 }
 
 // New returns an empty StateBag.
 func New() *StateBag {
-	return &StateBag{entries: make(map[string]Entry), prev: make(map[string]Entry)}
+	return &StateBag{
+		entries: make(map[string]Entry),
+		prev:    make(map[string]Entry),
+		run: map[string]string{
+			"cost":       "",
+			"duration":   "",
+			"tokens_in":  "",
+			"tokens_out": "",
+			"retries":    "",
+			"status":     "",
+		},
+	}
 }
 
 // Set records output, diff, changed files, and optional session id for a step at fullPath.
@@ -38,6 +72,10 @@ func (sb *StateBag) Set(fullPath string, value string, diff string, files []stri
 	if sb.entries == nil {
 		sb.entries = make(map[string]Entry)
 	}
+	// WHY: agent metrics might be written before output extraction; preserve metrics on output overwrite.
+	existing := sb.entries[fullPath]
+	existing.StepPath = fullPath
+
 	// WHY: v4 unifie {steps.<n>.diff} et {steps.<n>.output}. In "diff" output-mode
 	// the engine historically stored the patch in Diff while Value stayed empty.
 	// Copying diff → output for empty Value keeps templates consistent without
@@ -49,7 +87,11 @@ func (sb *StateBag) Set(fullPath string, value string, diff string, files []stri
 	if len(files) > 0 {
 		filesStr = strings.Join(files, ", ")
 	}
-	sb.entries[fullPath] = Entry{Value: value, Diff: diff, Files: filesStr, SessionID: sessionID, StepPath: fullPath}
+	existing.Value = value
+	existing.Diff = diff
+	existing.Files = filesStr
+	existing.SessionID = sessionID
+	sb.entries[fullPath] = existing
 }
 
 // Get resolves {steps.<shortName>.output} or {steps.<shortName>.diff} using scope proximity:
@@ -69,6 +111,28 @@ func (sb *StateBag) Get(shortName string, scopePath string, field string) string
 	}
 	if field == "session_id" {
 		return e.SessionID
+	}
+	switch field {
+	case "status":
+		return e.Status
+	case "duration":
+		return e.Duration
+	case "cost":
+		return e.Cost
+	case "turns":
+		return e.Turns
+	case "retries":
+		return e.Retries
+	case "tokens_in":
+		return e.TokensIn
+	case "tokens_out":
+		return e.TokensOut
+	case "cache_read":
+		return e.CacheRead
+	case "cache_write":
+		return e.CacheWrite
+	case "check_result":
+		return e.CheckResult
 	}
 	return e.Value
 }
@@ -153,12 +217,8 @@ func (sb *StateBag) DeleteStepOutputsForRestart(paths []string) {
 	}
 	for _, p := range paths {
 		if e, ok := sb.entries[p]; ok {
-			if e.SessionID != "" {
-				prev := sb.prev[p]
-				prev.SessionID = e.SessionID
-				prev.StepPath = p
-				sb.prev[p] = prev
-			}
+			// WHY: restart_from is logically a retry; keep prior metrics in prev so templates don't see them.
+			sb.prev[p] = e
 			delete(sb.entries, p)
 		}
 	}
@@ -174,13 +234,135 @@ func (sb *StateBag) PrevSessionID(fullPath string) string {
 	return sb.prev[fullPath].SessionID
 }
 
+func formatCostUSDString(usd float64) string {
+	// WHY: keep JSON-stored cost stable for tests/templates by using rounded decimals.
+	if usd < 0.01 && usd > 0 {
+		return fmt.Sprintf("%.4f", usd)
+	}
+	if usd == 0 {
+		return "0.00"
+	}
+	return fmt.Sprintf("%.2f", usd)
+}
+
+// SetRunMetric updates run-level metrics for run.* templates.
+func (sb *StateBag) SetRunMetric(key, value string) {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	if sb.run == nil {
+		sb.run = map[string]string{}
+	}
+	sb.run[key] = value
+}
+
+func (sb *StateBag) GetRunMetric(key string) string {
+	sb.mu.RLock()
+	defer sb.mu.RUnlock()
+	if sb.run == nil {
+		return ""
+	}
+	return sb.run[key]
+}
+
+// AddRunCost increments run.cost by the given delta.
+func (sb *StateBag) AddRunCost(deltaCostUSD float64) {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	if sb.run == nil {
+		sb.run = map[string]string{}
+	}
+	sb.runCostUSD += deltaCostUSD
+	sb.run["cost"] = formatCostUSDString(sb.runCostUSD)
+}
+
+func (sb *StateBag) IncrementRunTokensIn(delta int) {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	if sb.run == nil {
+		sb.run = map[string]string{}
+	}
+	sb.runTokensIn += delta
+	sb.run["tokens_in"] = fmt.Sprintf("%d", sb.runTokensIn)
+}
+
+func (sb *StateBag) IncrementRunTokensOut(delta int) {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	if sb.run == nil {
+		sb.run = map[string]string{}
+	}
+	sb.runTokensOut += delta
+	sb.run["tokens_out"] = fmt.Sprintf("%d", sb.runTokensOut)
+}
+
+// IncrementRunRetries increments run.retries by 1 (retry_triggered event).
+func (sb *StateBag) IncrementRunRetries() {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	if sb.run == nil {
+		sb.run = map[string]string{}
+	}
+	sb.runRetries++
+	sb.run["retries"] = fmt.Sprintf("%d", sb.runRetries)
+}
+
+// UpdateStepAgentMetrics stores agent completion metrics at fullPath.
+func (sb *StateBag) UpdateStepAgentMetrics(fullPath string, durationMs int, costUSD float64, turns int, tokensIn, tokensOut, cacheReadTokens, cacheWriteTokens int) {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	if sb.entries == nil {
+		sb.entries = make(map[string]Entry)
+	}
+	e := sb.entries[fullPath]
+	e.StepPath = fullPath
+	e.Duration = fmt.Sprintf("%d", durationMs)
+	e.Cost = formatCostUSDString(costUSD)
+	e.Turns = fmt.Sprintf("%d", turns)
+	e.TokensIn = fmt.Sprintf("%d", tokensIn)
+	e.TokensOut = fmt.Sprintf("%d", tokensOut)
+	e.CacheRead = fmt.Sprintf("%d", cacheReadTokens)
+	e.CacheWrite = fmt.Sprintf("%d", cacheWriteTokens)
+	sb.entries[fullPath] = e
+}
+
+// SetStepCheckResult stores validator result at fullPath.
+func (sb *StateBag) SetStepCheckResult(fullPath, checkResult string) {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	if sb.entries == nil {
+		sb.entries = make(map[string]Entry)
+	}
+	e := sb.entries[fullPath]
+	e.StepPath = fullPath
+	e.CheckResult = checkResult
+	sb.entries[fullPath] = e
+}
+
+// SetStepOutcome stores final step status and retries at fullPath.
+func (sb *StateBag) SetStepOutcome(fullPath, status string, retries int) {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	if sb.entries == nil {
+		sb.entries = make(map[string]Entry)
+	}
+	e := sb.entries[fullPath]
+	e.StepPath = fullPath
+	e.Status = status
+	e.Retries = fmt.Sprintf("%d", retries)
+	sb.entries[fullPath] = e
+}
+
 // Serialize exports the State Bag to JSON for persistence in state-bag.json.
 func (sb *StateBag) Serialize() ([]byte, error) {
 	sb.mu.RLock()
 	defer sb.mu.RUnlock()
 	payload := struct {
 		Entries map[string]Entry `json:"entries"`
-	}{Entries: sb.entries}
+		Run     map[string]string `json:"run"`
+	}{
+		Entries: sb.entries,
+		Run:     sb.run,
+	}
 	return json.MarshalIndent(payload, "", "  ")
 }
 
@@ -188,6 +370,7 @@ func (sb *StateBag) Serialize() ([]byte, error) {
 func Restore(data []byte) (*StateBag, error) {
 	var payload struct {
 		Entries map[string]Entry `json:"entries"`
+		Run     map[string]string `json:"run"`
 	}
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return nil, err
@@ -195,5 +378,38 @@ func Restore(data []byte) (*StateBag, error) {
 	if payload.Entries == nil {
 		payload.Entries = make(map[string]Entry)
 	}
-	return &StateBag{entries: payload.Entries, prev: make(map[string]Entry)}, nil
+	sb := &StateBag{entries: payload.Entries, prev: make(map[string]Entry)}
+	sb.run = payload.Run
+	if sb.run == nil {
+		sb.run = map[string]string{
+			"cost":       "",
+			"duration":   "",
+			"tokens_in":  "",
+			"tokens_out": "",
+			"retries":    "",
+			"status":     "",
+		}
+	}
+
+	if v := sb.run["cost"]; v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			sb.runCostUSD = f
+		}
+	}
+	if v := sb.run["tokens_in"]; v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			sb.runTokensIn = n
+		}
+	}
+	if v := sb.run["tokens_out"]; v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			sb.runTokensOut = n
+		}
+	}
+	if v := sb.run["retries"]; v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			sb.runRetries = n
+		}
+	}
+	return sb, nil
 }

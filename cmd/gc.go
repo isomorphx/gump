@@ -5,8 +5,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/isomorphx/pudding/internal/cook"
-	"github.com/isomorphx/pudding/internal/sandbox"
+	"github.com/isomorphx/gump/internal/brand"
+	"github.com/isomorphx/gump/internal/cook"
+	"github.com/isomorphx/gump/internal/sandbox"
 	"github.com/spf13/cobra"
 )
 
@@ -14,13 +15,13 @@ var gcKeepLast int
 
 var gcCmd = &cobra.Command{
 	Use:   "gc",
-	Short: "Remove old cooks and their worktrees",
-	Long:  "Keeps the N most recent cooks (by updated_at). For each removed cook: remove worktree and branch if present, then delete the cook directory. Never removes cooks with status 'running'.",
+	Short: "Remove old runs and their worktrees",
+	Long:  "Keeps the N most recent runs (by updated_at). For each removed run: remove worktree and branch if present, then delete the run directory. Never removes runs with status 'running'.",
 	RunE:  runGC,
 }
 
 func init() {
-	gcCmd.Flags().IntVar(&gcKeepLast, "keep-last", 5, "Number of most recent cooks to keep")
+	gcCmd.Flags().IntVar(&gcKeepLast, "keep-last", 5, "Number of most recent runs to keep")
 	rootCmd.AddCommand(gcCmd)
 }
 
@@ -32,15 +33,15 @@ func runGC(cmd *cobra.Command, args []string) error {
 	}
 	repoRoot, err := sandbox.GitRepoRoot(cwd)
 	if err != nil {
-		return fmt.Errorf("pudding gc must be run inside a git repository")
+		return fmt.Errorf("gump gc must be run inside a git repository")
 	}
-	cooksDir := filepath.Join(repoRoot, ".pudding", "cooks")
+	cooksDir := filepath.Join(repoRoot, brand.StateDir(), brand.RunsDir())
 	entries, err := cook.ListCooks(cooksDir)
 	if err != nil {
 		return err
 	}
 	if len(entries) == 0 {
-		fmt.Println("Cleaned 0 cooks. Kept 0 most recent.")
+		fmt.Println("Cleaned 0 runs. Kept 0 most recent.")
 		return nil
 	}
 	keep := gcKeepLast
@@ -58,23 +59,23 @@ func runGC(cmd *cobra.Command, args []string) error {
 	cleaned := 0
 	for _, e := range toRemove {
 		if e.Status == "running" {
-			fmt.Fprintf(os.Stderr, "Skipping cook %s (still running)\n", e.ID)
+			fmt.Fprintf(os.Stderr, "Skipping run %s (still running)\n", e.ID)
 			continue
 		}
 		wtPath := cook.WorktreePath(repoRoot, e.ID)
 		if _, err := os.Stat(wtPath); err == nil {
-			if err := sandbox.RemoveWorktree(repoRoot, wtPath, "pudding/cook-"+e.ID); err != nil {
+			if err := sandbox.RemoveWorktree(repoRoot, wtPath, brand.WorktreeBranchPrefix()+e.ID); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: failed to remove worktree %s: %v\n", e.ID, err)
 			}
 		}
 		dir := cook.CookDir(repoRoot, e.ID)
 		if err := os.RemoveAll(dir); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to remove cook dir %s: %v\n", e.ID, err)
+			fmt.Fprintf(os.Stderr, "warning: failed to remove run dir %s: %v\n", e.ID, err)
 		} else {
 			cleaned++
 		}
 	}
 	kept := len(toKeep)
-	fmt.Printf("Cleaned %d cooks. Kept %d most recent.\n", cleaned, kept)
+	fmt.Printf("Cleaned %d runs. Kept %d most recent.\n", cleaned, kept)
 	return nil
 }

@@ -13,7 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/isomorphx/pudding/internal/statebag"
+	"github.com/isomorphx/gump/internal/brand"
+	"github.com/isomorphx/gump/internal/statebag"
 )
 
 // Known lockfiles so we can record their hashes for reproducibility and drift detection.
@@ -35,22 +36,22 @@ type ContextSnapshot struct {
 	RuntimeVersions map[string]string `json:"runtime_versions"`
 }
 
-// StatusFile is the JSON stored in .pudding/cooks/<uuid>/status.json for apply and gc.
+// StatusFile is the JSON stored in .gump/runs/<uuid>/status.json for apply and gc.
 type StatusFile struct {
 	Status     string `json:"status"`
 	UpdatedAt  string `json:"updated_at"`
 	StepsCount int    `json:"steps_count,omitempty"`
 }
 
-// EnsureCookDir creates .pudding/cooks/<uuid>/ and artifacts/ so ledger and artifacts have a stable place.
+// EnsureCookDir creates .gump/runs/<uuid>/ and artifacts/ so ledger and artifacts have a stable place.
 func EnsureCookDir(cookDir string) error {
 	artifacts := filepath.Join(cookDir, "artifacts")
 	return os.MkdirAll(artifacts, 0755)
 }
 
-// WriteRecipeSnapshot copies the recipe YAML into the cook dir so we know exactly what was run.
+// WriteRecipeSnapshot copies the workflow YAML into the run dir so we know exactly what was run.
 func WriteRecipeSnapshot(cookDir string, recipeYAML []byte) error {
-	p := filepath.Join(cookDir, "recipe-snapshot.yaml")
+	p := filepath.Join(cookDir, "workflow-snapshot.yaml")
 	return os.WriteFile(p, recipeYAML, 0644)
 }
 
@@ -217,7 +218,7 @@ func FindLatestPassingCook(cooksDir string) (string, error) {
 
 // WorktreePath returns the worktree path for a cook id (used to check existence before apply).
 func WorktreePath(repoRoot, cookID string) string {
-	return filepath.Join(repoRoot, ".pudding", "worktrees", "cook-"+cookID)
+	return filepath.Join(repoRoot, brand.StateDir(), "worktrees", brand.WorktreeDirPrefix()+cookID)
 }
 
 // WorktreeExists checks if the worktree directory exists so we can refuse apply after gc.
@@ -226,9 +227,9 @@ func WorktreeExists(repoRoot, cookID string) bool {
 	return err == nil
 }
 
-// CookDir returns .pudding/cooks/<uuid>/ for a given repo and cook id.
+// CookDir returns .gump/runs/<uuid>/ for a given repo and run id.
 func CookDir(repoRoot, cookID string) string {
-	return filepath.Join(repoRoot, ".pudding", "cooks", cookID)
+	return filepath.Join(repoRoot, brand.StateDir(), brand.RunsDir(), cookID)
 }
 
 // LoadCookFromDir loads minimal cook metadata from a cook dir (for apply when we have uuid but not a live Cook).
@@ -250,7 +251,7 @@ func LoadCookFromDir(repoRoot, cookID string) (*Cook, error) {
 		OrigBranch:    ctx.Branch,
 		InitialCommit: ctx.InitialCommit,
 		WorktreeDir:   WorktreePath(repoRoot, cookID),
-		BranchName:    "pudding/cook-" + cookID,
+		BranchName:    brand.WorktreeBranchPrefix() + cookID,
 		CookDir:       dir,
 	}
 	st, err := ReadStatus(dir)

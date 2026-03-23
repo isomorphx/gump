@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/isomorphx/pudding/internal/config"
+	"github.com/isomorphx/gump/internal/config"
 )
 
 // IsOptionalValidator returns true for lint and coverage; they are skipped when the tool is not installed.
@@ -68,7 +68,7 @@ func ResolveCommand(alias string, cfg *config.Config, worktreeDir string) (strin
 		if p := filepath.Join(worktreeDir, "pyproject.toml"); pathExists(p) {
 			return `python -m py_compile $(find . -name '*.py' -not -path './.*')`, nil
 		}
-		return "", fmt.Errorf("cannot resolve 'compile': no known build system detected. Configure compile_cmd in pudding.toml")
+		return "", fmt.Errorf("cannot resolve 'compile': no known build system detected. Configure compile_cmd in gump.toml")
 	case "test":
 		if cfg != nil && cfg.TestCmd != "" {
 			return cfg.TestCmd, nil
@@ -88,7 +88,7 @@ func ResolveCommand(alias string, cfg *config.Config, worktreeDir string) (strin
 		if p := filepath.Join(worktreeDir, "pyproject.toml"); pathExists(p) {
 			return "python -m pytest", nil
 		}
-		return "", fmt.Errorf("cannot resolve 'test': no known test runner detected. Configure test_cmd in pudding.toml")
+		return "", fmt.Errorf("cannot resolve 'test': no known test runner detected. Configure test_cmd in gump.toml")
 	case "lint":
 		if cfg != nil && cfg.LintCmd != "" {
 			return cfg.LintCmd, nil
@@ -102,7 +102,7 @@ func ResolveCommand(alias string, cfg *config.Config, worktreeDir string) (strin
 		if p := filepath.Join(worktreeDir, "Cargo.toml"); pathExists(p) {
 			return "cargo clippy", nil
 		}
-		return "", fmt.Errorf("cannot resolve 'lint': no known linter detected. Configure lint_cmd in pudding.toml")
+		return "", fmt.Errorf("cannot resolve 'lint': no known linter detected. Configure lint_cmd in gump.toml")
 	case "coverage":
 		if cfg != nil && cfg.CoverageCmd != "" {
 			return cfg.CoverageCmd, nil
@@ -116,7 +116,7 @@ func ResolveCommand(alias string, cfg *config.Config, worktreeDir string) (strin
 		if p := filepath.Join(worktreeDir, "Cargo.toml"); pathExists(p) {
 			return "cargo tarpaulin --out Stdout", nil
 		}
-		return "", fmt.Errorf("cannot resolve 'coverage': no known coverage tool detected. Configure coverage_cmd in pudding.toml")
+		return "", fmt.Errorf("cannot resolve 'coverage': no known coverage tool detected. Configure coverage_cmd in gump.toml")
 	default:
 		return "", fmt.Errorf("unknown alias %q", alias)
 	}

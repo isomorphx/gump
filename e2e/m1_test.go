@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	_ "github.com/isomorphx/pudding/internal/builtin"
-	"github.com/isomorphx/pudding/internal/recipe"
-	"github.com/isomorphx/pudding/internal/template"
+	_ "github.com/isomorphx/gump/internal/builtin"
+	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/template"
 )
 
 func captureStderr(t *testing.T, fn func()) string {
@@ -252,7 +252,7 @@ func TestM1_8_TemplateTaskVarsWarningDeprecated(t *testing.T) {
 func TestM1_9_DryRunFormatV4(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "Implement a hello world function")
-	stdout, _, code := runPudding(t, []string{"cook", "spec.md", "--recipe", "tdd", "--dry-run"}, nil, dir)
+	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "tdd", "--dry-run"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stdout)
 	}
@@ -269,7 +269,7 @@ func TestM1_9_DryRunFormatV4(t *testing.T) {
 func TestM1_10_DryRunStateBagResolutions(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	stdout, _, code := runPudding(t, []string{"cook", "spec.md", "--recipe", "adversarial-review", "--dry-run"}, nil, dir)
+	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "adversarial-review", "--dry-run"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stdout)
 	}

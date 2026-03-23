@@ -36,7 +36,7 @@ type StepReport struct {
 	ContextLabel string
 }
 
-// CookReport aggregates one cook run (spec §3).
+// CookReport aggregates one run (spec §3).
 type CookReport struct {
 	CookID         string
 	Recipe         string
@@ -99,7 +99,7 @@ type stepAccum struct {
 	gatePassFail string // last gate pass/fail for this step
 }
 
-// BuildCookReport loads manifest, artefacts, and state bag for one cook directory.
+// BuildCookReport loads manifest, artefacts, and state bag for one run directory.
 func BuildCookReport(cookDir string) (*CookReport, error) {
 	manifestPath := filepath.Join(cookDir, "manifest.ndjson")
 	data, err := os.ReadFile(manifestPath)
@@ -154,7 +154,32 @@ func BuildCookReport(cookDir string) (*CookReport, error) {
 			if b, ok := ev["max_budget"].(float64); ok {
 				maxBudget = b
 			}
+		case "run_started":
+			cookID, _ = ev["run_id"].(string)
+			recipe, _ = ev["workflow"].(string)
+			if b, ok := ev["max_budget"].(float64); ok {
+				maxBudget = b
+			}
 		case "cook_completed":
+			cookStatus, _ = ev["status"].(string)
+			if v, ok := ev["duration_ms"].(float64); ok {
+				durationMs = int(v)
+			}
+			if v, ok := ev["total_cost_usd"].(float64); ok {
+				totalCost = v
+			}
+			if v, ok := ev["steps"].(float64); ok {
+				stepsN = int(v)
+			}
+			if v, ok := ev["retries"].(float64); ok {
+				retries = int(v)
+			}
+			if arts, ok := ev["artifacts"].(map[string]interface{}); ok {
+				if rel, ok := arts["final_diff"].(string); ok {
+					finalPatchPath = rel
+				}
+			}
+		case "run_completed":
 			cookStatus, _ = ev["status"].(string)
 			if v, ok := ev["duration_ms"].(float64); ok {
 				durationMs = int(v)

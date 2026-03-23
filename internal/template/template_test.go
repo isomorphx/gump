@@ -3,7 +3,7 @@ package template
 import (
 	"testing"
 
-	"github.com/isomorphx/pudding/internal/statebag"
+	"github.com/isomorphx/gump/internal/statebag"
 )
 
 func TestResolve_Spec(t *testing.T) {
@@ -54,6 +54,18 @@ func TestResolve_StepsRefFromStateBag(t *testing.T) {
 	vars := map[string]string{}
 	out := Resolve("Use: {steps.analyze.output}", vars, sb, "code")
 	if out != "Use: stub artifact output for analyze" {
+		t.Errorf("got %q", out)
+	}
+}
+
+func TestResolve_RunAndStepMetricsRefs(t *testing.T) {
+	sb := statebag.New()
+	// WHY: verify that the template engine can interpolate stringified metrics.
+	sb.UpdateStepAgentMetrics("first", 123, 0.05, 2, 1000, 500, 7, 9)
+	sb.SetRunMetric("cost", "0.05")
+
+	out := Resolve("C1={steps.first.tokens_in} C2={steps.first.cost} R={run.cost}", nil, sb, "code")
+	if out != "C1=1000 C2=0.05 R=0.05" {
 		t.Errorf("got %q", out)
 	}
 }

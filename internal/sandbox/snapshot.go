@@ -6,7 +6,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/isomorphx/pudding/internal/diff"
+	"github.com/isomorphx/gump/internal/brand"
+	"github.com/isomorphx/gump/internal/diff"
 )
 
 // Snapshot stages all changes in worktreeDir, commits with a structured message, and returns the diff contract.
@@ -50,7 +51,7 @@ func Snapshot(worktreeDir, stepName, taskName string, attempt int) (*diff.DiffCo
 	if task == "" {
 		task = "-"
 	}
-	msg := fmt.Sprintf("[pudding] step:%s task:%s attempt:%d", stepName, task, attempt)
+	msg := fmt.Sprintf("[%s] step:%s task:%s attempt:%d", brand.Lower(), stepName, task, attempt)
 	commit := exec.Command("git", "commit", "-m", msg)
 	commit.Dir = worktreeDir
 	if out, err := commit.CombinedOutput(); err != nil {
@@ -101,8 +102,9 @@ func FinalDiff(worktreeDir, initialCommit string) (*diff.DiffContract, error) {
 	}, nil
 }
 
-// ParallelMergeExcludes are paths excluded from parallel worktree diff so merge only considers repo code (not .pudding or provider context files).
-var ParallelMergeExcludes = []string{".pudding", "AGENTS.md", "CLAUDE.md", "GEMINI.md", "QWEN.md"}
+// ParallelMergeExcludes are paths excluded from parallel worktree diff so merge only considers repo code
+// (not <brand> state dir or provider context files).
+var ParallelMergeExcludes = []string{brand.StateDir(), "AGENTS.md", "CLAUDE.md", "GEMINI.md", "QWEN.md"}
 
 // FinalDiffExclude returns diff between initialCommit and HEAD excluding the given paths so parallel merge only considers repo files.
 func FinalDiffExclude(worktreeDir, initialCommit string, excludePaths []string) (*diff.DiffContract, error) {

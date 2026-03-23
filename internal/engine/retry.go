@@ -6,10 +6,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/isomorphx/pudding/internal/ledger"
-	"github.com/isomorphx/pudding/internal/plan"
-	"github.com/isomorphx/pudding/internal/recipe"
-	"github.com/isomorphx/pudding/internal/sandbox"
+	"github.com/isomorphx/gump/internal/ledger"
+	"github.com/isomorphx/gump/internal/plan"
+	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/sandbox"
 )
 
 // ErrorContext carries failed validation output so the next attempt gets {error} and {diff} in the prompt.
@@ -75,6 +75,7 @@ func (e *Engine) RunWithRetry(step recipe.Step, scopePath string, taskContext *p
 		if e.Cook.Ledger != nil {
 			_ = e.Cook.Ledger.Emit(ledger.RetryTriggered{Step: scopePath, Attempt: attempt, Strategy: strategyLabel, Scope: "step"})
 			e.retryTriggeredCount++
+			e.StateBag.IncrementRunRetries()
 		}
 		RetryTriggerLine(fmt.Sprintf("retry attempt %d/%d (%s)", attempt, maxAttempts, strategyLabel))
 

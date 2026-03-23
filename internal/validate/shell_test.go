@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/isomorphx/pudding/internal/config"
-	"github.com/isomorphx/pudding/internal/recipe"
+	"github.com/isomorphx/gump/internal/config"
+	"github.com/isomorphx/gump/internal/recipe"
 )
 
 func TestRunShellValidator_ExitZero(t *testing.T) {
@@ -115,7 +115,7 @@ func TestRunCompileValidator_FailsWithClearMessageWhenBinaryAbsent(t *testing.T)
 	if !strings.Contains(r.Stderr, "not installed") {
 		t.Errorf("stderr should contain not installed: %q", r.Stderr)
 	}
-	if !strings.Contains(r.Stderr, "compile_cmd") || !strings.Contains(r.Stderr, "pudding.toml") {
+	if !strings.Contains(r.Stderr, "compile_cmd") || !strings.Contains(r.Stderr, "gump.toml") {
 		t.Errorf("stderr should guide user to config: %q", r.Stderr)
 	}
 }

@@ -9,7 +9,7 @@ import (
 )
 
 // GitRepoRoot returns the absolute path of the git repository root containing dir.
-// Required so we create .pudding and worktrees at the repo root, not in a random subdir.
+// Required so we create .gump and worktrees at the repo root, not in a random subdir.
 // Uses -C so git runs in dir regardless of the process CWD (reliable under go test and subprocesses).
 func GitRepoRoot(dir string) (string, error) {
 	cmd := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel")
@@ -21,7 +21,7 @@ func GitRepoRoot(dir string) (string, error) {
 }
 
 // HasUncommittedChanges reports whether the working tree in dir has uncommitted changes.
-// Enforced before cook/apply so we never mix local edits with pudding branches.
+// Enforced before run/apply so we never mix local edits with gump branches.
 func HasUncommittedChanges(dir string) (bool, error) {
 	cmd := exec.Command("git", "status", "--porcelain")
 	cmd.Dir = dir
@@ -86,7 +86,7 @@ func CreateWorktreeAtCommit(repoRoot, worktreeDir, branchName, fromCommit string
 }
 
 // RemoveWorktree removes the worktree and deletes its branch so the main repo stays clean.
-// Cook dir (.pudding/cooks/<uuid>/) is left intact for ledger and artifacts.
+// Run dir (.gump/runs/<uuid>/) is left intact for ledger and artifacts.
 func RemoveWorktree(repoRoot, worktreeDir, branchName string) error {
 	rm := exec.Command("git", "worktree", "remove", "--force", worktreeDir)
 	rm.Dir = repoRoot

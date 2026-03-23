@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/isomorphx/gump/internal/brand"
 )
 
 const (
@@ -108,7 +110,7 @@ func (a *ClaudeAdapter) start(ctx context.Context, worktree string, timeout time
 	cmd := exec.CommandContext(ctx, claudeBin, args...)
 	// Don't pass ANTHROPIC_API_KEY so the CLI doesn't hit ByteString/API key errors; auth is handled by the CLI itself (e.g. OAuth).
 	cmd.Env = envWithout(os.Environ(), "ANTHROPIC_API_KEY")
-	artefactDir := filepath.Join(worktree, ".pudding", "artefacts")
+	artefactDir := filepath.Join(worktree, brand.StateDir(), "artefacts")
 	_ = os.MkdirAll(artefactDir, 0755)
 	stdoutPath := filepath.Join(artefactDir, "stdout.ndjson")
 	stderrPath := filepath.Join(artefactDir, "stderr.txt")

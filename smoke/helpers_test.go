@@ -16,12 +16,12 @@ import (
 )
 
 // #region agent log
-const debugLogPath = "/Users/natsuki17/dev/pudding/.cursor/debug-5773e0.log"
+const debugLogPath = "/Users/natsuki17/dev/gump/.cursor/debug-5773e0.log"
 func writeDebugLog(data map[string]interface{}) {
 	data["sessionId"] = "5773e0"
 	data["timestamp"] = time.Now().UnixMilli()
-	data["location"] = "smoke/helpers_test.go:runPudding"
-	data["message"] = "pudding non-zero exit"
+	data["location"] = "smoke/helpers_test.go:runGump"
+	data["message"] = "gump non-zero exit"
 	data["hypothesisId"] = "H1"
 	line, _ := json.Marshal(data)
 	f, err := os.OpenFile(debugLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -54,12 +54,11 @@ func setupSmokeRepo(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	// Ignore only cook state (not all of .pudding) so we can commit .pudding/conventions.md for the agent context.
-	// Ignore cook state and agent output dirs; keep .pudding/recipes and .pudding/conventions.md committable.
-	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".pudding/cooks/\n.pudding/worktrees/\n.pudding/out/\n"), 0644); err != nil {
+	// Ignore only runtime state so `.gump/conventions.md` can remain committable.
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".gump/runs/\n.gump/worktrees/\n.gump/out/\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	conventionsDir := filepath.Join(dir, ".pudding")
+	conventionsDir := filepath.Join(dir, ".gump")
 	if err := os.MkdirAll(conventionsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +82,7 @@ func runGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
-// writeSpec writes spec.md and commits so cook has a clean spec to read.
+// writeSpec writes spec.md and commits so run has a clean spec to read.
 func writeSpec(t *testing.T, repoDir, content string) {
 	t.Helper()
 	p := filepath.Join(repoDir, "spec.md")
@@ -94,7 +93,7 @@ func writeSpec(t *testing.T, repoDir, content string) {
 	runGit(t, repoDir, "commit", "-m", "add spec")
 }
 
-// writeFile writes a file under the repo and commits it so cook worktrees see it (e.g. .pudding-test-scenario.json, .pudding-test-plan.json).
+// writeFile writes a file under the repo and commits it so run worktrees see it.
 func writeFile(t *testing.T, repoDir, relPath, content string) {
 	t.Helper()
 	p := filepath.Join(repoDir, relPath)
@@ -108,25 +107,25 @@ func writeFile(t *testing.T, repoDir, relPath, content string) {
 	runGit(t, repoDir, "commit", "-m", "add "+relPath)
 }
 
-// writeRecipe writes a custom recipe so cross-provider and session/retry tests can use their own steps.
+// writeRecipe writes a custom workflow so smoke tests can use their own steps.
 func writeRecipe(t *testing.T, repoDir, name, yaml string) {
 	t.Helper()
-	recipesDir := filepath.Join(repoDir, ".pudding", "recipes")
-	if err := os.MkdirAll(recipesDir, 0755); err != nil {
+	workflowsDir := filepath.Join(repoDir, ".gump", "workflows")
+	if err := os.MkdirAll(workflowsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	p := filepath.Join(recipesDir, name+".yaml")
+	p := filepath.Join(workflowsDir, name+".yaml")
 	if err := os.WriteFile(p, []byte(yaml), 0644); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, repoDir, "add", "-f", ".pudding/recipes/"+name+".yaml")
-	runGit(t, repoDir, "commit", "-m", "add recipe "+name)
+	runGit(t, repoDir, "add", "-f", ".gump/workflows/"+name+".yaml")
+	runGit(t, repoDir, "commit", "-m", "add workflow "+name)
 }
 
 var (
-	puddingBinPath string
-	puddingBinErr  error
-	puddingBinOnce sync.Once
+	gumpBinPath string
+	gumpBinErr  error
+	gumpBinOnce sync.Once
 )
 
 func findModuleRoot() string {
@@ -143,34 +142,33 @@ func findModuleRoot() string {
 	}
 }
 
-func ensureSmokePuddingBin() (string, error) {
-	puddingBinOnce.Do(func() {
-		tmpDir, err := os.MkdirTemp("", "pudding-smoke-bin-")
+func ensureSmokeGumpBin() (string, error) {
+	gumpBinOnce.Do(func() {
+		tmpDir, err := os.MkdirTemp("", "gump-smoke-bin-")
 		if err != nil {
-			puddingBinErr = err
+			gumpBinErr = err
 			return
 		}
-		puddingBinPath = filepath.Join(tmpDir, "pudding")
+		gumpBinPath = filepath.Join(tmpDir, "gump")
 
 		moduleRoot := findModuleRoot()
-		cmd := exec.Command("go", "build", "-o", puddingBinPath, ".")
+		cmd := exec.Command("go", "build", "-o", gumpBinPath, ".")
 		cmd.Dir = moduleRoot
 		if out, err := cmd.CombinedOutput(); err != nil {
-			puddingBinErr = err
+			gumpBinErr = err
 			_ = out
 			return
 		}
 	})
-	return puddingBinPath, puddingBinErr
+	return gumpBinPath, gumpBinErr
 }
 
-// runPudding runs the pudding binary from PATH (as installable by users) with a 5-minute timeout
-// so long cooks don't hang the suite.
-func runPudding(t *testing.T, repoDir string, args ...string) (stdout, stderr string, exitCode int) {
+// runGump runs the gump binary with a 5-minute timeout.
+func runGump(t *testing.T, repoDir string, args ...string) (stdout, stderr string, exitCode int) {
 	t.Helper()
-	bin, err := ensureSmokePuddingBin()
+	bin, err := ensureSmokeGumpBin()
 	if err != nil || bin == "" {
-		t.Fatalf("failed to build pudding binary for smoke tests: %v", err)
+		t.Fatalf("failed to build gump binary for smoke tests: %v", err)
 	}
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = repoDir
@@ -199,7 +197,7 @@ func runPudding(t *testing.T, repoDir string, args ...string) (stdout, stderr st
 	return outBuf.String(), errBuf.String(), 0
 }
 
-// runWithTimeout prevents a single long cook from hanging the smoke run.
+// runWithTimeout prevents a single long run from hanging the smoke run.
 func runWithTimeout(cmd *exec.Cmd, d time.Duration) error {
 	if err := cmd.Start(); err != nil {
 		return err
@@ -216,17 +214,16 @@ func runWithTimeout(cmd *exec.Cmd, d time.Duration) error {
 	}
 }
 
-// latestCookDir picks the most recent cook by directory mtime so assertions target
-// the run we just performed when multiple cooks exist (e.g. after GC test).
-func latestCookDir(t *testing.T, repoDir string) string {
+// latestRunDir picks the most recent run by directory mtime.
+func latestRunDir(t *testing.T, repoDir string) string {
 	t.Helper()
-	cooksDir := filepath.Join(repoDir, ".pudding", "cooks")
-	entries, err := os.ReadDir(cooksDir)
+	runsDir := filepath.Join(repoDir, ".gump", "runs")
+	entries, err := os.ReadDir(runsDir)
 	if err != nil {
-		t.Fatalf("list cooks: %v", err)
+		t.Fatalf("list runs: %v", err)
 	}
 	if len(entries) == 0 {
-		t.Fatal("no cook dirs in .pudding/cooks")
+		t.Fatal("no run dirs in .gump/runs")
 	}
 	type ent struct {
 		name  string
@@ -244,18 +241,19 @@ func latestCookDir(t *testing.T, repoDir string) string {
 		dirs = append(dirs, ent{e.Name(), info.ModTime()})
 	}
 	if len(dirs) == 0 {
-		t.Fatal("no cook dirs in .pudding/cooks")
+		t.Fatal("no run dirs in .gump/runs")
 	}
 	sort.Slice(dirs, func(i, j int) bool { return dirs[i].mtime.After(dirs[j].mtime) })
-	return filepath.Join(cooksDir, dirs[0].name)
+	return filepath.Join(runsDir, dirs[0].name)
 }
 
-// assertCookPass ensures the last cook completed successfully so we don't apply or assert
+
+// assertRunPass ensures the last run completed successfully so we don't apply or assert
 // on a failed run.
-func assertCookPass(t *testing.T, repoDir string) {
+func assertRunPass(t *testing.T, repoDir string) {
 	t.Helper()
-	cookDir := latestCookDir(t, repoDir)
-	data, err := os.ReadFile(filepath.Join(cookDir, "status.json"))
+	runDir := latestRunDir(t, repoDir)
+	data, err := os.ReadFile(filepath.Join(runDir, "status.json"))
 	if err != nil {
 		t.Fatalf("read status.json: %v", err)
 	}
@@ -266,9 +264,10 @@ func assertCookPass(t *testing.T, repoDir string) {
 		t.Fatalf("status.json: %v", err)
 	}
 	if st.Status != "pass" {
-		t.Fatalf("expected cook status pass, got %s", st.Status)
+		t.Fatalf("expected run status pass, got %s", st.Status)
 	}
 }
+
 
 // assertFileExists checks that a path exists in the repo (after apply, files are in repo root).
 func assertFileExists(t *testing.T, repoDir, path string) {
@@ -290,23 +289,23 @@ func assertGoTestPasses(t *testing.T, repoDir string) {
 	}
 }
 
-// applyAndReset applies the last cook then resets to main so the next test starts clean.
-// Must only be called when the cook passed.
+// applyAndReset applies the last run then resets to main so the next test starts clean.
+// Must only be called when the run passed.
 func applyAndReset(t *testing.T, repoDir string) {
 	t.Helper()
-	if _, _, code := runPudding(t, repoDir, "apply"); code != 0 {
-		t.Fatalf("pudding apply failed with exit %d", code)
+	if _, _, code := runGump(t, repoDir, "apply"); code != 0 {
+		t.Fatalf("gump apply failed with exit %d", code)
 	}
 	runGit(t, repoDir, "checkout", "main")
 	runGit(t, repoDir, "clean", "-fd")
 }
 
-// readLedger returns parsed NDJSON events from the latest cook's manifest so tests can
+// readLedger returns parsed NDJSON events from the latest run's manifest so tests can
 // assert on agent_launched, step_started, etc.
 func readLedger(t *testing.T, repoDir string) []map[string]interface{} {
 	t.Helper()
-	cookDir := latestCookDir(t, repoDir)
-	path := filepath.Join(cookDir, "manifest.ndjson")
+	runDir := latestRunDir(t, repoDir)
+	path := filepath.Join(runDir, "manifest.ndjson")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read ledger: %v", err)

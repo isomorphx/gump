@@ -3,7 +3,7 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/isomorphx/pudding/internal/config"
+	"github.com/isomorphx/gump/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -22,7 +22,7 @@ func runConfig(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println("Pudding Configuration")
+	fmt.Println("Gump Configuration")
 	fmt.Println()
 	printRow("default_agent", cfg.DefaultAgent, src.DefaultAgent)
 	printRow("log_level", cfg.LogLevel, src.LogLevel)

@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	conventionsPath = ".pudding/conventions.md"
+	conventionsPath = ".gump/conventions.md"
 )
 
 // originalBackupByContextFile keeps provider-specific backups so cleanup restores the user's file, not another provider's.
@@ -51,7 +51,7 @@ func WriteReplanContext(worktreeDir, taskName, taskDesc string, taskFiles []stri
 	return writeWithBackup(worktreeDir, replanTemplate(taskName, taskDesc, taskFiles, diff, errMsg), contextFile)
 }
 
-const puddingContextFileHeader = "# Pudding — Agent Instructions"
+const gumpContextFileHeader = "# Gump — Agent Instructions"
 
 func writeWithBackup(worktreeDir, content, contextFile string) error {
 	path := filepath.Join(worktreeDir, contextFile)
@@ -63,7 +63,7 @@ func writeWithBackup(worktreeDir, content, contextFile string) error {
 	if _, err := os.Stat(path); err == nil {
 		if _, err := os.Stat(backupPath); os.IsNotExist(err) {
 			data, _ := os.ReadFile(path)
-			if !strings.HasPrefix(strings.TrimSpace(string(data)), puddingContextFileHeader) {
+			if !strings.HasPrefix(strings.TrimSpace(string(data)), gumpContextFileHeader) {
 				_ = os.WriteFile(backupPath, data, 0644)
 			}
 		}
@@ -129,9 +129,9 @@ func conventionsSection(worktreeDir string) string {
 }
 
 func planTemplate(spec string) string {
-	return `# Pudding — Agent Instructions
+	return `# Gump — Agent Instructions
 
-You are executing a plan step in a Pudding workflow.
+You are executing a plan step in a Gump workflow.
 
 ## Your task
 
@@ -164,7 +164,7 @@ Rules for the plan:
 
 - Do NOT run ` + "`git commit`" + `, ` + "`git add`" + `, ` + "`git push`" + `, or any git command.
 - Do NOT switch branches.
-- You are in a Pudding worktree. Pudding manages git.
+- You are in a Gump worktree. Gump manages git.
 
 ## Specification
 
@@ -172,9 +172,9 @@ Rules for the plan:
 }
 
 func codeTemplate(prompt, blastRadius, conventions string) string {
-	s := `# Pudding — Agent Instructions
+	s := `# Gump — Agent Instructions
 
-You are executing a code step in a Pudding workflow.
+You are executing a code step in a Gump workflow.
 
 ## Your task
 
@@ -188,7 +188,7 @@ You are executing a code step in a Pudding workflow.
 
 - Do NOT run ` + "`git commit`" + `, ` + "`git add`" + `, ` + "`git push`" + `, or any git command.
 - Do NOT switch branches.
-- You are in a Pudding worktree. Pudding manages git.
+- You are in a Gump worktree. Gump manages git.
 `
 	if conventions != "" {
 		s += "\n## Project conventions\n\n" + conventions + "\n"
@@ -197,9 +197,9 @@ You are executing a code step in a Pudding workflow.
 }
 
 func codeRetryTemplate(prompt string, attempt, maxAttempts int, diff, errMsg, blastRadius, conventions string) string {
-	s := `# Pudding — Agent Instructions
+	s := `# Gump — Agent Instructions
 
-You are executing a code step in a Pudding workflow.
+You are executing a code step in a Gump workflow.
 This is retry attempt ` + fmt.Sprintf("%d", attempt) + ` of ` + fmt.Sprintf("%d", maxAttempts) + `.
 
 ## Your task
@@ -226,7 +226,7 @@ Analyze the error, understand what went wrong, and try a different approach.
 
 - Do NOT run ` + "`git commit`" + `, ` + "`git add`" + `, ` + "`git push`" + `, or any git command.
 - Do NOT switch branches.
-- You are in a Pudding worktree. Pudding manages git.
+- You are in a Gump worktree. Gump manages git.
 `
 	if conventions != "" {
 		s += "\n## Project conventions\n\n" + conventions + "\n"
@@ -236,7 +236,7 @@ Analyze the error, understand what went wrong, and try a different approach.
 
 func replanTemplate(taskName, taskDesc string, taskFiles []string, diff, errMsg string) string {
 	filesStr := strings.Join(taskFiles, ", ")
-	return `# Pudding — Agent Instructions
+	return `# Gump — Agent Instructions
 
 You are re-planning a task that failed during implementation.
 

@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/isomorphx/gump/internal/brand"
 )
 
 const (
@@ -114,8 +116,11 @@ func qwenBuildArgs(prompt, agentName string, turns int, sessionID string) []stri
 	return args
 }
 
-// qwenBinary returns the qwen CLI path: PUDDING_E2E_QWEN_BIN if set (E2E stubs), else "qwen".
+// qwenBinary returns the qwen CLI path: GUMP_E2E_QWEN_BIN if set (E2E stubs), else "qwen".
 func qwenBinary() string {
+	if p := os.Getenv("GUMP_E2E_QWEN_BIN"); p != "" {
+		return p
+	}
 	if p := os.Getenv("PUDDING_E2E_QWEN_BIN"); p != "" {
 		return p
 	}
@@ -126,10 +131,14 @@ func (a *QwenAdapter) start(ctx context.Context, worktree string, timeout time.D
 	bin := qwenBinary()
 	cmd := exec.CommandContext(ctx, bin, args...)
 	// E2E: stub needs worktree path to write sentinel (cwd can differ on some platforms).
-	if os.Getenv("PUDDING_E2E_QWEN_BIN") != "" {
-		cmd.Env = append(os.Environ(), "PUDDING_WORKTREE="+worktree)
+	if os.Getenv("GUMP_E2E_QWEN_BIN") != "" || os.Getenv("PUDDING_E2E_QWEN_BIN") != "" {
+		cmd.Env = append(
+			os.Environ(),
+			"GUMP_WORKTREE="+worktree,
+			"PUDDING_WORKTREE="+worktree,
+		)
 	}
-	artefactDir := filepath.Join(worktree, ".pudding", "artefacts")
+	artefactDir := filepath.Join(worktree, brand.StateDir(), "artefacts")
 	_ = os.MkdirAll(artefactDir, 0755)
 	stdoutPath := filepath.Join(artefactDir, "stdout.ndjson")
 	stderrPath := filepath.Join(artefactDir, "stderr.txt")

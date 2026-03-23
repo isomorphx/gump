@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/isomorphx/gump/internal/brand"
 )
 
 const (
@@ -117,7 +119,7 @@ func (a *CodexAdapter) start(ctx context.Context, worktree string, timeout time.
 	}
 	cmd := exec.CommandContext(ctx, codexBin, args...)
 	cmd.Dir = worktree
-	artefactDir := filepath.Join(worktree, ".pudding", "artefacts")
+	artefactDir := filepath.Join(worktree, brand.StateDir(), "artefacts")
 	_ = os.MkdirAll(artefactDir, 0755)
 	stdoutPath := filepath.Join(artefactDir, "stdout.ndjson")
 	stderrPath := filepath.Join(artefactDir, "stderr.txt")

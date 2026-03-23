@@ -4,10 +4,10 @@ import (
 	"embed"
 	"io/fs"
 
-	"github.com/isomorphx/pudding/internal/recipe"
+	"github.com/isomorphx/gump/internal/recipe"
 )
 
-// recipesFS embeds built-in YAML so users can run "pudding cook ... --recipe tdd" with zero setup.
+// recipesFS embeds built-in YAML so users can run "gump run ... --workflow tdd" with zero setup.
 //go:embed recipes/*.yaml
 var recipesFS embed.FS
 

@@ -15,7 +15,7 @@ func TestLedger_EmitAndClose(t *testing.T) {
 	}
 	defer l.Close()
 
-	if err := l.Emit(CookStarted{CookID: "test-cook-id", Recipe: "tdd", Spec: "spec.md", Commit: "abc", Branch: "main", AgentsCLI: map[string]string{"claude": "1.0"}}); err != nil {
+	if err := l.Emit(RunStarted{RunID: "test-cook-id", Workflow: "tdd", Spec: "spec.md", Commit: "abc", Branch: "main", AgentsCLI: map[string]string{"claude": "1.0"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := l.Emit(StepStarted{Step: "code", Agent: "claude", Attempt: 1}); err != nil {

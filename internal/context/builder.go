@@ -10,9 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/isomorphx/pudding/internal/config"
-	"github.com/isomorphx/pudding/internal/recipe"
-	"github.com/isomorphx/pudding/internal/template"
+	"github.com/isomorphx/gump/internal/brand"
+	"github.com/isomorphx/gump/internal/config"
+	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/template"
 )
 
 const (
@@ -66,10 +67,10 @@ type RetrySection struct {
 }
 
 var originalBackupByContextFile = map[string]string{
-	"CLAUDE.md": ".pudding-original-CLAUDE.md",
-	"AGENTS.md": ".pudding-original-AGENTS.md",
-	"GEMINI.md": ".pudding-original-GEMINI.md",
-	"QWEN.md":   ".pudding-original-QWEN.md",
+	"CLAUDE.md": brand.StateDir() + "-original-CLAUDE.md",
+	"AGENTS.md": brand.StateDir() + "-original-AGENTS.md",
+	"GEMINI.md": brand.StateDir() + "-original-GEMINI.md",
+	"QWEN.md":   brand.StateDir() + "-original-QWEN.md",
 }
 
 // BuildAgentContext returns the full markdown for the provider context file (CLAUDE.md, AGENTS.md, …).
@@ -100,8 +101,8 @@ func BuildAgentContext(p ContextParams) string {
 
 func buildDiffBody(p ContextParams) string {
 	var b strings.Builder
-	b.WriteString("# Pudding — Agent Instructions\n\n")
-	b.WriteString("You are executing a code step in a Pudding workflow.\n\n")
+	b.WriteString("# Gump — Agent Instructions\n\n")
+	b.WriteString("You are executing a code step in a Gump workflow.\n\n")
 	b.WriteString("## Your task\n\n")
 	b.WriteString(p.Prompt)
 	b.WriteString("\n")
@@ -111,12 +112,12 @@ func buildDiffBody(p ContextParams) string {
 	b.WriteString("\n## Blast radius\n\n")
 	b.WriteString(formatBlastRadius(p.BlastRadius))
 	b.WriteString("\n\n## Output expectations\n\n")
-	b.WriteString("Write code directly in the repository. Pudding will capture your changes via git diff.\n")
+	b.WriteString("Write code directly in the repository. Gump will capture your changes via git diff.\n")
 	b.WriteString("Do not write plan/artifact/review deliverables to the output tree; those modes use separate paths.\n\n")
 	b.WriteString("## Git rules\n\n")
 	b.WriteString("- Do NOT run `git commit`, `git add`, `git push`, or any git command.\n")
 	b.WriteString("- Do NOT switch branches.\n")
-	b.WriteString("- You are in a Pudding worktree. Pudding manages git.\n")
+	b.WriteString("- You are in a Gump worktree. Gump manages git.\n")
 	if strings.TrimSpace(p.Conventions) != "" {
 		b.WriteString("\n## Project conventions\n\n")
 		b.WriteString(p.Conventions)
@@ -135,8 +136,8 @@ func buildPlanBody(p ContextParams) string {
 		task = defaultPlanTaskPrompt
 	}
 	var b strings.Builder
-	b.WriteString("# Pudding — Agent Instructions\n\n")
-	b.WriteString("You are executing a plan step in a Pudding workflow.\n\n")
+	b.WriteString("# Gump — Agent Instructions\n\n")
+	b.WriteString("You are executing a plan step in a Gump workflow.\n\n")
 	b.WriteString("## Your task\n\n")
 	b.WriteString(task)
 	b.WriteString("\n")
@@ -144,7 +145,7 @@ func buildPlanBody(p ContextParams) string {
 		b.WriteString(buildRetrySection(p))
 	}
 	b.WriteString("\n## Output format\n\n")
-	b.WriteString("You MUST create a file called `.pudding/out/plan.json` in this repository.\n")
+	b.WriteString("You MUST create a file called `"+brand.StateDir()+"/out/plan.json` in this repository.\n")
 	b.WriteString("The file MUST contain a JSON array of items with this exact schema:\n\n")
 	b.WriteString("```json\n[\n  {\n")
 	b.WriteString(`    "name": "short-kebab-case-name",` + "\n")
@@ -161,7 +162,7 @@ func buildPlanBody(p ContextParams) string {
 	b.WriteString("## Git rules\n\n")
 	b.WriteString("- Do NOT run `git commit`, `git add`, `git push`, or any git command.\n")
 	b.WriteString("- Do NOT switch branches.\n")
-	b.WriteString("- You are in a Pudding worktree. Pudding manages git.\n\n")
+	b.WriteString("- You are in a Gump worktree. Gump manages git.\n\n")
 	b.WriteString("## Specification\n\n")
 	b.WriteString(p.Spec)
 	b.WriteString("\n")
@@ -174,8 +175,8 @@ func buildPlanBody(p ContextParams) string {
 
 func buildArtifactBody(p ContextParams) string {
 	var b strings.Builder
-	b.WriteString("# Pudding — Agent Instructions\n\n")
-	b.WriteString("You are executing an artifact step in a Pudding workflow.\n\n")
+	b.WriteString("# Gump — Agent Instructions\n\n")
+	b.WriteString("You are executing an artifact step in a Gump workflow.\n\n")
 	b.WriteString("## Your task\n\n")
 	b.WriteString(p.Prompt)
 	b.WriteString("\n")
@@ -183,13 +184,13 @@ func buildArtifactBody(p ContextParams) string {
 		b.WriteString(buildRetrySection(p))
 	}
 	b.WriteString("\n## Output format\n\n")
-	b.WriteString("You MUST write your output to the file `.pudding/out/artifact.txt` in this repository.\n")
+	b.WriteString("You MUST write your output to the file `"+brand.StateDir()+"/out/artifact.txt` in this repository.\n")
 	b.WriteString("The content is free-form text. Write whatever the task requires.\n")
 	b.WriteString("Do NOT modify any source code files unless the task explicitly requires it.\n\n")
 	b.WriteString("## Git rules\n\n")
 	b.WriteString("- Do NOT run `git commit`, `git add`, `git push`, or any git command.\n")
 	b.WriteString("- Do NOT switch branches.\n")
-	b.WriteString("- You are in a Pudding worktree. Pudding manages git.\n")
+	b.WriteString("- You are in a Gump worktree. Gump manages git.\n")
 	if s := formatAdditionalContext(p.ContextSources); s != "" {
 		b.WriteString("\n## Additional context\n\n")
 		b.WriteString(s)
@@ -199,8 +200,8 @@ func buildArtifactBody(p ContextParams) string {
 
 func buildReviewBody(p ContextParams) string {
 	var b strings.Builder
-	b.WriteString("# Pudding — Agent Instructions\n\n")
-	b.WriteString("You are executing a review step in a Pudding workflow.\n\n")
+	b.WriteString("# Gump — Agent Instructions\n\n")
+	b.WriteString("You are executing a review step in a Gump workflow.\n\n")
 	b.WriteString("## Your task\n\n")
 	b.WriteString(p.Prompt)
 	b.WriteString("\n")
@@ -208,7 +209,7 @@ func buildReviewBody(p ContextParams) string {
 		b.WriteString(buildRetrySection(p))
 	}
 	b.WriteString("\n## Output format\n\n")
-	b.WriteString("You MUST create a file called `.pudding/out/review.json` in this repository.\n")
+	b.WriteString("You MUST create a file called `"+brand.StateDir()+"/out/review.json` in this repository.\n")
 	b.WriteString("The file MUST contain a JSON object with this exact schema:\n\n")
 	b.WriteString("```json\n{\n")
 	b.WriteString(`  "pass": true,` + "\n")
@@ -222,7 +223,7 @@ func buildReviewBody(p ContextParams) string {
 	b.WriteString("## Git rules\n\n")
 	b.WriteString("- Do NOT run `git commit`, `git add`, `git push`, or any git command.\n")
 	b.WriteString("- Do NOT switch branches.\n")
-	b.WriteString("- You are in a Pudding worktree. Pudding manages git.\n")
+	b.WriteString("- You are in a Gump worktree. Gump manages git.\n")
 	if s := formatAdditionalContext(p.ContextSources); s != "" {
 		b.WriteString("\n## Additional context\n\n")
 		b.WriteString(s)
@@ -273,7 +274,7 @@ func buildReplanMarkdown(p ContextParams) string {
 	td := TruncateLines(p.Diff, maxD)
 	te := TruncateLines(p.Error, maxE)
 	var b strings.Builder
-	b.WriteString("# Pudding — Agent Instructions\n\n")
+	b.WriteString("# Gump — Agent Instructions\n\n")
 	b.WriteString("You are re-planning a task that failed during implementation.\n\n")
 	b.WriteString("## Original task\n\n")
 	fmt.Fprintf(&b, "Name: %s\nDescription: %s\nFiles: %s\n\n", p.ItemName, p.ItemDesc, p.ItemFiles)
@@ -292,7 +293,7 @@ func buildReplanMarkdown(p ContextParams) string {
 	b.WriteString("2. Propose a different approach entirely.\n")
 	b.WriteString("3. Implement it directly if the decomposition is unnecessary.\n\n")
 	b.WriteString("## Output format\n\n")
-	b.WriteString("Same as a plan step. Create `.pudding/out/plan.json` with the schema:\n\n")
+	b.WriteString("Same as a plan step. Create `"+brand.StateDir()+"/out/plan.json` with the schema:\n\n")
 	b.WriteString("```json\n[\n  {\n")
 	b.WriteString(`    "name": "short-kebab-case-name",` + "\n")
 	b.WriteString(`    "description": "What this task accomplishes.",` + "\n")
@@ -501,7 +502,7 @@ func Build(outputMode string, prompt string, contextSources []recipe.ContextSour
 	}
 
 	conventions := ""
-	if data, err := os.ReadFile(filepath.Join(worktreeDir, ".pudding", "conventions.md")); err == nil {
+	if data, err := os.ReadFile(filepath.Join(worktreeDir, brand.StateDir(), "conventions.md")); err == nil {
 		conventions = string(data)
 	}
 
@@ -578,21 +579,22 @@ func resolveContextSources(contextSources []recipe.ContextSource, worktreeDir st
 	return out, nil
 }
 
-const puddingAgentInstructionsHeader = "# Pudding — Agent Instructions"
+var agentBrandTitle = strings.ToUpper(brand.Lower()[:1]) + brand.Lower()[1:]
+var agentInstructionsHeader = "# " + agentBrandTitle + " — Agent Instructions"
 
-// writeAgentContextFile preserves a pre-existing user provider file once per cook; Pudding-generated
+// writeAgentContextFile preserves a pre-existing user provider file once per run; Gump-generated
 // content from a previous step must not be mistaken for the user’s original (restore would undo the last step).
 func writeAgentContextFile(worktreeDir, contextFile, body string) error {
 	path := filepath.Join(worktreeDir, contextFile)
 	backupName := originalBackupByContextFile[contextFile]
 	if backupName == "" {
-		backupName = ".pudding-original-" + contextFile
+		backupName = brand.StateDir() + "-original-" + contextFile
 	}
 	backupPath := filepath.Join(worktreeDir, backupName)
 	if _, err := os.Stat(path); err == nil {
 		if _, err := os.Stat(backupPath); os.IsNotExist(err) {
 			data, _ := os.ReadFile(path)
-			if !strings.HasPrefix(strings.TrimSpace(string(data)), puddingAgentInstructionsHeader) {
+			if !strings.HasPrefix(strings.TrimSpace(string(data)), agentInstructionsHeader) {
 				_ = os.WriteFile(backupPath, data, 0644)
 			}
 		}

@@ -3,7 +3,7 @@ package engine
 import (
 	"testing"
 
-	"github.com/isomorphx/pudding/internal/recipe"
+	"github.com/isomorphx/gump/internal/recipe"
 )
 
 func TestExpandStrategyUsedInRetry(t *testing.T) {

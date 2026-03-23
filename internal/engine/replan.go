@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/isomorphx/pudding/internal/agent"
-	pkgcontext "github.com/isomorphx/pudding/internal/context"
-	"github.com/isomorphx/pudding/internal/ledger"
-	"github.com/isomorphx/pudding/internal/plan"
-	"github.com/isomorphx/pudding/internal/recipe"
-	"github.com/isomorphx/pudding/internal/template"
+	"github.com/isomorphx/gump/internal/agent"
+	pkgcontext "github.com/isomorphx/gump/internal/context"
+	"github.com/isomorphx/gump/internal/ledger"
+	"github.com/isomorphx/gump/internal/plan"
+	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/template"
 )
 
 // ExecuteReplan runs the replan agent to produce a new plan, then runs each sub-task with the original step agent (no retry on sub-tasks).

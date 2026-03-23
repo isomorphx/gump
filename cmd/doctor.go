@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/isomorphx/pudding/internal/config"
-	"github.com/isomorphx/pudding/internal/recipe"
+	"github.com/isomorphx/gump/internal/config"
+	"github.com/isomorphx/gump/internal/recipe"
 	"github.com/spf13/cobra"
 )
 
@@ -42,7 +42,7 @@ func init() {
 }
 
 func runDoctor(cmd *cobra.Command, args []string) error {
-	fmt.Println("Pudding Doctor")
+	fmt.Println("Gump Doctor")
 	fmt.Println()
 	// Git
 	out, err := exec.Command("git", "version").CombinedOutput()
@@ -57,7 +57,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		fmt.Println("  config       ✗  failed to load")
 	} else {
 		if config.ProjectConfigPath() != "" {
-			fmt.Println("  config       ✓  pudding.toml found")
+			fmt.Println("  config       ✓  gump.toml found")
 		} else {
 			fmt.Println("  config       ✓  (no project config)")
 		}
@@ -86,7 +86,7 @@ func checkClaudeCode() {
 		return
 	}
 	timeout := 10 * time.Second
-	dir, err := os.MkdirTemp("", "pudding-doctor-claude-")
+	dir, err := os.MkdirTemp("", "gump-doctor-claude-")
 	if err != nil {
 		fmt.Println("  claude-code  ✗  failed to create temp dir")
 		return
@@ -103,7 +103,7 @@ func checkClaudeCode() {
 		return
 	}
 
-	prompt := "Create a file called doctor-test.txt containing pudding-ok"
+	prompt := "Create a file called doctor-test.txt containing gump-ok"
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -158,7 +158,7 @@ func checkCodex() {
 		fmt.Println("  codex        not installed (skipped)")
 		return
 	}
-	dir, err := os.MkdirTemp("", "pudding-doctor-codex-")
+	dir, err := os.MkdirTemp("", "gump-doctor-codex-")
 	if err != nil {
 		fmt.Println("  codex        ✗  failed to create temp dir")
 		return
@@ -176,7 +176,7 @@ func checkCodex() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	runCmd := exec.CommandContext(ctx, "codex", "exec", "Create a file called doctor-test.txt containing pudding-ok",
+	runCmd := exec.CommandContext(ctx, "codex", "exec", "Create a file called doctor-test.txt containing gump-ok",
 		"--json", "--full-auto", "-C", dir, "--skip-git-repo-check")
 	runCmd.Dir = dir
 	out, runErr := runCmd.CombinedOutput()
@@ -215,7 +215,7 @@ func checkGemini() {
 		fmt.Println("  gemini       not installed (skipped)")
 		return
 	}
-	dir, err := os.MkdirTemp("", "pudding-doctor-gemini-")
+	dir, err := os.MkdirTemp("", "gump-doctor-gemini-")
 	if err != nil {
 		fmt.Println("  gemini       ✗  failed to create temp dir")
 		return
@@ -233,7 +233,7 @@ func checkGemini() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	runCmd := exec.CommandContext(ctx, "gemini", "-p", "Create a file called doctor-test.txt containing pudding-ok",
+	runCmd := exec.CommandContext(ctx, "gemini", "-p", "Create a file called doctor-test.txt containing gump-ok",
 		"--output-format", "json", "--yolo")
 	runCmd.Dir = dir
 	// Gemini emits JSON on stdout only; stderr has "YOLO mode...", credentials, etc. (gemini-cli-reference §3).
@@ -276,7 +276,7 @@ func checkQwen() {
 		fmt.Println("  qwen         not installed (skipped)")
 		return
 	}
-	dir, err := os.MkdirTemp("", "pudding-doctor-qwen-")
+	dir, err := os.MkdirTemp("", "gump-doctor-qwen-")
 	if err != nil {
 		fmt.Println("  qwen         ✗  failed to create temp dir")
 		return
@@ -294,7 +294,7 @@ func checkQwen() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	runCmd := exec.CommandContext(ctx, "qwen", "-p", "Create a file called doctor-test.txt containing pudding-ok",
+	runCmd := exec.CommandContext(ctx, "qwen", "-p", "Create a file called doctor-test.txt containing gump-ok",
 		"--output-format", "json", "--yolo",
 		"--allowed-tools", "write_file")
 	runCmd.Dir = dir
@@ -341,7 +341,7 @@ func checkOpenCode() {
 		fmt.Println("  opencode     not installed (skipped)")
 		return
 	}
-	dir, err := os.MkdirTemp("", "pudding-doctor-opencode-")
+	dir, err := os.MkdirTemp("", "gump-doctor-opencode-")
 	if err != nil {
 		fmt.Println("  opencode     ✗  failed to create temp dir")
 		return
@@ -359,7 +359,7 @@ func checkOpenCode() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	runCmd := exec.CommandContext(ctx, "opencode", "run", "Create a file called doctor-test.txt containing pudding-ok",
+	runCmd := exec.CommandContext(ctx, "opencode", "run", "Create a file called doctor-test.txt containing gump-ok",
 		"--format", "json", "--dir", dir)
 	runCmd.Dir = dir
 	out, runErr := runCmd.CombinedOutput()

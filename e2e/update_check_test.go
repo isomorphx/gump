@@ -29,7 +29,7 @@ func runPuddingBin(t *testing.T, binPath string, args []string, env map[string]s
 }
 
 func cachePathFromHome(home string) string {
-	return filepath.Join(home, ".pudding", "cache", "update-check.json")
+	return filepath.Join(home, ".gump", "cache", "update-check.json")
 }
 
 func writeCache(t *testing.T, home string, checkedAt time.Time, latestVersion string) {
@@ -81,11 +81,11 @@ func TestE2E_VersionLDFlags(t *testing.T) {
 
 func TestE2E_UpdateCheckSilencedOnDev(t *testing.T) {
 	dir := setupRepoWithCommit(t)
-	_, stderr, code := runPudding(t, []string{"cookbook", "list"}, nil, dir)
+	_, stderr, code := runPudding(t, []string{"playbook", "list"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit code %d stderr=%q", code, stderr)
 	}
-	if strings.Contains(stderr, "new version") || strings.Contains(stderr, "pudding.build") {
+	if strings.Contains(stderr, "new version") || strings.Contains(stderr, "gump.build") {
 		t.Fatalf("unexpected update message on dev build: stderr=%q", stderr)
 	}
 }
@@ -98,9 +98,9 @@ func TestE2E_UpdateCheckDisabledByEnv(t *testing.T) {
 	bin := binaryPathV001
 	env := map[string]string{
 		"HOME":                   home,
-		"PUDDING_NO_UPDATE_CHECK": "1",
+		"GUMP_NO_UPDATE_CHECK": "1",
 	}
-	_, stderr, code := runPuddingBin(t, bin, []string{"cookbook", "list"}, env, dir)
+	_, stderr, code := runPuddingBin(t, bin, []string{"playbook", "list"}, env, dir)
 	if code != 0 {
 		t.Fatalf("exit code %d stderr=%q", code, stderr)
 	}
@@ -115,7 +115,7 @@ func TestE2E_UpdateCheckDisabledByTOML(t *testing.T) {
 	writeCache(t, home, time.Now(), "v99.0.0")
 
 	// Project config disables update check.
-	if err := os.WriteFile(filepath.Join(dir, "pudding.toml"), []byte(`
+	if err := os.WriteFile(filepath.Join(dir, "gump.toml"), []byte(`
 [update]
 check = false
 `), 0o644); err != nil {
@@ -126,7 +126,7 @@ check = false
 	env := map[string]string{
 		"HOME": home,
 	}
-	_, stderr, code := runPuddingBin(t, bin, []string{"cookbook", "list"}, env, dir)
+	_, stderr, code := runPuddingBin(t, bin, []string{"playbook", "list"}, env, dir)
 	if code != 0 {
 		t.Fatalf("exit code %d stderr=%q", code, stderr)
 	}
@@ -142,11 +142,11 @@ func TestE2E_UpdateCheckCacheFreshShowsMessage(t *testing.T) {
 
 	bin := binaryPathV001
 	env := map[string]string{"HOME": home}
-	_, stderr, code := runPuddingBin(t, bin, []string{"cookbook", "list"}, env, dir)
+	_, stderr, code := runPuddingBin(t, bin, []string{"playbook", "list"}, env, dir)
 	if code != 0 {
 		t.Fatalf("exit code %d stderr=%q", code, stderr)
 	}
-	if !strings.Contains(stderr, "v99.0.0") || !strings.Contains(stderr, "pudding.build/install.sh") || !strings.Contains(stderr, "brew upgrade pudding") {
+	if !strings.Contains(stderr, "v99.0.0") || !strings.Contains(stderr, "gump.build/install.sh") || !strings.Contains(stderr, "brew upgrade gump") {
 		t.Fatalf("expected update message in stderr: %q", stderr)
 	}
 }
@@ -158,7 +158,7 @@ func TestE2E_UpdateCheckCacheExpiredTriggersHTTP(t *testing.T) {
 
 	// Mock GitHub endpoint.
 	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/isomorphx/pudding/releases/latest", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/repos/isomorphx/gump/releases/latest", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"tag_name": "v99.0.0"})
 	})
 	srv := httptest.NewServer(mux)
@@ -166,12 +166,12 @@ func TestE2E_UpdateCheckCacheExpiredTriggersHTTP(t *testing.T) {
 
 	bin := binaryPathV001
 	env := map[string]string{
-		"HOME":                 home,
-		"PUDDING_UPDATE_URL":  srv.URL + "/repos/isomorphx/pudding/releases/latest",
+		"HOME":               home,
+		"GUMP_UPDATE_URL":   srv.URL + "/repos/isomorphx/gump/releases/latest",
 	}
 
 	before := readCacheCheckedAt(t, home)
-	_, stderr, code := runPuddingBin(t, bin, []string{"cookbook", "list"}, env, dir)
+	_, stderr, code := runPuddingBin(t, bin, []string{"playbook", "list"}, env, dir)
 	if code != 0 {
 		t.Fatalf("exit code %d stderr=%q", code, stderr)
 	}
@@ -191,11 +191,11 @@ func TestE2E_UpdateCheckMessageNotPrintedOnCommandFailure(t *testing.T) {
 
 	bin := binaryPathV001
 	env := map[string]string{"HOME": home}
-	_, stderr, code := runPuddingBin(t, bin, []string{"cook", "nonexistent-spec.md", "--recipe", "freeform"}, env, dir)
+	_, stderr, code := runPuddingBin(t, bin, []string{"run", "nonexistent-spec.md", "--workflow", "freeform"}, env, dir)
 	if code == 0 {
 		t.Fatalf("expected failure exit code, got 0 stderr=%q", stderr)
 	}
-	if strings.Contains(stderr, "new version") || strings.Contains(stderr, "pudding.build/install.sh") {
+	if strings.Contains(stderr, "new version") || strings.Contains(stderr, "gump.build/install.sh") {
 		t.Fatalf("update message must not appear on command failure: stderr=%q", stderr)
 	}
 }
@@ -224,12 +224,12 @@ func TestE2E_UpdateCheckNotTriggeredOnHelpOrVersionFlags(t *testing.T) {
 		t.Fatalf("unexpected update message on --version: stderr=%q", stderr)
 	}
 
-	_, stderr, code = runPuddingBin(t, bin, []string{"cook", "--help"}, env, dir)
+	_, stderr, code = runPuddingBin(t, bin, []string{"run", "--help"}, env, dir)
 	if code != 0 {
-		t.Fatalf("cook --help should succeed, code=%d stderr=%q", code, stderr)
+		t.Fatalf("run --help should succeed, code=%d stderr=%q", code, stderr)
 	}
 	if strings.Contains(stderr, "new version") {
-		t.Fatalf("unexpected update message on cook --help: stderr=%q", stderr)
+		t.Fatalf("unexpected update message on run --help: stderr=%q", stderr)
 	}
 }
 

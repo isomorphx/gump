@@ -5,13 +5,16 @@ import (
 	"path/filepath"
 
 	"github.com/BurntSushi/toml"
+	"github.com/isomorphx/gump/internal/brand"
 )
 
 const (
-	userConfigDir  = ".pudding"
 	userConfigFile = "config.toml"
-	projectConfig  = "pudding.toml"
 )
+
+func userConfigDir() string { return brand.StateDir() }
+func projectConfigName() string { return brand.Lower() + ".toml" }
+func envPrefix() string { return brand.Upper() }
 
 // Load merges config in priority order so project overrides user overrides defaults.
 // We do not fail when config files are missing so a fresh install works without setup.
@@ -26,19 +29,19 @@ func Load() (*Config, *Source, error) {
 		LogLevel:     "default",
 	}
 
-	// User config: ~/.pudding/config.toml
+	// User config: ~/.<brand>/config.toml
 	home, _ := os.UserHomeDir()
 	if home != "" {
-		path := filepath.Join(home, userConfigDir, userConfigFile)
-		applyFile(cfg, src, path, "~/.pudding/config.toml")
+		path := filepath.Join(home, userConfigDir(), userConfigFile)
+		applyFile(cfg, src, path, "~/"+userConfigDir()+"/"+userConfigFile)
 	}
 
-	// Project config: pudding.toml from cwd upward
+	// Project config: <brand>.toml from cwd upward
 	cwd, _ := os.Getwd()
 	if cwd != "" {
 		path := findProjectConfig(cwd)
 		if path != "" {
-			applyFile(cfg, src, path, "pudding.toml")
+			applyFile(cfg, src, path, projectConfigName())
 		}
 	}
 
@@ -48,10 +51,10 @@ func Load() (*Config, *Source, error) {
 	return cfg, src, nil
 }
 
-// findProjectConfig walks up from dir until it finds pudding.toml or a .git (repo root); it does not traverse above .git.
+// findProjectConfig walks up from dir until it finds <brand>.toml or a .git (repo root); it does not traverse above .git.
 func findProjectConfig(dir string) string {
 	for {
-		path := filepath.Join(dir, projectConfig)
+		path := filepath.Join(dir, projectConfigName())
 		if _, err := os.Stat(path); err == nil {
 			return path
 		}
@@ -133,21 +136,21 @@ func applyFile(cfg *Config, src *Source, path, label string) {
 }
 
 func applyEnv(cfg *Config, src *Source) {
-	if v := os.Getenv("PUDDING_DEFAULT_AGENT"); v != "" {
+	if v := os.Getenv(envPrefix() + "_DEFAULT_AGENT"); v != "" {
 		cfg.DefaultAgent = v
 		src.DefaultAgent = "env"
 	}
-	if v := os.Getenv("PUDDING_LOG_LEVEL"); v != "" {
+	if v := os.Getenv(envPrefix() + "_LOG_LEVEL"); v != "" {
 		cfg.LogLevel = v
 		src.LogLevel = "env"
 	}
 	// Any non-empty value disables the update check.
-	if v := os.Getenv("PUDDING_NO_UPDATE_CHECK"); v != "" {
+	if v := os.Getenv(envPrefix() + "_NO_UPDATE_CHECK"); v != "" {
 		cfg.UpdateCheck = false
 	}
 }
 
-// ProjectConfigPath returns the path to pudding.toml if found from cwd, else "".
+// ProjectConfigPath returns the path to <brand>.toml if found from cwd, else "".
 func ProjectConfigPath() string {
 	cwd, _ := os.Getwd()
 	if cwd == "" {
@@ -156,7 +159,7 @@ func ProjectConfigPath() string {
 	return findProjectConfig(cwd)
 }
 
-// ProjectRoot returns the directory containing pudding.toml or .git, or cwd if none.
+// ProjectRoot returns the directory containing <brand>.toml or .git, or cwd if none.
 func ProjectRoot() string {
 	cwd, _ := os.Getwd()
 	if cwd == "" {
@@ -164,7 +167,7 @@ func ProjectRoot() string {
 	}
 	dir := cwd
 	for {
-		if _, err := os.Stat(filepath.Join(dir, projectConfig)); err == nil {
+		if _, err := os.Stat(filepath.Join(dir, projectConfigName())); err == nil {
 			return dir
 		}
 		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {

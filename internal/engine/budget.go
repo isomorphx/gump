@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/isomorphx/pudding/internal/ledger"
+	"github.com/isomorphx/gump/internal/ledger"
 )
 
 // BudgetExceededError wraps ledger emission details so the engine can record budget_exceeded before circuit_breaker.
@@ -15,7 +15,7 @@ type BudgetExceededError struct {
 
 func (e *BudgetExceededError) Error() string { return e.Msg }
 
-// BudgetTracker enforces cook- and step-level max_budget after each agent run (no pre-flight prediction).
+// BudgetTracker enforces run- and step-level max_budget after each agent run (no pre-flight prediction).
 type BudgetTracker struct {
 	CookBudget   float64
 	StepBudgets  map[string]float64
@@ -52,7 +52,7 @@ func (bt *BudgetTracker) AddCost(step string, costUSD float64) error {
 	if bt.CookBudget > 0 && bt.CookSpent > bt.CookBudget {
 		return &BudgetExceededError{
 			Event: ledger.BudgetExceeded{Step: "", Scope: "cook", MaxUSD: bt.CookBudget, SpentUSD: bt.CookSpent},
-			Msg:   fmt.Sprintf("cook budget exceeded: spent $%.2f of $%.2f max", bt.CookSpent, bt.CookBudget),
+			Msg:   fmt.Sprintf("run budget exceeded: spent $%.2f of $%.2f max", bt.CookSpent, bt.CookBudget),
 		}
 	}
 	if lim := bt.StepBudgets[step]; lim > 0 && bt.StepSpent[step] > lim {

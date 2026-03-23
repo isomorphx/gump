@@ -1,10 +1,10 @@
 package validate
 
 import (
-	"github.com/isomorphx/pudding/internal/config"
-	"github.com/isomorphx/pudding/internal/diff"
-	"github.com/isomorphx/pudding/internal/recipe"
-	"github.com/isomorphx/pudding/internal/statebag"
+	"github.com/isomorphx/gump/internal/config"
+	"github.com/isomorphx/gump/internal/diff"
+	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/statebag"
 )
 
 // RunValidators runs every validator for the step in order and aggregates results.

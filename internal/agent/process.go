@@ -62,7 +62,7 @@ func Start(ctx context.Context, cmd *exec.Cmd, dir, stdoutPath, stderrPath strin
 				line = line[:len(line)-1]
 			}
 			if len(line) > 0 {
-				// WHY: ledger consumers need when Pudding observed each line, distinct from provider timestamps.
+				// WHY: ledger consumers need when Gump observed each line, distinct from provider timestamps.
 				ts := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
 				fmt.Fprintf(stdoutFile, "%s %s\n", ts, line)
 				if _, werr := stdoutWriter.Write(append(append([]byte{}, line...), '\n')); werr != nil {

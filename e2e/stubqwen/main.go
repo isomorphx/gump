@@ -28,7 +28,9 @@ func main() {
 	}
 
 	cwd, _ := os.Getwd()
-	if wt := os.Getenv("PUDDING_WORKTREE"); wt != "" {
+	if wt := os.Getenv("GUMP_WORKTREE"); wt != "" {
+		cwd = wt
+	} else if wt := os.Getenv("PUDDING_WORKTREE"); wt != "" {
 		cwd = wt
 	}
 	// E2E sentinel: prove this stub ran; content = exe path and cwd for debugging.
@@ -62,19 +64,26 @@ func main() {
 			}
 		}
 	}
-	if prompt != "" && strings.Contains(prompt, "[PUDDING:plan]") {
-		outDir := filepath.Join(cwd, ".pudding", "out")
+	if prompt != "" && (strings.Contains(prompt, "[PUDDING:plan]") || strings.Contains(prompt, "[GUMP:plan]")) {
+		stateDir := ".pudding"
+		if strings.Contains(prompt, "[GUMP:plan]") {
+			stateDir = ".gump"
+		}
+		outDir := filepath.Join(cwd, stateDir, "out")
 		_ = os.MkdirAll(outDir, 0755)
 		planPath := filepath.Join(outDir, "plan.json")
 		_ = os.WriteFile(planPath, []byte(`[{"name":"task-1","description":"Stub task","files":["math_test.go","math.go"]}]`), 0644)
 	}
-	if prompt != "" && strings.Contains(prompt, "[PUDDING:step:red]") {
+	if prompt != "" && (strings.Contains(prompt, "[PUDDING:step:red]") || strings.Contains(prompt, "[GUMP:step:red]")) {
 		_ = os.WriteFile(filepath.Join(cwd, "math_test.go"), []byte("package math\n\nimport \"testing\"\nfunc TestAdd(t *testing.T) {}\n"), 0644)
 	}
-	if prompt != "" && strings.Contains(prompt, "[PUDDING:step:green]") {
+	if prompt != "" && (strings.Contains(prompt, "[PUDDING:step:green]") || strings.Contains(prompt, "[GUMP:step:green]")) {
 		_ = os.WriteFile(filepath.Join(cwd, "math.go"), []byte("package math\n\nfunc Add(a, b int) int { return a + b }\n"), 0644)
 	}
-	if prompt != "" && !strings.Contains(prompt, "[PUDDING:plan]") && !strings.Contains(prompt, "[PUDDING:step:red]") && !strings.Contains(prompt, "[PUDDING:step:green]") {
+	if prompt != "" &&
+		!strings.Contains(prompt, "[PUDDING:plan]") && !strings.Contains(prompt, "[GUMP:plan]") &&
+		!strings.Contains(prompt, "[PUDDING:step:red]") && !strings.Contains(prompt, "[GUMP:step:red]") &&
+		!strings.Contains(prompt, "[PUDDING:step:green]") && !strings.Contains(prompt, "[GUMP:step:green]") {
 		_ = os.MkdirAll(cwd, 0755)
 		_ = os.WriteFile(filepath.Join(cwd, "hello.go"), []byte("package main\n\nfunc main() { println(\"hello world\") }\n"), 0644)
 	}

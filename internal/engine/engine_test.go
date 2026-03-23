@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/isomorphx/pudding/internal/agent"
-	"github.com/isomorphx/pudding/internal/config"
-	"github.com/isomorphx/pudding/internal/cook"
-	"github.com/isomorphx/pudding/internal/recipe"
-	"github.com/isomorphx/pudding/internal/validate"
+	"github.com/isomorphx/gump/internal/agent"
+	"github.com/isomorphx/gump/internal/config"
+	"github.com/isomorphx/gump/internal/cook"
+	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/validate"
 )
 
 func TestNew(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/isomorphx/pudding/internal/recipe"
+	"github.com/isomorphx/gump/internal/recipe"
 )
 
 func joinStepPath(pathPrefix, name string) string {
@@ -34,7 +34,7 @@ func (e *ErrRestartFrom) Error() string {
 	return fmt.Sprintf("restart_from:%s", e.TargetName)
 }
 
-// CommitBeforeLatestStepSnapshot returns the parent of the most recent [pudding] snapshot commit for stepName, or false if none.
+// CommitBeforeLatestStepSnapshot returns the parent of the most recent [gump] snapshot commit for stepName, or false if none.
 func CommitBeforeLatestStepSnapshot(worktree, stepName string) (commit string, ok bool, err error) {
 	grep := fmt.Sprintf("step:%s task:", stepName)
 	cmd := exec.Command("git", "log", "-1", "--format=%H", "--grep", grep, "HEAD")

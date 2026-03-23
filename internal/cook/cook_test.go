@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/isomorphx/pudding/internal/recipe"
+	"github.com/isomorphx/gump/internal/recipe"
 )
 
 func TestNewCook_RequiresGitRepo(t *testing.T) {

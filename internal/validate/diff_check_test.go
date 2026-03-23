@@ -3,7 +3,7 @@ package validate
 import (
 	"testing"
 
-	"github.com/isomorphx/pudding/internal/diff"
+	"github.com/isomorphx/gump/internal/diff"
 )
 
 func TestRunTouchedValidator_NoChanges(t *testing.T) {

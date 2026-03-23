@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/isomorphx/gump/internal/brand"
 )
 
 // CheckForUpdate verifies if a newer version is available compared to currentVersion.
@@ -35,9 +37,9 @@ func CheckForUpdate(currentVersion string) string {
 		return ""
 	}
 
-	endpoint := os.Getenv("PUDDING_UPDATE_URL")
+	endpoint := os.Getenv(brand.Upper() + "_UPDATE_URL")
 	if endpoint == "" {
-		endpoint = "https://api.github.com/repos/isomorphx/pudding/releases/latest"
+		endpoint = "https://api.github.com/repos/isomorphx/gump/releases/latest"
 	}
 
 	latest, ok := fetchLatest(endpoint)
@@ -63,7 +65,7 @@ func updateCheckCachePath() (string, error) {
 	if err != nil || home == "" {
 		return "", fmt.Errorf("missing home dir")
 	}
-	return filepath.Join(home, ".pudding", "cache", "update-check.json"), nil
+	return filepath.Join(home, brand.StateDir(), "cache", "update-check.json"), nil
 }
 
 func readFreshCache(cachePath string, maxAge time.Duration) (string, bool) {

@@ -93,13 +93,13 @@ steps:
         - escalate: claude-sonnet
 `
 
-// TestSmokeDoctor checks that pudding doctor runs and reports git and installed agents.
+// TestSmokeDoctor checks that gump doctor runs and reports git and installed agents.
 // It only fails if doctor crashes or git is missing; red agents are logged, not failed.
 func TestSmokeDoctor(t *testing.T) {
 	dir := setupSmokeRepo(t)
-	stdout, _, code := runPudding(t, dir, "doctor")
+	stdout, _, code := runGump(t, dir, "doctor")
 	if code != 0 {
-		t.Fatalf("pudding doctor exit %d", code)
+		t.Fatalf("gump doctor exit %d", code)
 	}
 	if !strings.Contains(stdout, "git") || !strings.Contains(stdout, "✓") {
 		t.Errorf("stdout should contain git and ✓: %s", stdout)
@@ -127,9 +127,9 @@ func TestSmokeDryRunV4(t *testing.T) {
 	requireAgent(t, "claude")
 	dir := setupSmokeRepo(t)
 	writeSpec(t, dir, "Implement a function")
-	stdout, _, code := runPudding(t, dir, "cook", "spec.md", "--recipe", "tdd", "--dry-run")
+	stdout, _, code := runGump(t, dir, "run", "spec.md", "--workflow", "tdd", "--dry-run")
 	if code != 0 {
-		t.Fatalf("cook exit %d: %s", code, stdout)
+		t.Fatalf("run exit %d: %s", code, stdout)
 	}
 	for _, s := range []string{"Budget:", "$5.00", "gate=", "on_failure:", "State Bag resolutions:"} {
 		if !strings.Contains(stdout, s) {
@@ -141,7 +141,7 @@ func TestSmokeDryRunV4(t *testing.T) {
 	}
 }
 
-// TestSmokeFreeform runs a full cook→apply→go test cycle per agent to catch
+// TestSmokeFreeform runs a full run→apply→go test cycle per agent to catch
 // regressions in a single provider path.
 func TestSmokeFreeform(t *testing.T) {
 	agents := []struct {
@@ -159,11 +159,11 @@ func TestSmokeFreeform(t *testing.T) {
 			requireAgent(t, a.name)
 			dir := setupSmokeRepo(t)
 			writeSpec(t, dir, specAdd)
-			stdout, _, code := runPudding(t, dir, "cook", "spec.md", "--recipe", "freeform", "--agent", a.agent)
+			stdout, _, code := runGump(t, dir, "run", "spec.md", "--workflow", "freeform", "--agent", a.agent)
 			if code != 0 {
-				t.Fatalf("cook exit %d: %s", code, stdout)
+				t.Fatalf("run exit %d: %s", code, stdout)
 			}
-			assertCookPass(t, dir)
+			assertRunPass(t, dir)
 			ledger := readLedger(t, dir)
 			hasLaunched := false
 			hasCompletedZero := false
@@ -185,7 +185,7 @@ func TestSmokeFreeform(t *testing.T) {
 			if !hasCompletedZero {
 				t.Error("ledger should contain agent_completed with exit_code 0")
 			}
-			_, _, applyCode := runPudding(t, dir, "apply")
+			_, _, applyCode := runGump(t, dir, "apply")
 			if applyCode != 0 {
 				t.Fatalf("apply exit %d", applyCode)
 			}
@@ -200,11 +200,11 @@ func TestSmokeSimple(t *testing.T) {
 	requireAgent(t, "claude")
 	dir := setupSmokeRepo(t)
 	writeSpec(t, dir, specMathLib)
-	stdout, stderr, code := runPudding(t, dir, "cook", "spec.md", "--recipe", "simple", "--agent", "claude-sonnet")
+	stdout, stderr, code := runGump(t, dir, "run", "spec.md", "--workflow", "simple", "--agent", "claude-sonnet")
 	if code != 0 {
-		t.Fatalf("cook exit %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+		t.Fatalf("run exit %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
-	assertCookPass(t, dir)
+	assertRunPass(t, dir)
 	ledger := readLedger(t, dir)
 	stepStarted := 0
 	hasDecomposeCompleted := false
@@ -224,7 +224,7 @@ func TestSmokeSimple(t *testing.T) {
 	if !hasDecomposeCompleted {
 		t.Error("ledger should contain agent_completed for step decompose")
 	}
-	_, _, applyCode := runPudding(t, dir, "apply")
+	_, _, applyCode := runGump(t, dir, "apply")
 	if applyCode != 0 {
 		t.Fatalf("apply exit %d", applyCode)
 	}
@@ -234,18 +234,18 @@ func TestSmokeSimple(t *testing.T) {
 // TestSmokeTDD runs the full TDD flow (decompose → red → green → final-check) to
 // ensure the recipe and validators behave; non-deterministic agent failures are accepted.
 // final-check runs lint; if golangci-lint is not installed, the validator is skipped (spec: skip-lint-if-not-installed).
-// TDD is informational like Retry: we do not Fatal on cook failure (e.g. timeout or untouched violation).
+// TDD is informational like Retry: we do not Fatal on run failure (e.g. timeout or untouched violation).
 func TestSmokeTDD(t *testing.T) {
 	requireAgent(t, "claude")
 	dir := setupSmokeRepo(t)
 	writeSpec(t, dir, specStringUtils)
-	stdout, stderr, code := runPudding(t, dir, "cook", "spec.md", "--recipe", "tdd")
+	stdout, stderr, code := runGump(t, dir, "run", "spec.md", "--workflow", "tdd")
 	if code != 0 {
-		t.Logf("cook failed (exit %d); TDD test is informational: stdout: %s stderr: %s", code, stdout, stderr)
+		t.Logf("run failed (exit %d); TDD test is informational: stdout: %s stderr: %s", code, stdout, stderr)
 	}
 	if code == 0 {
-		assertCookPass(t, dir)
-		_, _, applyCode := runPudding(t, dir, "apply")
+		assertRunPass(t, dir)
+		_, _, applyCode := runGump(t, dir, "apply")
 		if applyCode != 0 {
 			t.Fatalf("apply exit %d", applyCode)
 		}
@@ -279,7 +279,7 @@ func TestSmokeTDD(t *testing.T) {
 			return
 		}
 		if code != 0 {
-			t.Logf("ledger (cook failed): %s", msg)
+			t.Logf("ledger (run failed): %s", msg)
 		} else {
 			t.Error(msg)
 		}
@@ -290,7 +290,7 @@ func TestSmokeTDD(t *testing.T) {
 	assertLedger(hasQuality, "ledger should contain step_started for quality")
 }
 
-// TestSmokeCrossProvider ensures two different agents are used in one cook so
+// TestSmokeCrossProvider ensures two different agents are used in one run so
 // cross-provider wiring is exercised; we require claude + one of gemini/codex/qwen/opencode.
 func TestSmokeCrossProvider(t *testing.T) {
 	requireAgent(t, "claude")
@@ -308,11 +308,11 @@ func TestSmokeCrossProvider(t *testing.T) {
 	writeSpec(t, dir, specGreet)
 	recipe := strings.ReplaceAll(crossRecipeYAML, "agent: gemini\n", "agent: "+second+"\n")
 	writeRecipe(t, dir, "cross", recipe)
-	stdout, _, code := runPudding(t, dir, "cook", "spec.md", "--recipe", "cross")
+	stdout, _, code := runGump(t, dir, "run", "spec.md", "--workflow", "cross")
 	if code != 0 {
-		t.Fatalf("cook exit %d: %s", code, stdout)
+		t.Fatalf("run exit %d: %s", code, stdout)
 	}
-	assertCookPass(t, dir)
+	assertRunPass(t, dir)
 	ledger := readLedger(t, dir)
 	hasClaude := false
 	hasSecond := false
@@ -334,7 +334,7 @@ func TestSmokeCrossProvider(t *testing.T) {
 	if !hasSecond {
 		t.Errorf("ledger should contain agent_launched with cli starting with %s (code)", second)
 	}
-	_, _, applyCode := runPudding(t, dir, "apply")
+	_, _, applyCode := runGump(t, dir, "apply")
 	if applyCode != 0 {
 		t.Fatalf("apply exit %d", applyCode)
 	}
@@ -348,11 +348,11 @@ func TestSmokeSessionReuse(t *testing.T) {
 	dir := setupSmokeRepo(t)
 	writeSpec(t, dir, specCalc)
 	writeRecipe(t, dir, "session-test", sessionRecipeYAML)
-	stdout, _, code := runPudding(t, dir, "cook", "spec.md", "--recipe", "session-test")
+	stdout, _, code := runGump(t, dir, "run", "spec.md", "--workflow", "session-test")
 	if code != 0 {
-		t.Fatalf("cook exit %d: %s", code, stdout)
+		t.Fatalf("run exit %d: %s", code, stdout)
 	}
-	assertCookPass(t, dir)
+	assertRunPass(t, dir)
 	ledger := readLedger(t, dir)
 	implementHasResume := false
 	for _, ev := range ledger {
@@ -372,30 +372,30 @@ func TestSmokeSessionReuse(t *testing.T) {
 	if !implementHasResume {
 		t.Error("ledger: implement step should have agent_launched with --resume or --session in cli")
 	}
-	_, _, applyCode := runPudding(t, dir, "apply")
+	_, _, applyCode := runGump(t, dir, "apply")
 	if applyCode != 0 {
 		t.Fatalf("apply exit %d", applyCode)
 	}
 	assertGoTestPasses(t, dir)
 }
 
-// TestSmokeGC ensures gc --keep-last 1 leaves exactly one cook dir and reports Cleaned.
+// TestSmokeGC ensures gc --keep-last 1 leaves exactly one run dir and reports Cleaned.
 func TestSmokeGC(t *testing.T) {
 	requireAgent(t, "claude")
 	dir := setupSmokeRepo(t)
 	writeSpec(t, dir, specAdd)
 	for i := 0; i < 3; i++ {
-		stdout, stderr, code := runPudding(t, dir, "cook", "spec.md", "--recipe", "freeform", "--agent", "claude-sonnet")
+		stdout, stderr, code := runGump(t, dir, "run", "spec.md", "--workflow", "freeform", "--agent", "claude-sonnet")
 		if code != 0 {
-			t.Fatalf("cook %d exit %d:\nstdout: %s\nstderr: %s", i+1, code, stdout, stderr)
+			t.Fatalf("run %d exit %d:\nstdout: %s\nstderr: %s", i+1, code, stdout, stderr)
 		}
 	}
-	stdout, _, code := runPudding(t, dir, "gc", "--keep-last", "1")
+	stdout, _, code := runGump(t, dir, "gc", "--keep-last", "1")
 	if code != 0 {
 		t.Fatalf("gc exit %d: %s", code, stdout)
 	}
-	cooksDir := filepath.Join(dir, ".pudding", "cooks")
-	entries, err := os.ReadDir(cooksDir)
+	runsDir := filepath.Join(dir, ".gump", "runs")
+	entries, err := os.ReadDir(runsDir)
 	if err != nil {
 		t.Fatalf("list cooks: %v", err)
 	}
@@ -406,31 +406,31 @@ func TestSmokeGC(t *testing.T) {
 		}
 	}
 	if dirs != 1 {
-		t.Errorf("expected exactly 1 cook dir after gc --keep-last 1, got %d", dirs)
+			t.Errorf("expected exactly 1 run dir after gc --keep-last 1, got %d", dirs)
 	}
 	if !strings.Contains(stdout, "Cleaned") {
 		t.Errorf("stdout should contain Cleaned: %s", stdout)
 	}
 }
 
-// TestSmokeRetry is informational: we only assert ledger events; if the cook fails
+// TestSmokeRetry is informational: we only assert ledger events; if the run fails
 // we log and pass so the suite does not fail on non-deterministic agent behaviour.
 func TestSmokeRetry(t *testing.T) {
 	requireAgent(t, "claude")
 	dir := setupSmokeRepo(t)
 	writeSpec(t, dir, specTrickyReverse)
 	writeRecipe(t, dir, "retry-test", retryRecipeYAML)
-	stdout, _, code := runPudding(t, dir, "cook", "spec.md", "--recipe", "retry-test")
+	stdout, _, code := runGump(t, dir, "run", "spec.md", "--workflow", "retry-test")
 	if code == 0 {
-		assertCookPass(t, dir)
-		_, _, applyCode := runPudding(t, dir, "apply")
+		assertRunPass(t, dir)
+		_, _, applyCode := runGump(t, dir, "apply")
 		if applyCode != 0 {
 			t.Logf("apply failed with exit %d", applyCode)
 		} else {
 			assertGoTestPasses(t, dir)
 		}
 	} else {
-		t.Logf("cook failed (exit %d); retry test is informational: %s", code, stdout)
+		t.Logf("run failed (exit %d); retry test is informational: %s", code, stdout)
 	}
 	ledger := readLedger(t, dir)
 	types := make(map[string]bool)
@@ -462,21 +462,21 @@ steps:
         agent: claude-sonnet
         output: artifact
         prompt: |
-          Write a brief code review of this spec. Write your review to .pudding/out/artifact.txt.
+          Write a brief code review of this spec. Write your review to .gump/out/artifact.txt.
           {spec}
       - name: review-2
         agent: claude-haiku
         output: artifact
         prompt: |
-          Write a brief code review of this spec. Write your review to .pudding/out/artifact.txt.
+          Write a brief code review of this spec. Write your review to .gump/out/artifact.txt.
           {spec}
 `
 	writeRecipe(t, dir, "parallel-art", recipeYAML)
-	stdout, _, code := runPudding(t, dir, "cook", "spec.md", "--recipe", "parallel-art")
+	stdout, _, code := runGump(t, dir, "run", "spec.md", "--workflow", "parallel-art")
 	if code != 0 {
-		t.Fatalf("cook exit %d: %s", code, stdout)
+		t.Fatalf("run exit %d: %s", code, stdout)
 	}
-	assertCookPass(t, dir)
+	assertRunPass(t, dir)
 	ledger := readLedger(t, dir)
 	var hasGroupStartedParallel bool
 	agentLaunched := 0
@@ -503,8 +503,8 @@ steps:
 	if !hasGroupCompleted {
 		t.Error("ledger should contain group_completed")
 	}
-	cookDir := latestCookDir(t, dir)
-	artifactsDir := filepath.Join(cookDir, "artifacts")
+	runDir := latestRunDir(t, dir)
+	artifactsDir := filepath.Join(runDir, "artifacts")
 	entries, err := os.ReadDir(artifactsDir)
 	if err != nil {
 		t.Fatalf("list artifacts dir: %v", err)
@@ -551,9 +551,9 @@ steps:
       - bash: "exit 1"
 `)
 
-	_, _, code1 := runPudding(t, dir, "cook", "spec.md", "--recipe", "replay-test", "--agent-stub")
+	_, _, code1 := runGump(t, dir, "run", "spec.md", "--workflow", "replay-test", "--agent-stub")
 	if code1 == 0 {
-		t.Fatal("first cook should fail (step-b has bash exit 1)")
+		t.Fatal("first run should fail (step-b has bash exit 1)")
 	}
 
 	// Recipe 2: step-b without validator passes as soon as stub completes
@@ -568,9 +568,9 @@ steps:
     prompt: "Create goodbye.go"
 `)
 
-	stdout2, stderr2, code2 := runPudding(t, dir, "cook", "spec.md", "--recipe", "replay-test", "--replay", "--from-step", "step-b", "--agent-stub")
+	stdout2, stderr2, code2 := runGump(t, dir, "run", "spec.md", "--workflow", "replay-test", "--replay", "--from-step", "step-b", "--agent-stub")
 	if code2 != 0 {
-		t.Fatalf("replay cook exit %d:\nstdout: %s\nstderr: %s", code2, stdout2, stderr2)
+		t.Fatalf("replay run exit %d:\nstdout: %s\nstderr: %s", code2, stdout2, stderr2)
 	}
 
 	ledger := readLedger(t, dir)
@@ -623,14 +623,14 @@ steps:
       - file: "context-doc.md"
     prompt: |
       Read the context file provided above. Your response MUST include the exact marker string found in context-doc.md.
-      Write your response to .pudding/out/artifact.txt.
+      Write your response to .gump/out/artifact.txt.
 `
 	writeRecipe(t, dir, "ctx-test", recipeYAML)
-	stdout, stderr, code := runPudding(t, dir, "cook", "spec.md", "--recipe", "ctx-test")
+	stdout, stderr, code := runGump(t, dir, "run", "spec.md", "--workflow", "ctx-test")
 	if code != 0 {
-		t.Fatalf("cook exit %d:\nstdout: %s\nstderr: %s", code, stdout, stderr)
+		t.Fatalf("run exit %d:\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
-	assertCookPass(t, dir)
+	assertRunPass(t, dir)
 	ledger := readLedger(t, dir)
 	for _, ev := range ledger {
 		if ev["type"] == "agent_completed" {
@@ -639,8 +639,8 @@ steps:
 			}
 		}
 	}
-	cookID := filepath.Base(latestCookDir(t, dir))
-	wtDir := filepath.Join(dir, ".pudding", "worktrees", "cook-"+cookID)
+	runID := filepath.Base(latestRunDir(t, dir))
+	wtDir := filepath.Join(dir, ".gump", "worktrees", "run-"+runID)
 	claudeMD := filepath.Join(wtDir, "CLAUDE.md")
 	data, err := os.ReadFile(claudeMD)
 	if err != nil {
@@ -664,12 +664,12 @@ steps:
     prompt: "x"
     gate: [compile]
 `)
-	stdout, stderr, code := runPudding(t, dir, "cook", "spec.md", "--recipe", "test-diff", "--agent-stub")
+	stdout, stderr, code := runGump(t, dir, "run", "spec.md", "--workflow", "test-diff", "--agent-stub")
 	if code != 0 {
-		t.Fatalf("cook exit %d: %s %s", code, stdout, stderr)
+		t.Fatalf("run exit %d: %s %s", code, stdout, stderr)
 	}
-	cookID := filepath.Base(latestCookDir(t, dir))
-	wtDir := filepath.Join(dir, ".pudding", "worktrees", "cook-"+cookID)
+	runID := filepath.Base(latestRunDir(t, dir))
+	wtDir := filepath.Join(dir, ".gump", "worktrees", "run-"+runID)
 	data1, err := os.ReadFile(filepath.Join(wtDir, "CLAUDE.md"))
 	if err != nil {
 		t.Fatal(err)
@@ -686,12 +686,12 @@ steps:
     prompt: "Review"
     gate: [compile]
 `)
-	stdout, stderr, code = runPudding(t, dir, "cook", "spec.md", "--recipe", "test-review", "--agent-stub")
+	stdout, stderr, code = runGump(t, dir, "run", "spec.md", "--workflow", "test-review", "--agent-stub")
 	if code != 0 {
-		t.Fatalf("cook exit %d: %s %s", code, stdout, stderr)
+		t.Fatalf("run exit %d: %s %s", code, stdout, stderr)
 	}
-	cookID2 := filepath.Base(latestCookDir(t, dir))
-	wtDir2 := filepath.Join(dir, ".pudding", "worktrees", "cook-"+cookID2)
+	runID2 := filepath.Base(latestRunDir(t, dir))
+	wtDir2 := filepath.Join(dir, ".gump", "worktrees", "run-"+runID2)
 	data2, err := os.ReadFile(filepath.Join(wtDir2, "CLAUDE.md"))
 	if err != nil {
 		t.Fatal(err)
@@ -707,18 +707,18 @@ steps:
     output: plan
     prompt: "Plan"
 `)
-	stdout, stderr, code = runPudding(t, dir, "cook", "spec.md", "--recipe", "test-plan", "--agent-stub")
+	stdout, stderr, code = runGump(t, dir, "run", "spec.md", "--workflow", "test-plan", "--agent-stub")
 	if code != 0 {
-		t.Fatalf("cook exit %d: %s %s", code, stdout, stderr)
+		t.Fatalf("run exit %d: %s %s", code, stdout, stderr)
 	}
-	cookID3 := filepath.Base(latestCookDir(t, dir))
-	wtDir3 := filepath.Join(dir, ".pudding", "worktrees", "cook-"+cookID3)
+	runID3 := filepath.Base(latestRunDir(t, dir))
+	wtDir3 := filepath.Join(dir, ".gump", "worktrees", "run-"+runID3)
 	data3, err := os.ReadFile(filepath.Join(wtDir3, "CLAUDE.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	s3 := string(data3)
-	if !strings.Contains(s3, "plan step") || !strings.Contains(s3, ".pudding/out/plan.json") {
+	if !strings.Contains(s3, "plan step") || !strings.Contains(s3, ".gump/out/plan.json") {
 		t.Errorf("plan mode: expected plan step and plan.json markers")
 	}
 	writeRecipe(t, dir, "test-artifact", `name: test-artifact
@@ -729,18 +729,18 @@ steps:
     prompt: "Write artifact"
     gate: [compile]
 `)
-	stdout, stderr, code = runPudding(t, dir, "cook", "spec.md", "--recipe", "test-artifact", "--agent-stub")
+	stdout, stderr, code = runGump(t, dir, "run", "spec.md", "--workflow", "test-artifact", "--agent-stub")
 	if code != 0 {
-		t.Fatalf("cook exit %d: %s %s", code, stdout, stderr)
+		t.Fatalf("run exit %d: %s %s", code, stdout, stderr)
 	}
-	cookID4 := filepath.Base(latestCookDir(t, dir))
-	wtDir4 := filepath.Join(dir, ".pudding", "worktrees", "cook-"+cookID4)
+	runID4 := filepath.Base(latestRunDir(t, dir))
+	wtDir4 := filepath.Join(dir, ".gump", "worktrees", "run-"+runID4)
 	data4, err := os.ReadFile(filepath.Join(wtDir4, "CLAUDE.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	s4 := string(data4)
-	if !strings.Contains(s4, "artifact step") || !strings.Contains(s4, ".pudding/out/artifact.txt") {
+	if !strings.Contains(s4, "artifact step") || !strings.Contains(s4, ".gump/out/artifact.txt") {
 		t.Errorf("artifact mode: expected artifact step and artifact.txt markers")
 	}
 }
@@ -765,7 +765,7 @@ steps:
 `)
 	writeFile(t, dir, ".pudding-test-plan.json", `[{"name": "task-1", "description": "One task", "files": ["hello.go"]}]`)
 	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_step":{"code":{"files":{"hello.go":"package main\n\nfunc Hello() {}\n","extra.go":"package main\n\nfunc Extra() {}\n"}}}}`)
-	stdout, stderr, code := runPudding(t, dir, "cook", "spec.md", "--recipe", "foreach-blast", "--agent-stub")
+	stdout, stderr, code := runGump(t, dir, "run", "spec.md", "--workflow", "foreach-blast", "--agent-stub")
 	if code == 0 {
 		t.Fatal("expected non-zero exit on blast radius violation")
 	}
@@ -795,9 +795,9 @@ steps:
         - same
 `)
 	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"1":{"files":{"math.go":"package main\n\nfunc Add(a, b int) int { return 0 }\n"}},"2":{"files":{"math.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}},"files":{"math_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { if Add(1, 2) != 3 { t.Fatal() } }\n"}}`)
-	_, stderr, code := runPudding(t, dir, "cook", "spec.md", "--recipe", "retry-session-test", "--agent-stub")
+	_, stderr, code := runGump(t, dir, "run", "spec.md", "--workflow", "retry-session-test", "--agent-stub")
 	if code != 0 {
-		t.Fatalf("cook exit %d: %s", code, stderr)
+		t.Fatalf("run exit %d: %s", code, stderr)
 	}
 	ledger := readLedger(t, dir)
 	var launchedCode []map[string]interface{}
@@ -826,12 +826,12 @@ steps:
 	}
 }
 
-// TestSmokePuddingModels: models subcommand must list providers and context so users can see what is available and configured.
-func TestSmokePuddingModels(t *testing.T) {
+// TestSmokeGumpModels: models subcommand must list providers and context so users can see what is available and configured.
+func TestSmokeGumpModels(t *testing.T) {
 	dir := setupSmokeRepo(t)
-	stdout, _, code := runPudding(t, dir, "models")
+	stdout, _, code := runGump(t, dir, "models")
 	if code != 0 {
-		t.Fatalf("pudding models exit %d", code)
+		t.Fatalf("gump models exit %d", code)
 	}
 	for _, s := range []string{"claude-opus", "codex", "gemini", "qwen", "Context"} {
 		if !strings.Contains(stdout, s) {
@@ -840,15 +840,15 @@ func TestSmokePuddingModels(t *testing.T) {
 	}
 }
 
-// TestSmokePuddingStatus: status must exit cleanly when idle so scripts and UX can poll without false errors.
-func TestSmokePuddingStatus(t *testing.T) {
+// TestSmokeGumpStatus: status must exit cleanly when idle so scripts and UX can poll without false errors.
+func TestSmokeGumpStatus(t *testing.T) {
 	dir := setupSmokeRepo(t)
-	stdout, _, code := runPudding(t, dir, "status")
+	stdout, _, code := runGump(t, dir, "status")
 	if code != 0 {
-		t.Fatalf("pudding status exit %d", code)
+		t.Fatalf("gump status exit %d", code)
 	}
-	if !strings.Contains(stdout, "No cook") && !strings.Contains(stdout, "no cook") && !strings.Contains(stdout, "nothing in progress") {
-		t.Errorf("stdout should indicate no cook in progress: %s", stdout)
+	if !strings.Contains(stdout, "No run") && !strings.Contains(stdout, "no run") && !strings.Contains(stdout, "nothing in progress") {
+		t.Errorf("stdout should indicate no run in progress: %s", stdout)
 	}
 }
 
@@ -863,11 +863,11 @@ steps:
   - name: implement
     recipe: freeform
 `)
-	_, _, code := runPudding(t, dir, "cook", "spec.md", "--recipe", "compose-test", "--agent", "claude-sonnet")
+	_, _, code := runGump(t, dir, "run", "spec.md", "--workflow", "compose-test", "--agent", "claude-sonnet")
 	if code != 0 {
-		t.Fatalf("cook exit %d", code)
+		t.Fatalf("run exit %d", code)
 	}
-	assertCookPass(t, dir)
+	assertRunPass(t, dir)
 	ledger := readLedger(t, dir)
 	hasExecuteStep := false
 	for _, ev := range ledger {
@@ -889,9 +889,9 @@ func TestSmokeDXStreaming(t *testing.T) {
 	requireAgent(t, "claude")
 	dir := setupSmokeRepo(t)
 	writeSpec(t, dir, specAdd)
-	_, stderr, code := runPudding(t, dir, "cook", "spec.md", "--recipe", "freeform", "--agent", "claude-sonnet")
+	_, stderr, code := runGump(t, dir, "run", "spec.md", "--workflow", "freeform", "--agent", "claude-sonnet")
 	if code != 0 {
-		t.Fatalf("cook exit %d", code)
+		t.Fatalf("run exit %d", code)
 	}
 	// Display format is [1] (step index) or [1/N] when total is known.
 	if !strings.Contains(stderr, "[1]") && !strings.Contains(stderr, "[1/") {
@@ -900,19 +900,19 @@ func TestSmokeDXStreaming(t *testing.T) {
 	if !strings.Contains(stderr, "done") || !strings.Contains(stderr, "turns") {
 		t.Errorf("stderr should contain agent summary (done, turns): %s", stderr)
 	}
-	if !strings.Contains(stderr, "Cook total:") && !strings.Contains(stderr, "Result:") {
-		t.Errorf("stderr should contain footer (Cook total: or Result:): %s", stderr)
+	if !strings.Contains(stderr, "Run total:") && !strings.Contains(stderr, "Result:") {
+		t.Errorf("stderr should contain footer (Run total: or Result:): %s", stderr)
 	}
 }
 
-// TestSmokeLedgerV4Events checks gate naming, session_mode, and observed_at-prefixed stdout lines on a live cook.
+// TestSmokeLedgerV4Events checks gate naming, session_mode, and observed_at-prefixed stdout lines on a live run.
 func TestSmokeLedgerV4Events(t *testing.T) {
 	requireAgent(t, "claude")
 	dir := setupSmokeRepo(t)
 	writeSpec(t, dir, specAdd)
-	stdout, _, code := runPudding(t, dir, "cook", "spec.md", "--recipe", "freeform", "--agent", "claude-haiku")
+	stdout, _, code := runGump(t, dir, "run", "spec.md", "--workflow", "freeform", "--agent", "claude-haiku")
 	if code != 0 {
-		t.Fatalf("cook exit %d: %s", code, stdout)
+		t.Fatalf("run exit %d: %s", code, stdout)
 	}
 	ledger := readLedger(t, dir)
 	var hasGate bool
@@ -934,10 +934,10 @@ func TestSmokeLedgerV4Events(t *testing.T) {
 	if !hasSessionMode {
 		t.Error("step_started should include session_mode")
 	}
-	cookDir := latestCookDir(t, dir)
-	matches, _ := filepath.Glob(filepath.Join(cookDir, "artifacts", "*-stdout.log"))
+	runDir := latestRunDir(t, dir)
+	matches, _ := filepath.Glob(filepath.Join(runDir, "artifacts", "*-stdout.log"))
 	if len(matches) == 0 {
-		t.Fatal("expected *-stdout.log in cook artifacts")
+		t.Fatal("expected *-stdout.log in run artifacts")
 	}
 	lineRe := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z `)
 	for _, p := range matches {
@@ -964,16 +964,16 @@ func execLookPath(name string) (string, error) {
 	return exec.LookPath(name)
 }
 
-// TestSmokeReportLive checks that pudding report runs after a real cook (M5 TUI).
+// TestSmokeReportLive checks that gump report runs after a real run (M5 TUI).
 func TestSmokeReportLive(t *testing.T) {
 	requireAgent(t, "claude")
 	dir := setupSmokeRepo(t)
 	writeSpec(t, dir, specAdd)
-	_, _, code1 := runPudding(t, dir, "cook", "spec.md", "--recipe", "freeform", "--agent", "claude-haiku")
+	_, _, code1 := runGump(t, dir, "run", "spec.md", "--workflow", "freeform", "--agent", "claude-haiku")
 	if code1 != 0 {
-		t.Fatalf("cook exit %d", code1)
+		t.Fatalf("run exit %d", code1)
 	}
-	stdout, _, code2 := runPudding(t, dir, "report")
+	stdout, _, code2 := runGump(t, dir, "report")
 	if code2 != 0 {
 		t.Fatalf("report exit %d: %s", code2, stdout)
 	}
@@ -988,21 +988,52 @@ func TestSmokeReportLive(t *testing.T) {
 	}
 }
 
-// TestSmokeReportLastN checks cross-cook aggregation (M5).
+// TestSmokeReportLastN checks cross-run aggregation (M5).
 func TestSmokeReportLastN(t *testing.T) {
 	requireAgent(t, "claude")
 	dir := setupSmokeRepo(t)
 	writeSpec(t, dir, specAdd)
-	runPudding(t, dir, "cook", "spec.md", "--recipe", "freeform", "--agent", "claude-haiku")
-	runPudding(t, dir, "cook", "spec.md", "--recipe", "freeform", "--agent", "claude-haiku")
-	stdout, _, code := runPudding(t, dir, "report", "--last", "2")
+	runGump(t, dir, "run", "spec.md", "--workflow", "freeform", "--agent", "claude-haiku")
+	runGump(t, dir, "run", "spec.md", "--workflow", "freeform", "--agent", "claude-haiku")
+	stdout, _, code := runGump(t, dir, "report", "--last", "2")
 	if code != 0 {
 		t.Fatalf("report exit %d: %s", code, stdout)
 	}
-	if !strings.Contains(stdout, "Last 2 cooks") {
-		t.Errorf("report should mention Last 2 cooks: %s", stdout)
+	if !strings.Contains(stdout, "Last 2 runs") {
+		t.Errorf("report should mention Last 2 runs: %s", stdout)
 	}
 	if !strings.Contains(stdout, "Success rate") {
 		t.Errorf("report should contain Success rate: %s", stdout)
+	}
+}
+
+// TestSmokeGumpRunLive validates a real `gump run` invocation.
+func TestSmokeGumpRunLive(t *testing.T) {
+	requireAgent(t, "claude")
+	dir := setupSmokeRepo(t)
+	writeSpec(t, dir, specAdd)
+	stdout, stderr, code := runGump(t, dir, "run", "spec.md", "--workflow", "freeform", "--agent", "claude-haiku")
+	if code != 0 {
+		t.Fatalf("run exit %d:\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	assertRunPass(t, dir)
+}
+
+// TestSmokeStateBagMetricsLive validates state-bag metrics are written on a live run.
+func TestSmokeStateBagMetricsLive(t *testing.T) {
+	requireAgent(t, "claude")
+	dir := setupSmokeRepo(t)
+	writeSpec(t, dir, specAdd)
+	_, _, code := runGump(t, dir, "run", "spec.md", "--workflow", "freeform", "--agent", "claude-haiku")
+	if code != 0 {
+		t.Skip("live run failed; skipping metrics assertions")
+	}
+	runDir := latestRunDir(t, dir)
+	data, err := os.ReadFile(filepath.Join(runDir, "state-bag.json"))
+	if err != nil {
+		t.Fatalf("read state-bag.json: %v", err)
+	}
+	if !strings.Contains(string(data), `"run"`) || !strings.Contains(string(data), `"entries"`) {
+		t.Fatalf("state-bag should contain run and entries sections: %s", string(data))
 	}
 }

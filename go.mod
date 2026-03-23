@@ -1,4 +1,4 @@
-module github.com/isomorphx/pudding
+module github.com/isomorphx/gump
 
 go 1.22
 

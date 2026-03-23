@@ -16,18 +16,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/isomorphx/pudding/internal/agent"
-	"github.com/isomorphx/pudding/internal/config"
-	pkgcontext "github.com/isomorphx/pudding/internal/context"
-	"github.com/isomorphx/pudding/internal/cook"
-	"github.com/isomorphx/pudding/internal/diff"
-	"github.com/isomorphx/pudding/internal/ledger"
-	"github.com/isomorphx/pudding/internal/plan"
-	"github.com/isomorphx/pudding/internal/recipe"
-	"github.com/isomorphx/pudding/internal/sandbox"
-	"github.com/isomorphx/pudding/internal/statebag"
-	"github.com/isomorphx/pudding/internal/template"
-	"github.com/isomorphx/pudding/internal/validate"
+	"github.com/isomorphx/gump/internal/agent"
+	"github.com/isomorphx/gump/internal/brand"
+	"github.com/isomorphx/gump/internal/config"
+	pkgcontext "github.com/isomorphx/gump/internal/context"
+	"github.com/isomorphx/gump/internal/cook"
+	"github.com/isomorphx/gump/internal/diff"
+	"github.com/isomorphx/gump/internal/ledger"
+	"github.com/isomorphx/gump/internal/plan"
+	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/sandbox"
+	"github.com/isomorphx/gump/internal/statebag"
+	"github.com/isomorphx/gump/internal/template"
+	"github.com/isomorphx/gump/internal/validate"
 )
 
 // ErrCookAborted is returned when the user aborts during HITL (Ctrl+C).
@@ -91,15 +92,15 @@ func New(c *cook.Cook, rec *recipe.Recipe, r agent.AdapterResolver, cfg *config.
 	}
 }
 
-// Run executes the recipe; returns nil if all steps pass, or an error when a step is fatal.
-// We always run the end-of-cook sequence (state-bag, final-diff, cook_completed, index, close ledger) so the ledger is complete even on fatal.
+// Run executes the workflow; returns nil if all steps pass, or an error when a step is fatal.
+// We always run the end-of-run sequence (state-bag, final-diff, run_completed, index, close ledger) so the ledger is complete even on fatal.
 func (e *Engine) Run() error {
 	defer agent.RestoreAllContextFiles(e.Cook.WorktreeDir)
 	e.cookRunStartedAt = time.Now()
 	if e.Cook.Ledger != nil {
-		_ = e.Cook.Ledger.Emit(ledger.CookStarted{
-			CookID:    e.Cook.ID,
-			Recipe:    e.Cook.RecipeName,
+		_ = e.Cook.Ledger.Emit(ledger.RunStarted{
+			RunID:     e.Cook.ID,
+			Workflow:  e.Cook.RecipeName,
 			Spec:      filepath.Base(e.Cook.SpecPath),
 			Commit:    e.Cook.InitialCommit,
 			Branch:    e.Cook.OrigBranch,
@@ -238,7 +239,7 @@ func (e *Engine) executeSteps(steps []recipe.Step, taskContext *plan.Task, pathP
 						}
 						fmt.Fprintf(os.Stderr, "[%s]\tgroup-retry\tattempt %d/%d (%s)\n", stepPath, groupAttempt, maxAttempts, strategyLabel)
 						sessionMap = make(map[string]string)
-						groupAttemptPath := filepath.Join(e.Cook.WorktreeDir, ".pudding", "group-attempt")
+						groupAttemptPath := filepath.Join(e.Cook.WorktreeDir, brand.StateDir(), "group-attempt")
 						_ = os.MkdirAll(filepath.Dir(groupAttemptPath), 0755)
 						_ = os.WriteFile(groupAttemptPath, []byte(fmt.Sprintf("%d", groupAttempt)), 0644)
 					}
@@ -614,22 +615,22 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 		if attempt == 1 {
 			sessionID = e.resolveTargetedSession(effectiveSession.Target, step.Agent)
 			if sessionID == "" {
-				fmt.Fprintf(os.Stderr, "[pudding] session: reuse: %s — target step not found or different agent, using fresh session\n", effectiveSession.Target)
+				fmt.Fprintf(os.Stderr, "[%s] session: reuse: %s — target step not found or different agent, using fresh session\n", brand.Lower(), effectiveSession.Target)
 			}
 		}
 	}
 
 	promptForAgent := resolvedPrompt
 	if outputMode == "plan" {
-		promptForAgent += "\n[PUDDING:plan]"
+		promptForAgent += "\n[" + brand.Upper() + ":plan]"
 	} else if outputMode == "artifact" {
-		promptForAgent += "\n[PUDDING:artifact]"
+		promptForAgent += "\n[" + brand.Upper() + ":artifact]"
 	} else if outputMode == "review" {
-		promptForAgent += "\n[PUDDING:review]"
+		promptForAgent += "\n[" + brand.Upper() + ":review]"
 	}
-	promptForAgent += "\n[PUDDING:step:" + step.Name + "]"
+	promptForAgent += "\n[" + brand.Upper() + ":step:" + step.Name + "]"
 	if timeout > 0 {
-		promptForAgent += "\n[PUDDING:timeout]"
+		promptForAgent += "\n[" + brand.Upper() + ":timeout]"
 	}
 
 	strategyLabel := ""
@@ -767,6 +768,21 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 		}
 	}
 	e.totalCostUSD += result.CostUSD
+	// WHY: update step/run metrics as soon as the agent reports completion so
+	// later steps can interpolate {steps.X.*} and {run.*}.
+	e.StateBag.UpdateStepAgentMetrics(
+		stepPath,
+		result.DurationMs,
+		result.CostUSD,
+		result.NumTurns,
+		result.InputTokens,
+		result.OutputTokens,
+		result.CacheReadTokens,
+		result.CacheCreationTokens,
+	)
+	e.StateBag.AddRunCost(result.CostUSD)
+	e.StateBag.IncrementRunTokensIn(result.InputTokens)
+	e.StateBag.IncrementRunTokensOut(result.OutputTokens)
 	AgentResultText(result.Result)
 	ctxStr := ""
 	if info := agent.LookupModel(agentToUse); info != nil && info.ContextWindow > 0 {
@@ -814,7 +830,7 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 	}
 	exec.SessionID = result.SessionID
 
-	// Extract output from .pudding/out/ before snapshot (dir is gitignored).
+	// Extract output from .gump/out/ before snapshot (dir is gitignored).
 	var outputValue string
 	switch outputMode {
 	case "plan":
@@ -970,6 +986,8 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 			exec.Status = StepFatal
 			exec.FinishedAt = time.Now()
 			e.Steps = append(e.Steps, exec)
+			e.StateBag.SetStepCheckResult(stepPath, "fail")
+			e.StateBag.SetRunMetric("status", "fail")
 			e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), dc, outputMode, outputValue, true)
 			fmt.Fprintf(os.Stderr, "[%s]\tFAIL\t%s\n", stepPath, errMsg)
 			return fmt.Errorf("step %s: %s", step.Name, errMsg), preStepCommit
@@ -999,6 +1017,8 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 			exec.CommitHash = dc.HeadCommit
 			exec.FinishedAt = time.Now()
 			e.Steps = append(e.Steps, exec)
+			e.StateBag.SetStepCheckResult(stepPath, "pass")
+			e.StateBag.SetRunMetric("status", "pass")
 			e.setLastStepOutcome(stepPath, attempt, "pass", int(time.Since(exec.StartedAt).Milliseconds()), dc, outputMode, outputValue, true)
 			detail := buildValidationPassDetail(outputMode, outputValue, dc, vr)
 			fmt.Fprintf(os.Stderr, "[%s]\tpass\t%s\n", stepPath, detail)
@@ -1038,6 +1058,8 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 		exec.Status = StepFatal
 		exec.FinishedAt = time.Now()
 		e.Steps = append(e.Steps, exec)
+			e.StateBag.SetStepCheckResult(stepPath, "fail")
+			e.StateBag.SetRunMetric("status", "fail")
 		e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), dc, outputMode, outputValue, true)
 		formatValidationDetails(os.Stderr, stepPath, vr)
 		RetryValidationFailed("validation failed: "+strings.Join(failedNames, ", "), "")
@@ -1050,6 +1072,8 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 		return fmt.Errorf("step %s: validation failed: %s", step.Name, strings.Join(failedNames, ", ")), preStepCommit
 	}
 
+	// No gate checks: treat as "none" for {steps.<n>.check_result}.
+	e.StateBag.SetStepCheckResult(stepPath, "none")
 	exec.Status = StepPass
 	exec.CommitHash = dc.HeadCommit
 	exec.FinishedAt = time.Now()
@@ -1102,7 +1126,7 @@ func (e *Engine) hitlPauseAfterSuccess(step *recipe.Step, stepPath string, outpu
 		mode = "diff"
 	}
 	fstr := strings.Join(filterRepoFilesOnly(e.Cook.WorktreeDir, filesChanged), ", ")
-	fmt.Fprintf(os.Stderr, "[pudding] HITL pause after step '%s'\n\nResult:\n  Mode:    %s\n  Status:  pass\n  Files:   %s\n\n  Review the results in the worktree: %s\n  Press Enter to continue, Ctrl+C to abort.\n", stepPath, mode, fstr, e.Cook.WorktreeDir)
+		fmt.Fprintf(os.Stderr, "[%s] HITL pause after step '%s'\n\nResult:\n  Mode:    %s\n  Status:  pass\n  Files:   %s\n\n  Review the results in the worktree: %s\n  Press Enter to continue, Ctrl+C to abort.\n", brand.Lower(), stepPath, mode, fstr, e.Cook.WorktreeDir)
 	if e.Cook.Ledger != nil {
 		_ = e.Cook.Ledger.Emit(ledger.HITLPaused{Step: stepPath})
 	}
@@ -1132,7 +1156,7 @@ func (e *Engine) hitlPauseAfterSuccess(step *recipe.Step, stepPath string, outpu
 }
 
 func (e *Engine) writeEngineStepAttemptMarker(stepName string, n int) {
-	p := filepath.Join(e.Cook.WorktreeDir, ".pudding", "engine-step-attempt.json")
+	p := filepath.Join(e.Cook.WorktreeDir, brand.StateDir(), "engine-step-attempt.json")
 	_ = os.MkdirAll(filepath.Dir(p), 0755)
 	_ = os.WriteFile(p, []byte(fmt.Sprintf(`{"step":%q,"n":%d}`, stepName, n)), 0644)
 }
@@ -1183,6 +1207,24 @@ func (e *Engine) emitStepCompletedFromLast() {
 	}
 	o := e.lastStep
 	e.lastStep = nil
+
+	retries := o.attempt - 1
+	stepStatus := "fatal"
+	checkResult := "none"
+	if o.status == "pass" {
+		stepStatus = "pass"
+		checkResult = "pass"
+	} else if o.hasValidation {
+		stepStatus = "fail"
+		checkResult = "fail"
+	}
+	e.StateBag.SetStepOutcome(o.stepPath, stepStatus, retries)
+	e.StateBag.SetStepCheckResult(o.stepPath, checkResult)
+	if !e.cookRunStartedAt.IsZero() {
+		e.StateBag.SetRunMetric("duration", fmt.Sprintf("%d", int(time.Since(e.cookRunStartedAt).Milliseconds())))
+	}
+	e.StateBag.SetRunMetric("status", stepStatus)
+
 	artifacts := make(map[string]string)
 	if o.patch != "" && o.outputMode == "diff" {
 		name := ledger.ArtifactName(o.stepPath, o.attempt, "diff", "patch")
@@ -1214,6 +1256,24 @@ func (e *Engine) emitStepCompleted(stepPath string, attempt int, status string, 
 	if e.Cook.Ledger == nil {
 		return
 	}
+
+	retries := attempt - 1
+	stepStatus := "fatal"
+	checkResult := "none"
+	if status == "pass" {
+		stepStatus = "pass"
+		checkResult = "pass"
+	} else if hasValidation {
+		stepStatus = "fail"
+		checkResult = "fail"
+	}
+	e.StateBag.SetStepOutcome(stepPath, stepStatus, retries)
+	e.StateBag.SetStepCheckResult(stepPath, checkResult)
+	if !e.cookRunStartedAt.IsZero() {
+		e.StateBag.SetRunMetric("duration", fmt.Sprintf("%d", int(time.Since(e.cookRunStartedAt).Milliseconds())))
+	}
+	e.StateBag.SetRunMetric("status", stepStatus)
+
 	artifacts := make(map[string]string)
 	if dc != nil && dc.Patch != "" && outputMode == "diff" {
 		name := ledger.ArtifactName(stepPath, attempt, "diff", "patch")
@@ -1382,7 +1442,7 @@ func filterRepoFilesOnly(worktreeDir string, files []string) []string {
 	var out []string
 	for _, f := range files {
 		norm := filepath.ToSlash(f)
-		if strings.HasPrefix(norm, ".pudding/") {
+		if strings.HasPrefix(norm, brand.StateDir()+"/") {
 			continue
 		}
 		switch norm {
@@ -1392,8 +1452,8 @@ func filterRepoFilesOnly(worktreeDir string, files []string) []string {
 		if strings.HasSuffix(norm, ".stub") {
 			continue
 		}
-		// Provider context backups live next to CLAUDE.md; they are Pudding metadata, not task edits.
-		if strings.HasPrefix(norm, ".pudding-original-") {
+		// Provider context backups live next to CLAUDE.md; they are Gump metadata, not task edits.
+		if strings.HasPrefix(norm, brand.StateDir()+"-original-") {
 			continue
 		}
 		// Go build/test produces a binary named after the module path's last segment (see `go help build`).
@@ -1438,7 +1498,7 @@ func checkBlastRadius(filesChanged, allowedPatterns []string) (violators []strin
 }
 
 func (e *Engine) writeRestartCycleMarker() error {
-	p := filepath.Join(e.Cook.WorktreeDir, ".pudding", "restart-cycle")
+	p := filepath.Join(e.Cook.WorktreeDir, brand.StateDir(), "restart-cycle")
 	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
 		return err
 	}
@@ -1757,7 +1817,7 @@ func formatAgentSummary(w io.Writer, stepName, stepPath string, durationSec, cos
 	if numTurns == 1 {
 		turnStr = "turn"
 	}
-	fmt.Fprintf(w, "[pudding] %s done %s | %s%s | %d %s\n", stepName, durStr, costStr, ctxStr, numTurns, turnStr)
+	fmt.Fprintf(w, "[%s] %s done %s | %s%s | %d %s\n", brand.Lower(), stepName, durStr, costStr, ctxStr, numTurns, turnStr)
 }
 
 // printCookTotal prints running cost and step count after each step (Feature 11).
@@ -1810,12 +1870,11 @@ func (e *Engine) finishCook(runErr error) {
 	if finalDiffRel != "" {
 		artifacts["final_diff"] = finalDiffRel
 	}
-	_ = e.Cook.Ledger.Emit(ledger.CookCompleted{
+	_ = e.Cook.Ledger.Emit(ledger.RunCompleted{
+		RunID:        e.Cook.ID,
 		Status:       status,
 		DurationMs:   durationMs,
-		TotalCostUSD: e.totalCostUSD,
-		Steps:        e.stepCompletedCount,
-		Retries:      e.retryTriggeredCount,
+		TotalCost:    e.totalCostUSD,
 		Artifacts:    artifacts,
 	})
 

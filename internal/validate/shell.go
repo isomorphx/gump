@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/isomorphx/pudding/internal/config"
-	"github.com/isomorphx/pudding/internal/recipe"
+	"github.com/isomorphx/gump/internal/config"
+	"github.com/isomorphx/gump/internal/recipe"
 )
 
 const defaultShellTimeout = 2 * time.Minute
@@ -85,7 +85,7 @@ func runShellValidatorWithAvailabilityCheck(alias, command string, worktreeDir s
 	binaryName, available := CheckCommandAvailable(command)
 	if !available {
 		if IsOptionalValidator(alias) {
-			msg := fmt.Sprintf("%s: '%s' is not installed — skipping. Install %s or configure %s in pudding.toml.",
+			msg := fmt.Sprintf("%s: '%s' is not installed — skipping. Install %s or configure %s in gump.toml.",
 				alias, binaryName, binaryName, validatorConfigKey(alias))
 			return &SingleResult{
 				Validator: alias + " (skipped)",
@@ -96,7 +96,7 @@ func runShellValidatorWithAvailabilityCheck(alias, command string, worktreeDir s
 				Stderr:    "",
 			}
 		}
-		msg := fmt.Sprintf("%s: '%s' is not installed or not in PATH. Install %s to use the '%s' validator, or configure %s in pudding.toml.",
+		msg := fmt.Sprintf("%s: '%s' is not installed or not in PATH. Install %s to use the '%s' validator, or configure %s in gump.toml.",
 			alias, binaryName, binaryName, alias, validatorConfigKey(alias))
 		return &SingleResult{Validator: alias, Pass: false, Stderr: msg}
 	}
@@ -136,7 +136,7 @@ func RunTestValidator(cfg *config.Config, worktreeDir string) *SingleResult {
 func RunLintValidator(cfg *config.Config, worktreeDir string) *SingleResult {
 	cmd, err := ResolveCommand("lint", cfg, worktreeDir)
 	if err != nil {
-		return &SingleResult{Validator: "lint (skipped)", Pass: true, Skipped: true, Stdout: "lint: no known linter detected for this project — skipping. Configure lint_cmd in pudding.toml."}
+		return &SingleResult{Validator: "lint (skipped)", Pass: true, Skipped: true, Stdout: "lint: no known linter detected for this project — skipping. Configure lint_cmd in gump.toml."}
 	}
 	return runShellValidatorWithAvailabilityCheck("lint", cmd, worktreeDir)
 }
@@ -162,11 +162,11 @@ func RunCoverageValidator(threshold string, cfg *config.Config, worktreeDir stri
 	}
 	cmd, err := ResolveCommand("coverage", cfg, worktreeDir)
 	if err != nil {
-		return &SingleResult{Validator: "coverage (skipped)", Pass: true, Skipped: true, Stdout: "coverage: no known coverage tool detected for this project — skipping. Configure coverage_cmd in pudding.toml."}
+		return &SingleResult{Validator: "coverage (skipped)", Pass: true, Skipped: true, Stdout: "coverage: no known coverage tool detected for this project — skipping. Configure coverage_cmd in gump.toml."}
 	}
 	binaryName, available := CheckCommandAvailable(cmd)
 	if !available {
-		msg := fmt.Sprintf("coverage: '%s' is not installed — skipping. Install %s or configure coverage_cmd in pudding.toml.", binaryName, binaryName)
+		msg := fmt.Sprintf("coverage: '%s' is not installed — skipping. Install %s or configure coverage_cmd in gump.toml.", binaryName, binaryName)
 		return &SingleResult{Validator: "coverage (skipped)", Pass: true, Skipped: true, ExitCode: 0, Stdout: msg}
 	}
 	r := RunShellValidator(cmd, worktreeDir, 0)

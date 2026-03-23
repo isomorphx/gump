@@ -6,8 +6,8 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/isomorphx/pudding/internal/config"
-	"github.com/isomorphx/pudding/internal/version"
+	"github.com/isomorphx/gump/internal/config"
+	"github.com/isomorphx/gump/internal/version"
 	"github.com/spf13/cobra"
 )
 
@@ -17,11 +17,11 @@ import (
 var updateCh chan string
 
 var updateCheckWhitelist = map[string]bool{
-	"cook":      true,
+	"run":       true,
 	"apply":     true,
 	"doctor":    true,
 	"report":    true,
-	"cookbook":  true,
+	"playbook":  true,
 	"config":    true,
 	"gc":        true,
 	"status":    true,
@@ -29,11 +29,11 @@ var updateCheckWhitelist = map[string]bool{
 	"models":    true,
 }
 
-// rootCmd is the pudding CLI. Log level is overridable so users can debug without editing config files.
+// rootCmd is the gump CLI. Log level is overridable so users can debug without editing config files.
 var rootCmd = &cobra.Command{
-	Use:   "pudding",
-	Short: "Orchestrate code agents via declarative recipes",
-	Long:  "Pudding runs workflows defined in YAML recipes: plan, code steps, validation, and review.",
+	Use:   "gump",
+	Short: "Orchestrate code agents via declarative workflows",
+	Long:  "Gump runs workflows defined in YAML recipes: plan, code steps, validation, and review.",
 }
 
 func init() {
@@ -102,9 +102,9 @@ func init() {
 
 			// WHY: write the whole block in a single stderr write to avoid interleaving.
 			fmt.Fprint(os.Stderr,
-				"\nA new version of Pudding is available: "+latest+" (current: "+version.Version+")\n\n"+
-					"  curl -fsSL https://pudding.build/install.sh | bash\n\n"+
-					"  or: brew upgrade pudding\n\n",
+				"\nA new version of Gump is available: "+latest+" (current: "+version.Version+")\n\n"+
+					"  curl -fsSL https://gump.build/install.sh | bash\n\n"+
+					"  or: brew upgrade gump\n\n",
 			)
 		case <-time.After(1200 * time.Millisecond):
 			// WHY: bounded wait so the HTTP fetch can complete and the cache
@@ -118,9 +118,9 @@ func init() {
 	rootCmd.Version = version.Version
 
 	if version.Version == "dev" {
-		rootCmd.SetVersionTemplate("pudding dev (" + version.Commit + ", " + version.BuildDate + ")\n")
+		rootCmd.SetVersionTemplate("gump dev (" + version.Commit + ", " + version.BuildDate + ")\n")
 	} else {
-		rootCmd.SetVersionTemplate("pudding " + version.Version + " (" + version.Commit + ", " + version.BuildDate + ")\n")
+		rootCmd.SetVersionTemplate("gump " + version.Version + " (" + version.Commit + ", " + version.BuildDate + ")\n")
 	}
 }
 

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/isomorphx/pudding/internal/config"
+	"github.com/isomorphx/gump/internal/config"
 )
 
 func TestResolveCommand_Compile_ConfigOverride(t *testing.T) {
@@ -54,7 +54,7 @@ func TestResolveCommand_Compile_NoMatch(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if err.Error() != "cannot resolve 'compile': no known build system detected. Configure compile_cmd in pudding.toml" {
+	if err.Error() != "cannot resolve 'compile': no known build system detected. Configure compile_cmd in gump.toml" {
 		t.Errorf("got %q", err.Error())
 	}
 }

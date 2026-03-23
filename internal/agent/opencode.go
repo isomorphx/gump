@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/isomorphx/gump/internal/brand"
 )
 
 const opencodeBin = "opencode"
@@ -118,7 +120,7 @@ func opencodeBuildArgs(prompt, agentName, worktree, sessionID string) []string {
 }
 
 func (a *OpenCodeAdapter) start(ctx context.Context, worktree string, timeout time.Duration, args []string) (*Process, error) {
-	artefactDir := filepath.Join(worktree, ".pudding", "artefacts")
+	artefactDir := filepath.Join(worktree, brand.StateDir(), "artefacts")
 	_ = os.MkdirAll(artefactDir, 0755)
 	stdoutPath := filepath.Join(artefactDir, "stdout.ndjson")
 	stderrPath := filepath.Join(artefactDir, "stderr.txt")

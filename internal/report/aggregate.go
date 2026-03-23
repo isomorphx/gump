@@ -7,20 +7,22 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/isomorphx/gump/internal/brand"
 )
 
-// AggregateReport is the cross-cook summary (spec §8).
+// AggregateReport is the cross-run summary (spec §8).
 type AggregateReport struct {
 	N             int
 	RecipeHeader  string
 	PassCount     int
-	TotalCooks    int
+	TotalRuns     int
 	AvgDurationMs int
 	AvgCostUSD    float64
 	TotalCostUSD  float64
 	AvgRetries    float64
 	Rows          []AggregateStepRow
-	CostByCook    []struct {
+	CostByRun     []struct {
 		Label string
 		USD   float64
 	}
@@ -49,9 +51,9 @@ type aggRow struct {
 	retryDen int
 }
 
-// BuildAggregateReport loads manifests for the given cook IDs (chronological order).
+// BuildAggregateReport loads manifests for the given run IDs (chronological order).
 func BuildAggregateReport(repoRoot string, cookIDs []string) (*AggregateReport, error) {
-	cooksDir := filepath.Join(repoRoot, ".pudding", "cooks")
+	cooksDir := filepath.Join(repoRoot, brand.StateDir(), brand.RunsDir())
 	type cookMeta struct {
 		id       string
 		recipe   string
@@ -79,7 +81,20 @@ func BuildAggregateReport(repoRoot string, cookIDs []string) (*AggregateReport, 
 			switch ev["type"] {
 			case "cook_started":
 				cg.recipe, _ = ev["recipe"].(string)
+			case "run_started":
+				cg.recipe, _ = ev["workflow"].(string)
 			case "cook_completed":
+				cg.status, _ = ev["status"].(string)
+				if v, ok := ev["duration_ms"].(float64); ok {
+					cg.duration = int(v)
+				}
+				if v, ok := ev["total_cost_usd"].(float64); ok {
+					cg.cost = v
+				}
+				if v, ok := ev["retries"].(float64); ok {
+					cg.retries = v
+				}
+			case "run_completed":
 				cg.status, _ = ev["status"].(string)
 				if v, ok := ev["duration_ms"].(float64); ok {
 					cg.duration = int(v)
@@ -98,11 +113,11 @@ func BuildAggregateReport(repoRoot string, cookIDs []string) (*AggregateReport, 
 		}
 	}
 	if len(cooks) == 0 {
-		return nil, fmt.Errorf("no cook data")
+		return nil, fmt.Errorf("no run data")
 	}
 	ar := &AggregateReport{
 		N:          len(cooks),
-		TotalCooks: len(cooks),
+		TotalRuns:  len(cooks),
 	}
 	if len(recipes) == 1 {
 		for r := range recipes {
@@ -128,10 +143,10 @@ func BuildAggregateReport(repoRoot string, cookIDs []string) (*AggregateReport, 
 	ar.AvgRetries = retSum / float64(len(cooks))
 
 	for i, c := range cooks {
-		ar.CostByCook = append(ar.CostByCook, struct {
+		ar.CostByRun = append(ar.CostByRun, struct {
 			Label string
 			USD   float64
-		}{fmt.Sprintf("Cook %d", i+1), c.cost})
+		}{fmt.Sprintf("Run %d", i+1), c.cost})
 	}
 
 	rows := map[aggKey]*aggRow{}
@@ -225,17 +240,17 @@ func RenderAggregateReport(ar *AggregateReport, o RenderOpts) string {
 	h := o.hBar()
 	fmt.Fprintf(&b, "%s%s%s\n", o.topLeft(), h, o.topRight())
 	nStr := fmt.Sprintf("%d", ar.N)
-	fmt.Fprintf(&b, "%s  Pudding Report — Last %s cooks%*s%s\n", o.vBar(), nStr, boxWidth-22-len(nStr), "", o.vBar())
+	fmt.Fprintf(&b, "%s  Gump Report — Last %s runs%*s%s\n", o.vBar(), nStr, boxWidth-22-len(nStr), "", o.vBar())
 	fmt.Fprintf(&b, "%s  Recipe: %-*s%s\n", o.vBar(), boxWidth-10, ar.RecipeHeader, o.vBar())
 	fmt.Fprintf(&b, "%s%s%s\n", o.botLeft(), h, o.botRight())
 
 	pct := 0
-	if ar.TotalCooks > 0 {
-		pct = (ar.PassCount * 100) / ar.TotalCooks
+	if ar.TotalRuns > 0 {
+		pct = (ar.PassCount * 100) / ar.TotalRuns
 	}
 	fmt.Fprintf(&b, "\nSummary\n")
 	fmt.Fprintf(&b, "%s\n", h)
-	fmt.Fprintf(&b, "  Success rate   %d/%d (%d%%)\n", ar.PassCount, ar.TotalCooks, pct)
+	fmt.Fprintf(&b, "  Success rate   %d/%d (%d%%)\n", ar.PassCount, ar.TotalRuns, pct)
 	fmt.Fprintf(&b, "  Avg duration   %s\n", formatDuration(ar.AvgDurationMs))
 	fmt.Fprintf(&b, "  Avg cost       $%.2f\n", ar.AvgCostUSD)
 	fmt.Fprintf(&b, "  Total cost     $%.2f\n", ar.TotalCostUSD)
@@ -252,7 +267,7 @@ func RenderAggregateReport(ar *AggregateReport, o RenderOpts) string {
 	fmt.Fprintf(&b, "\nCost Trend\n")
 	fmt.Fprintf(&b, "%s\n", h)
 	maxUSD := 0.0
-	for _, c := range ar.CostByCook {
+	for _, c := range ar.CostByRun {
 		if c.USD > maxUSD {
 			maxUSD = c.USD
 		}
@@ -260,7 +275,7 @@ func RenderAggregateReport(ar *AggregateReport, o RenderOpts) string {
 	if maxUSD <= 0 {
 		maxUSD = 1
 	}
-	for _, c := range ar.CostByCook {
+	for _, c := range ar.CostByRun {
 		w := int(math.Ceil(c.USD / maxUSD * 20))
 		if w > 20 {
 			w = 20

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/isomorphx/pudding/internal/config"
-	"github.com/isomorphx/pudding/internal/recipe"
+	"github.com/isomorphx/gump/internal/config"
+	"github.com/isomorphx/gump/internal/recipe"
 )
 
 func TestBuild_WritesCLAUDE(t *testing.T) {
@@ -22,7 +22,7 @@ func TestBuild_WritesCLAUDE(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(data)
-	if !strings.Contains(content, "Pudding — Agent Instructions") {
+	if !strings.Contains(content, "Gump — Agent Instructions") {
 		t.Error("missing header")
 	}
 	if !strings.Contains(content, "code step") {
@@ -47,7 +47,7 @@ func TestBuild_PlanContainsPlanJSON(t *testing.T) {
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
 	s := string(data)
-	if !strings.Contains(s, ".pudding/out/plan.json") {
+	if !strings.Contains(s, ".gump/out/plan.json") && !strings.Contains(s, ".pudding/out/plan.json") {
 		t.Error("plan must reference plan.json")
 	}
 	if !strings.Contains(s, "SPEC_BODY") {
@@ -157,7 +157,7 @@ func TestBuild_ArtifactContainsArtifactTxt(t *testing.T) {
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
 	s := string(data)
-	if !strings.Contains(s, "artifact step") || !strings.Contains(s, ".pudding/out/artifact.txt") {
+	if !strings.Contains(s, "artifact step") || (!strings.Contains(s, ".gump/out/artifact.txt") && !strings.Contains(s, ".pudding/out/artifact.txt")) {
 		t.Errorf("artifact template: %s", s)
 	}
 	if !strings.Contains(s, "Summarize the spec") {

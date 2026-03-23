@@ -5,22 +5,28 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/isomorphx/pudding/internal/cook"
-	"github.com/isomorphx/pudding/internal/sandbox"
+	"github.com/isomorphx/gump/internal/brand"
+	"github.com/isomorphx/gump/internal/cook"
+	"github.com/isomorphx/gump/internal/sandbox"
 	"github.com/spf13/cobra"
 )
 
-var applyCookID string
+var (
+	applyRunID        string
+	applyCookIDLegacy string
+)
 
 var applyCmd = &cobra.Command{
 	Use:   "apply",
-	Short: "Merge the last completed cook into the current branch",
-	Long:  "Resolves the most recent cook with status 'pass' (or --cook <uuid>), verifies worktree exists and working dir is clean, then runs git merge and teardown.",
+	Short: "Merge the last completed run into the current branch",
+	Long:  "Resolves the most recent run with status 'pass' (or --run <uuid>), verifies worktree exists and working dir is clean, then runs git merge and teardown.",
 	RunE:  runApply,
 }
 
 func init() {
-	applyCmd.Flags().StringVar(&applyCookID, "cook", "", "Cook UUID to apply (default: latest pass)")
+	applyCmd.Flags().StringVar(&applyRunID, "run", "", "Run UUID to apply (default: latest pass)")
+	applyCmd.Flags().StringVar(&applyCookIDLegacy, "cook", "", "Deprecated alias for --run")
+	_ = applyCmd.Flags().MarkDeprecated("cook", "use --run instead")
 	rootCmd.AddCommand(applyCmd)
 }
 
@@ -32,18 +38,22 @@ func runApply(cmd *cobra.Command, args []string) error {
 	}
 	repoRoot, err := sandbox.GitRepoRoot(cwd)
 	if err != nil {
-		return fmt.Errorf("pudding apply must be run inside a git repository")
+		return fmt.Errorf("gump apply must be executed inside a git repository")
 	}
-	cooksDir := filepath.Join(repoRoot, ".pudding", "cooks")
+	cooksDir := filepath.Join(repoRoot, brand.StateDir(), brand.RunsDir())
 
-	cookID := applyCookID
+	cookID := applyRunID
+	if cookID == "" && applyCookIDLegacy != "" {
+		fmt.Fprintln(os.Stderr, "warning: --cook is deprecated, use --run instead")
+		cookID = applyCookIDLegacy
+	}
 	if cookID == "" {
 		cookID, err = cook.FindLatestPassingCook(cooksDir)
 		if err != nil {
 			return err
 		}
 		if cookID == "" {
-			return fmt.Errorf("no completed cook found to apply")
+			return fmt.Errorf("no completed run found to apply")
 		}
 	}
 
@@ -52,10 +62,10 @@ func runApply(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if c.Status != "pass" {
-		return fmt.Errorf("cook %s has status %s — only completed cooks can be applied", cookID, c.Status)
+		return fmt.Errorf("run %s has status %s — only completed runs can be applied", cookID, c.Status)
 	}
 	if !cook.WorktreeExists(repoRoot, cookID) {
-		return fmt.Errorf("worktree for cook %s has been cleaned up — cannot apply", cookID)
+		return fmt.Errorf("worktree for run %s has been cleaned up — cannot apply", cookID)
 	}
 	return c.Apply()
 }

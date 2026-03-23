@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/isomorphx/pudding/internal/config"
-	"github.com/isomorphx/pudding/internal/diff"
+	"github.com/isomorphx/gump/internal/config"
+	"github.com/isomorphx/gump/internal/diff"
 )
 
 // RunTouchedValidator ensures at least one file matching the glob was changed so recipes can require test file edits.

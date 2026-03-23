@@ -4,16 +4,16 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/isomorphx/pudding/internal/config"
-	"github.com/isomorphx/pudding/internal/ledger"
-	"github.com/isomorphx/pudding/internal/sandbox"
+	"github.com/isomorphx/gump/internal/config"
+	"github.com/isomorphx/gump/internal/ledger"
+	"github.com/isomorphx/gump/internal/sandbox"
 	"github.com/spf13/cobra"
 )
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show the current cook in progress",
-	Long:  "Reads the latest in-progress cook's manifest and prints duration, cost, current step, and completed steps.",
+	Short: "Show the current run in progress",
+	Long:  "Reads the latest in-progress run manifest and prints duration, cost, current step, and completed steps.",
 	RunE:  runStatus,
 }
 
@@ -25,11 +25,11 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	projectRoot := config.ProjectRoot()
 	repoRoot, err := sandbox.GitRepoRoot(projectRoot)
 	if err != nil {
-		return fmt.Errorf("pudding status must be run inside a git repository: %w", err)
+		return fmt.Errorf("gump status must be executed inside a git repository: %w", err)
 	}
 	cookDir := ledger.FindInProgressCook(repoRoot)
 	if cookDir == "" {
-		fmt.Println("No cook in progress.")
+		fmt.Println("No run in progress.")
 		return nil
 	}
 	snap, err := ledger.ReadStatus(cookDir)
@@ -40,7 +40,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	if snap.LastEventAt.IsZero() {
 		dur = 0
 	}
-	fmt.Printf("Cook %s (%s) — in progress\n", snap.CookID[:8], snap.Recipe)
+	fmt.Printf("Run %s (%s) — in progress\n", snap.CookID[:8], snap.Recipe)
 	fmt.Printf("Spec: %s\n", snap.Spec)
 	fmt.Printf("Duration: %s\n", formatDurationStatus(dur))
 	fmt.Printf("Cost: $%.2f\n\n", snap.TotalCostUSD)

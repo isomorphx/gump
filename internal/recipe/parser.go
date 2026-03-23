@@ -83,7 +83,7 @@ type rawOnFailure struct {
 
 func parseStep(raw *rawStep, pathPrefix string, recipeDir string) (*Step, error) {
 	if raw.Type != "" {
-		return nil, fmt.Errorf("step %q uses 'type:' which is no longer needed. Pudding infers the step type from the fields present.\nHint: remove the 'type:' field. Use 'output: plan' for plan steps, 'foreach:' for iteration.", raw.Name)
+		return nil, fmt.Errorf("step %q uses 'type:' which is no longer needed. Gump infers the step type from the fields present.\nHint: remove the 'type:' field. Use 'output: plan' for plan steps, 'foreach:' for iteration.", raw.Name)
 	}
 	prompt, err := resolvePrompt(raw.Prompt, pathPrefix+".prompt", recipeDir)
 	if err != nil {

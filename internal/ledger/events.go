@@ -5,10 +5,11 @@ type Event interface {
 	EventType() string
 }
 
-// CookStarted is emitted at the very start of a cook so the ledger has full run context.
-type CookStarted struct {
-	CookID    string            `json:"cook_id"`
-	Recipe    string            `json:"recipe"`
+// RunStarted is emitted at the very start of a run so the ledger has full run context.
+// WHY: G1 rebrands ledger domain objects from cook->run.
+type RunStarted struct {
+	RunID     string            `json:"run_id"`
+	Workflow  string            `json:"workflow"`
 	Spec      string            `json:"spec"`
 	Commit    string            `json:"commit"`
 	Branch    string            `json:"branch"`
@@ -16,7 +17,7 @@ type CookStarted struct {
 	MaxBudget float64           `json:"max_budget,omitempty"`
 }
 
-func (CookStarted) EventType() string { return "cook_started" }
+func (RunStarted) EventType() string { return "run_started" }
 
 // StepStarted marks the beginning of one step attempt; used for timing and retry counts.
 type StepStarted struct {
@@ -204,14 +205,17 @@ type CircuitBreaker struct {
 
 func (CircuitBreaker) EventType() string { return "circuit_breaker" }
 
-// CookCompleted is emitted at the very end of Run(); state-bag and final-diff must already be written.
-type CookCompleted struct {
+// RunCompleted is emitted at the very end of Run(); state-bag and final-diff must already be written.
+type RunCompleted struct {
+	RunID        string            `json:"run_id"`
 	Status       string            `json:"status"`
 	DurationMs   int               `json:"duration_ms"`
-	TotalCostUSD float64           `json:"total_cost_usd"`
-	Steps        int               `json:"steps"`
-	Retries      int               `json:"retries"`
+	TotalCost    float64           `json:"total_cost_usd"`
 	Artifacts    map[string]string `json:"artifacts"`
 }
 
-func (CookCompleted) EventType() string { return "cook_completed" }
+func (RunCompleted) EventType() string { return "run_completed" }
+
+// Legacy aliases kept to avoid breaking non-G1 internal call sites.
+type CookStarted = RunStarted
+type CookCompleted = RunCompleted

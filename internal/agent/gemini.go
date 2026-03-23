@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/isomorphx/gump/internal/brand"
 )
 
 const (
@@ -105,7 +107,7 @@ func geminiBuildArgs(prompt, agentName string, resume bool) []string {
 func (a *GeminiAdapter) start(ctx context.Context, worktree string, timeout time.Duration, args []string) (*Process, error) {
 	cmd := exec.CommandContext(ctx, geminiBin, args...)
 	cmd.Dir = worktree
-	artefactDir := filepath.Join(worktree, ".pudding", "artefacts")
+	artefactDir := filepath.Join(worktree, brand.StateDir(), "artefacts")
 	_ = os.MkdirAll(artefactDir, 0755)
 	stdoutPath := filepath.Join(artefactDir, "stdout.ndjson")
 	stderrPath := filepath.Join(artefactDir, "stderr.txt")

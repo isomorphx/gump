@@ -6,11 +6,12 @@ import (
 	"os"
 	"strings"
 
-	"github.com/isomorphx/pudding/internal/statebag"
+	"github.com/isomorphx/gump/internal/statebag"
 )
 
-var stepsRefRegex = regexp.MustCompile(`\{steps\.([^}.]+)\.(output|diff|files|session_id)\}`)
+var stepsRefRegex = regexp.MustCompile(`\{steps\.([^}.]+)\.(output|diff|files|session_id|status|duration|cost|turns|retries|tokens_in|tokens_out|cache_read|cache_write|check_result)\}`)
 var taskVarRegex = regexp.MustCompile(`\{task\.([a-zA-Z0-9_]+)\}`)
+var runRefRegex = regexp.MustCompile(`\{run\.(cost|duration|tokens_in|tokens_out|retries|status)\}`)
 
 // Resolve replaces {key} placeholders. vars are resolved first; then {steps.<name>.output|diff} via stateBag when non-nil.
 // If stateBag is nil (e.g. dry-run), steps refs are resolved to empty string.
@@ -55,6 +56,20 @@ func Resolve(tmpl string, vars map[string]string, stateBag *statebag.StateBag, s
 			tmpl = strings.ReplaceAll(tmpl, "{"+k+"}", v)
 		}
 	}
+
+	if stateBag != nil {
+		tmpl = runRefRegex.ReplaceAllStringFunc(tmpl, func(match string) string {
+			subs := runRefRegex.FindStringSubmatch(match)
+			if len(subs) != 2 {
+				return match
+			}
+			return stateBag.GetRunMetric(subs[1])
+		})
+	} else {
+		// WHY: keep behavior symmetric with {steps.*} when state bag is nil (dry-run).
+		tmpl = runRefRegex.ReplaceAllStringFunc(tmpl, func(string) string { return "" })
+	}
+
 	if stateBag != nil && scopePath != "" {
 		tmpl = stepsRefRegex.ReplaceAllStringFunc(tmpl, func(match string) string {
 			subs := stepsRefRegex.FindStringSubmatch(match)

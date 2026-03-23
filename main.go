@@ -4,8 +4,8 @@ package main
 import (
 	"os"
 
-	_ "github.com/isomorphx/pudding/internal/builtin"
-	"github.com/isomorphx/pudding/cmd"
+	_ "github.com/isomorphx/gump/internal/builtin"
+	"github.com/isomorphx/gump/cmd"
 )
 
 func main() {

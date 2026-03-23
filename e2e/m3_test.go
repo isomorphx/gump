@@ -41,7 +41,7 @@ func countStepStartedForName(t *testing.T, cookDir, name string) int {
 
 func latestCookDir(t *testing.T, repoRoot string) string {
 	t.Helper()
-	cooksDir := filepath.Join(repoRoot, ".pudding", "cooks")
+	cooksDir := filepath.Join(repoRoot, ".gump", "runs")
 	entries, err := os.ReadDir(cooksDir)
 	if err != nil {
 		t.Fatalf("list cooks: %v", err)
@@ -87,7 +87,7 @@ steps:
 	writeFile(t, dir, "spec.md", "Add")
 	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"1":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { INVALID }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}}}`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"cook", "spec.md", "--recipe", "test-m3-r1", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m3-r1", "--agent-stub"}, nil, dir)
 	combined := stdout + stderr
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, combined)
@@ -138,7 +138,7 @@ steps:
   }
 }`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"cook", "spec.md", "--recipe", "test-m3-rf", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m3-rf", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}
@@ -166,7 +166,7 @@ steps:
 	writeFile(t, dir, "spec.md", "x")
 	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"cook", "spec.md", "--recipe", "test-m3-rev", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m3-rev", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}
@@ -207,7 +207,7 @@ steps:
   }
 }`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"cook", "spec.md", "--recipe", "test-m3-rvrf", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m3-rvrf", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}
@@ -232,7 +232,7 @@ steps:
 	writeFile(t, dir, "spec.md", "x")
 	writeFile(t, dir, ".pudding-test-scenario.json", `{"cost_usd": 0.15}`)
 	gitCommitAll(t, dir, "setup")
-	_, stderr, code := runPudding(t, []string{"cook", "spec.md", "--recipe", "test-m3-bud", "--agent-stub"}, nil, dir)
+	_, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m3-bud", "--agent-stub"}, nil, dir)
 	if code == 0 {
 		t.Fatal("expected non-zero exit on budget")
 	}
@@ -255,7 +255,7 @@ steps:
 	writeFile(t, dir, "spec.md", "x")
 	writeFile(t, dir, ".pudding-test-scenario.json", `{"cost_usd_by_step":{"cheap":0.08}}`)
 	gitCommitAll(t, dir, "setup")
-	_, stderr, code := runPudding(t, []string{"cook", "spec.md", "--recipe", "test-m3-sb", "--agent-stub"}, nil, dir)
+	_, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m3-sb", "--agent-stub"}, nil, dir)
 	if code == 0 {
 		t.Fatal("expected non-zero exit")
 	}
@@ -281,7 +281,7 @@ steps:
 	gitCommitAll(t, dir, "setup")
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, binaryPath, "cook", "spec.md", "--recipe", "test-m3-hitl", "--agent-stub")
+	cmd := exec.CommandContext(ctx, binaryPath, "run", "spec.md", "--workflow", "test-m3-hitl", "--agent-stub")
 	cmd.Dir = dir
 	devnull, err := os.Open(os.DevNull)
 	if err != nil {
@@ -324,12 +324,12 @@ steps:
 	writeFile(t, dir, "spec.md", "x")
 	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_step":{"code":{"files":{"hello.go":"package main\n\nfunc Hello() {}\n","hello_test.go":"package main\n\nimport \"testing\"\n\nfunc TestHello(t *testing.T) {}\n"}}}}`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"cook", "spec.md", "--recipe", "test-m3-files", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m3-files", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}
 	uuid := extractCookID(stdout)
-	wt := filepath.Join(dir, ".pudding", "worktrees", "cook-"+uuid)
+	wt := filepath.Join(dir, ".gump", "worktrees", "run-"+uuid)
 	claude := filepath.Join(wt, "CLAUDE.md")
 	body := readFile(t, claude)
 	if !strings.Contains(body, "hello.go") || !strings.Contains(body, "hello_test.go") {
@@ -359,7 +359,7 @@ steps:
 	writeFile(t, dir, "spec.md", "x")
 	writeFile(t, dir, ".pudding-test-scenario.json", `{"session_id_by_step":{"code":"test-session-abc"}}`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"cook", "spec.md", "--recipe", "test-m3-sid", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m3-sid", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}
@@ -387,7 +387,7 @@ steps:
 	writeFile(t, dir, "spec.md", "x")
 	writeFile(t, dir, ".pudding-test-scenario.json", `{"unique_session_each_call": true}`)
 	gitCommitAll(t, dir, "setup")
-	stdout, _, code := runPudding(t, []string{"cook", "spec.md", "--recipe", "test-m3-fresh", "--agent-stub"}, nil, dir)
+	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m3-fresh", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stdout)
 	}
@@ -436,7 +436,7 @@ steps:
   }
 }`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"cook", "spec.md", "--recipe", "test-m3-r11", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m3-r11", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}

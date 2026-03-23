@@ -9,9 +9,11 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/isomorphx/gump/internal/brand"
 )
 
-// StatusSnapshot is the in-memory view of an in-progress cook for pudding status.
+// StatusSnapshot is the in-memory view of an in-progress run for gump status.
 type StatusSnapshot struct {
 	CookDir       string
 	CookID        string
@@ -37,9 +39,9 @@ type CompletedStepRow struct {
 	Extra    string // e.g. "(4 tasks)"
 }
 
-// FindInProgressCook lists .pudding/cooks/*/manifest.ndjson and returns the cook dir of the one in progress (last event not cook_completed), most recent first. Returns "" if none.
+// FindInProgressCook lists .gump/runs/*/manifest.ndjson and returns the run dir of the one in progress (last event not run_completed), most recent first. Returns "" if none.
 func FindInProgressCook(repoRoot string) string {
-	cooksDir := filepath.Join(repoRoot, ".pudding", "cooks")
+	cooksDir := filepath.Join(repoRoot, brand.StateDir(), brand.RunsDir())
 	entries, err := os.ReadDir(cooksDir)
 	if err != nil {
 		return ""
@@ -71,7 +73,7 @@ func FindInProgressCook(repoRoot string) string {
 		if json.Unmarshal([]byte(lastLine), &ev) != nil {
 			continue
 		}
-		if ev["type"] == "cook_completed" {
+		if ev["type"] == "cook_completed" || ev["type"] == "run_completed" {
 			continue
 		}
 		ts, _ := ev["ts"].(string)
@@ -120,6 +122,11 @@ func ReadStatus(cookDir string) (*StatusSnapshot, error) {
 			snap.Recipe, _ = ev["recipe"].(string)
 			snap.Spec, _ = ev["spec"].(string)
 			snap.StartedAt = t
+		case "run_started":
+			snap.CookID, _ = ev["run_id"].(string)
+			snap.Recipe, _ = ev["workflow"].(string)
+			snap.Spec, _ = ev["spec"].(string)
+			snap.StartedAt = t
 		case "step_started":
 			lastStepAgent, _ = ev["agent"].(string)
 			snap.CurrentStep, _ = ev["step"].(string)
@@ -148,6 +155,10 @@ func ReadStatus(cookDir string) (*StatusSnapshot, error) {
 				}
 			}
 		case "cook_completed":
+			if c, ok := ev["total_cost_usd"].(float64); ok {
+				snap.TotalCostUSD = c
+			}
+		case "run_completed":
 			if c, ok := ev["total_cost_usd"].(float64); ok {
 				snap.TotalCostUSD = c
 			}
@@ -196,6 +207,9 @@ func ReadReplayInfo(cookDir string) (*ReplayInfo, error) {
 		case "cook_started":
 			info.InitialCommit, _ = ev["commit"].(string)
 			info.OriginalCookID, _ = ev["cook_id"].(string)
+		case "run_started":
+			info.InitialCommit, _ = ev["commit"].(string)
+			info.OriginalCookID, _ = ev["run_id"].(string)
 		case "step_started", "step_completed":
 			step, _ := ev["step"].(string)
 			if step != "" {

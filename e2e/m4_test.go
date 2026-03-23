@@ -27,7 +27,7 @@ steps:
 	writeFile(t, dir, "spec.md", "x")
 	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"cook", "spec.md", "--recipe", "test-m4-e1", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m4-e1", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}
@@ -58,7 +58,7 @@ steps:
 	writeFile(t, dir, "spec.md", "x")
 	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_step":{"code":{"files":{"bad.go":"package main\n\nfunc x() { SYNTAXERROR }\n"}}}}`)
 	gitCommitAll(t, dir, "setup")
-	_, _, code := runPudding(t, []string{"cook", "spec.md", "--recipe", "test-m4-e2", "--agent-stub"}, nil, dir)
+	_, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m4-e2", "--agent-stub"}, nil, dir)
 	if code == 0 {
 		t.Fatal("expected non-zero exit")
 	}
@@ -103,7 +103,7 @@ steps:
 	gitCommitAll(t, dir, "setup")
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, binaryPath, "cook", "spec.md", "--recipe", "test-m4-e3", "--agent-stub")
+	cmd := exec.CommandContext(ctx, binaryPath, "run", "spec.md", "--workflow", "test-m4-e3", "--agent-stub")
 	cmd.Dir = dir
 	devnull, err := os.Open(os.DevNull)
 	if err != nil {
@@ -151,7 +151,7 @@ steps:
 	writeFile(t, dir, "spec.md", "x")
 	writeFile(t, dir, ".pudding-test-scenario.json", `{"cost_usd": 0.05}`)
 	gitCommitAll(t, dir, "setup")
-	_, _, code := runPudding(t, []string{"cook", "spec.md", "--recipe", "test-m4-e4", "--agent-stub"}, nil, dir)
+	_, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m4-e4", "--agent-stub"}, nil, dir)
 	if code == 0 {
 		t.Fatal("expected non-zero exit")
 	}
@@ -175,12 +175,12 @@ steps:
 		if typ == "budget_exceeded" {
 			idxB = i
 		}
-		if typ == "cook_completed" {
+		if typ == "run_completed" {
 			idxC = i
 		}
 	}
 	if idxB < 0 || idxC < 0 || idxB > idxC {
-		t.Error("budget_exceeded should appear before cook_completed")
+		t.Error("budget_exceeded should appear before run_completed")
 	}
 	var be map[string]interface{}
 	for _, line := range strings.Split(strings.TrimSpace(manifest), "\n") {
@@ -196,8 +196,8 @@ steps:
 	if be == nil {
 		t.Fatal("no budget_exceeded event")
 	}
-	if be["scope"] != "cook" {
-		t.Errorf("scope want cook, got %v", be["scope"])
+	if be["scope"] != "run" && be["scope"] != "cook" {
+		t.Errorf("scope want run (or legacy cook), got %v", be["scope"])
 	}
 	if mx, ok := be["max_usd"].(float64); !ok || mx != 0.01 {
 		t.Errorf("max_usd want 0.01, got %v", be["max_usd"])
@@ -225,7 +225,7 @@ steps:
 	writeFile(t, dir, "spec.md", "x")
 	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"cook", "spec.md", "--recipe", "test-m4-e5", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m4-e5", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}
@@ -259,7 +259,7 @@ steps:
 	writeFile(t, dir, ".pudding-test-plan.json", `[{"name":"add-auth","description":"auth","files":["main.go"]}]`)
 	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"cook", "spec.md", "--recipe", "test-m4-e6", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m4-e6", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}
@@ -295,7 +295,7 @@ steps:
 	writeFile(t, dir, "spec.md", "x")
 	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"cook", "spec.md", "--recipe", "test-m4-e7", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m4-e7", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}
@@ -356,7 +356,7 @@ steps:
 		writeFile(t, dir, "spec.md", "x")
 		writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
 		gitCommitAll(t, dir, "setup")
-		stdout, stderr, code := runPudding(t, []string{"cook", "spec.md", "--recipe", "test-m4-e8a", "--agent-stub"}, nil, dir)
+		stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m4-e8a", "--agent-stub"}, nil, dir)
 		if code != 0 {
 			t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 		}
@@ -378,7 +378,7 @@ steps:
 		writeFile(t, dir, "spec.md", "x")
 		writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
 		gitCommitAll(t, dir, "setup")
-		stdout, stderr, code := runPudding(t, []string{"cook", "spec.md", "--recipe", "test-m4-e8b", "--agent-stub"}, nil, dir)
+		stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m4-e8b", "--agent-stub"}, nil, dir)
 		if code != 0 {
 			t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 		}
@@ -403,7 +403,7 @@ steps:
 	writeFile(t, dir, "spec.md", "x")
 	writeFile(t, dir, ".pudding-test-scenario.json", `{"session_id_by_step":{"code":"sid-m4-test"},"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"cook", "spec.md", "--recipe", "test-m4-e9", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m4-e9", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}

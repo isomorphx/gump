@@ -46,7 +46,7 @@ func TestWritePlanContext_RespectsContextFile(t *testing.T) {
 		if !strings.Contains(string(data), "spec content here") {
 			t.Errorf("%s: content missing spec", ctxFile)
 		}
-		if !strings.Contains(string(data), "Pudding — Agent Instructions") {
+		if !strings.Contains(string(data), "Gump — Agent Instructions") {
 			t.Errorf("%s: content missing header", ctxFile)
 		}
 		_ = os.Remove(path)

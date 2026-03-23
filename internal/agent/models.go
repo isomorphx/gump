@@ -1,6 +1,6 @@
 package agent
 
-// ModelInfo holds context window and output limits for a known model alias (for % context and pudding models).
+// ModelInfo holds context window and output limits for a known model alias (for % context and gump models).
 type ModelInfo struct {
 	ContextWindow int
 	MaxOutput     int
@@ -8,7 +8,7 @@ type ModelInfo struct {
 	ModelID       string
 }
 
-// KnownModels is the static table of Pudding aliases → model info. Used by pudding models and agent summary.
+// KnownModels is the static table of Gump aliases -> model info. Used by gump models and agent summary.
 var KnownModels = []ModelInfo{
 	// Claude (claude CLI)
 	{Provider: "claude", ModelID: "(default)", ContextWindow: 200_000, MaxOutput: 32_000},           // claude
@@ -55,7 +55,7 @@ var ModelAliases = func() map[string]*ModelInfo {
 	return m
 }()
 
-// LookupModel returns model info for a Pudding alias, or nil if unknown.
+// LookupModel returns model info for a Gump alias, or nil if unknown.
 func LookupModel(alias string) *ModelInfo {
 	return ModelAliases[alias]
 }

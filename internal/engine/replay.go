@@ -7,17 +7,18 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/isomorphx/pudding/internal/agent"
-	"github.com/isomorphx/pudding/internal/config"
-	"github.com/isomorphx/pudding/internal/cook"
-	"github.com/isomorphx/pudding/internal/ledger"
-	"github.com/isomorphx/pudding/internal/recipe"
-	"github.com/isomorphx/pudding/internal/statebag"
+	"github.com/isomorphx/gump/internal/agent"
+	"github.com/isomorphx/gump/internal/brand"
+	"github.com/isomorphx/gump/internal/config"
+	"github.com/isomorphx/gump/internal/cook"
+	"github.com/isomorphx/gump/internal/ledger"
+	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/statebag"
 )
 
-// FindLastFatalCook returns the cook dir of the most recent cook with status "fatal", or the cook dir for cookID if cookID != "" (status not checked).
+// FindLastFatalCook returns the run dir of the most recent run with status "fatal", or the run dir for cookID if cookID != "" (status not checked).
 func FindLastFatalCook(repoRoot string, cookID string) (string, error) {
-	cooksDir := filepath.Join(repoRoot, ".pudding", "cooks")
+	cooksDir := filepath.Join(repoRoot, brand.StateDir(), brand.RunsDir())
 	entries, err := os.ReadDir(cooksDir)
 	if err != nil {
 		return "", fmt.Errorf("list cooks: %w", err)
@@ -25,7 +26,7 @@ func FindLastFatalCook(repoRoot string, cookID string) (string, error) {
 	if cookID != "" {
 		dir := filepath.Join(cooksDir, cookID)
 		if _, err := os.Stat(dir); err != nil {
-			return "", fmt.Errorf("cook %s: %w", cookID, err)
+			return "", fmt.Errorf("run %s: %w", cookID, err)
 		}
 		return dir, nil
 	}
@@ -50,7 +51,7 @@ func FindLastFatalCook(repoRoot string, cookID string) (string, error) {
 		candidates = append(candidates, cand{dir: dir, mtime: info.ModTime().UnixNano()})
 	}
 	if len(candidates) == 0 {
-		return "", fmt.Errorf("no fatal cook found — run a cook first and let it fail, or use --cook <uuid>")
+		return "", fmt.Errorf("no fatal run found — execute a run first and let it fail, or use --cook <uuid>")
 	}
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].mtime > candidates[j].mtime })
 	return candidates[0].dir, nil
@@ -101,7 +102,7 @@ func ResolveFromStep(fromStep string, rec *recipe.Recipe) (string, error) {
 	return leafFullPath(withName[0]), nil
 }
 
-// RunReplay finds the fatal cook, restores state bag, reuses the original cook's worktree (HITL), and runs the engine from fromStep. Returns the new cook and steps count so the CLI can write status.
+// RunReplay finds the fatal run, restores state bag, reuses the original run worktree (HITL), and runs the engine from fromStep. Returns the new run and steps count so the CLI can write status.
 func RunReplay(repoRoot, specPath, fromStep, cookID string, rec *recipe.Recipe, recipeRaw []byte, resolver agent.AdapterResolver, cfg *config.Config, agentsCLI map[string]string) (*cook.Cook, int, error) {
 	cookDir, err := FindLastFatalCook(repoRoot, cookID)
 	if err != nil {
@@ -116,7 +117,7 @@ func RunReplay(repoRoot, specPath, fromStep, cookID string, rec *recipe.Recipe, 
 		return nil, 0, err
 	}
 	restoreCommit := info.RestoreCommitBeforeStep(resolvedStep, info.InitialCommit)
-	originalWorktree := filepath.Join(repoRoot, ".pudding", "worktrees", "cook-"+info.OriginalCookID)
+	originalWorktree := filepath.Join(repoRoot, brand.StateDir(), "worktrees", brand.WorktreeDirPrefix()+info.OriginalCookID)
 	stateBagPath := filepath.Join(cookDir, "state-bag.json")
 	stateBagData, err := os.ReadFile(stateBagPath)
 	if err != nil {

@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/isomorphx/pudding/internal/agent"
+	"github.com/isomorphx/gump/internal/agent"
 	"github.com/spf13/cobra"
 )
 
 var modelsCmd = &cobra.Command{
 	Use:   "models",
 	Short: "List known model aliases and context window sizes",
-	Long:  "Prints the table of Pudding model aliases with provider, model ID, context window, and max output. Used to choose agents in recipes.",
+	Long:  "Prints the table of Gump model aliases with provider, model ID, context window, and max output. Used to choose agents in workflows.",
 	RunE:  runModels,
 }
 
@@ -19,7 +19,7 @@ func init() {
 	rootCmd.AddCommand(modelsCmd)
 }
 
-// displayOrder is the order of aliases for "pudding models" output (by provider: claude, codex, gemini, qwen, opencode).
+// displayOrder is the order of aliases for "gump models" output (by provider: claude, codex, gemini, qwen, opencode).
 var modelsDisplayOrder = []string{
 	"claude", "claude-opus", "claude-opus[1m]", "claude-sonnet", "claude-sonnet[1m]", "claude-haiku",
 	"codex", "codex-gpt53", "codex-gpt52", "codex-gpt51", "codex-o3", "codex-spark",

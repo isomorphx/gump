@@ -5,15 +5,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/isomorphx/gump/internal/brand"
 )
 
-// ParseReviewJSON reads .pudding/out/review.json with strict typing for gate and retry semantics.
+// ParseReviewJSON reads .gump/out/review.json with strict typing for gate and retry semantics.
 func ParseReviewJSON(worktreeDir string) (pass bool, comment string, raw string, err error) {
 	p := filepath.Join(outDirPath(worktreeDir), "review.json")
 	data, err := os.ReadFile(p)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return false, "", "", fmt.Errorf("review.json not found in .pudding/out/")
+			return false, "", "", fmt.Errorf("review.json not found in %s/out/", brand.StateDir())
 		}
 		return false, "", "", err
 	}

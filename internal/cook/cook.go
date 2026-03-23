@@ -10,10 +10,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/isomorphx/pudding/internal/diff"
-	"github.com/isomorphx/pudding/internal/ledger"
-	"github.com/isomorphx/pudding/internal/recipe"
-	"github.com/isomorphx/pudding/internal/sandbox"
+	"github.com/isomorphx/gump/internal/diff"
+	"github.com/isomorphx/gump/internal/brand"
+	"github.com/isomorphx/gump/internal/ledger"
+	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/sandbox"
 )
 
 // Cook represents one full run of a recipe; worktree and branch are isolated so the dev repo stays clean.
@@ -36,18 +37,18 @@ type Cook struct {
 }
 
 // NewCook creates a new cook: checks repo state, creates worktree and branch, and persists context snapshot.
-// recipeRaw is the YAML bytes (e.g. resolved.Raw) to store as recipe-snapshot.yaml.
+// recipeRaw is the YAML bytes (e.g. resolved.Raw) to store as workflow-snapshot.yaml.
 func NewCook(rec *recipe.Recipe, specPath string, repoRoot string, recipeRaw []byte) (*Cook, error) {
 	root, err := sandbox.GitRepoRoot(repoRoot)
 	if err != nil {
-		return nil, fmt.Errorf("pudding cook must be run inside a git repository")
+		return nil, fmt.Errorf("gump run must be executed inside a git repository")
 	}
 	dirty, err := sandbox.HasUncommittedChanges(root)
 	if err != nil {
 		return nil, err
 	}
 	if dirty {
-		return nil, fmt.Errorf("working directory has uncommitted changes — commit or stash before running pudding cook")
+		return nil, fmt.Errorf("working directory has uncommitted changes — commit or stash before running gump run")
 	}
 	origBranch, err := sandbox.CurrentBranch(root)
 	if err != nil {
@@ -58,12 +59,12 @@ func NewCook(rec *recipe.Recipe, specPath string, repoRoot string, recipeRaw []b
 		return nil, err
 	}
 	id := uuid.New().String()
-	worktreeDir := filepath.Join(root, ".pudding", "worktrees", "cook-"+id)
-	branchName := "pudding/cook-" + id
+	worktreeDir := filepath.Join(root, brand.StateDir(), "worktrees", brand.WorktreeDirPrefix()+id)
+	branchName := brand.WorktreeBranchPrefix() + id
 	if err := sandbox.CreateWorktree(root, worktreeDir, branchName); err != nil {
 		return nil, err
 	}
-	cookDir := filepath.Join(root, ".pudding", "cooks", id)
+	cookDir := filepath.Join(root, brand.StateDir(), brand.RunsDir(), id)
 	if err := EnsureCookDir(cookDir); err != nil {
 		_ = sandbox.RemoveWorktree(root, worktreeDir, branchName)
 		return nil, err
@@ -95,7 +96,7 @@ func NewCook(rec *recipe.Recipe, specPath string, repoRoot string, recipeRaw []b
 		_ = sandbox.RemoveWorktree(root, worktreeDir, branchName)
 		return nil, err
 	}
-	if err := ensureGitignorePudding(worktreeDir); err != nil {
+	if err := ensureGitignoreStateDir(worktreeDir); err != nil {
 		_ = sandbox.RemoveWorktree(root, worktreeDir, branchName)
 		return nil, err
 	}
@@ -127,7 +128,7 @@ func NewCook(rec *recipe.Recipe, specPath string, repoRoot string, recipeRaw []b
 func NewCookForReplay(rec *recipe.Recipe, specPath string, repoRoot string, recipeRaw []byte, restoreCommit string, originalWorktreeDir string) (*Cook, error) {
 	root, err := sandbox.GitRepoRoot(repoRoot)
 	if err != nil {
-		return nil, fmt.Errorf("pudding cook must be run inside a git repository")
+		return nil, fmt.Errorf("gump run must be executed inside a git repository")
 	}
 	origBranch, err := sandbox.CurrentBranch(root)
 	if err != nil {
@@ -139,16 +140,16 @@ func NewCookForReplay(rec *recipe.Recipe, specPath string, repoRoot string, reci
 		worktreeDir = originalWorktreeDir
 		branchName, _ = sandbox.CurrentBranch(worktreeDir)
 		if branchName == "" {
-			branchName = "pudding/cook-" + id
+			branchName = brand.WorktreeBranchPrefix() + id
 		}
 	} else {
-		worktreeDir = filepath.Join(root, ".pudding", "worktrees", "cook-"+id)
-		branchName = "pudding/cook-" + id
+		worktreeDir = filepath.Join(root, brand.StateDir(), "worktrees", brand.WorktreeDirPrefix()+id)
+		branchName = brand.WorktreeBranchPrefix() + id
 		if err := sandbox.CreateWorktreeAtCommit(root, worktreeDir, branchName, restoreCommit); err != nil {
 			return nil, err
 		}
 	}
-	cookDir := filepath.Join(root, ".pudding", "cooks", id)
+	cookDir := filepath.Join(root, brand.StateDir(), brand.RunsDir(), id)
 	if err := EnsureCookDir(cookDir); err != nil {
 		if originalWorktreeDir == "" {
 			_ = sandbox.RemoveWorktree(root, worktreeDir, branchName)
@@ -171,7 +172,7 @@ func NewCookForReplay(rec *recipe.Recipe, specPath string, repoRoot string, reci
 		}
 		return nil, err
 	}
-	if err := ensureGitignorePudding(worktreeDir); err != nil {
+	if err := ensureGitignoreStateDir(worktreeDir); err != nil {
 		if originalWorktreeDir == "" {
 			_ = sandbox.RemoveWorktree(root, worktreeDir, branchName)
 		}
@@ -231,39 +232,44 @@ func (c *Cook) CloneForWorktree(worktreeDir, branchName string) *Cook {
 	return &clone
 }
 
-// ensureGitignorePudding adds .pudding/ to worktree .gitignore so .pudding/out/ is not snapshotted, then commits.
-func ensureGitignorePudding(worktreeDir string) error {
+// ensureGitignoreStateDir adds the runtime state dir to worktree .gitignore
+// so the provider output dir is not snapshotted, then commits.
+func ensureGitignoreStateDir(worktreeDir string) error {
 	gitignorePath := filepath.Join(worktreeDir, ".gitignore")
-	needPudding := true
+	needStateDir := true
 	var data []byte
 	var err error
 	if data, err = os.ReadFile(gitignorePath); err == nil {
-		if bytes.Contains(data, []byte(".pudding")) {
-			needPudding = false
+		if bytes.Contains(data, []byte(brand.StateDir())) {
+			needStateDir = false
 		}
 	}
-	if needPudding {
+	if needStateDir {
 		var out []byte
 		if len(data) > 0 {
 			out = data
 			if !strings.HasSuffix(strings.TrimSpace(string(data)), "\n") {
 				out = append(out, '\n')
 			}
-			out = append(out, ".pudding/\n"...)
+			out = append(out, brand.StateDir()+"/\n"...)
 		} else {
-			out = []byte(".pudding/\n")
+			out = []byte(brand.StateDir() + "/\n")
 		}
 		if err := os.WriteFile(gitignorePath, out, 0644); err != nil {
 			return err
 		}
-		env := append(os.Environ(), "GIT_AUTHOR_NAME=pudding", "GIT_AUTHOR_EMAIL=pudding@local", "GIT_CONFIG_GLOBAL=/dev/null")
+		env := append(os.Environ(),
+			"GIT_AUTHOR_NAME="+brand.Lower(),
+			"GIT_AUTHOR_EMAIL="+brand.Lower()+"@local",
+			"GIT_CONFIG_GLOBAL=/dev/null",
+		)
 		add := exec.Command("git", "add", ".gitignore")
 		add.Dir = worktreeDir
 		add.Env = env
 		if out, err := add.CombinedOutput(); err != nil {
 			return fmt.Errorf("git add .gitignore: %w %s", err, out)
 		}
-		commit := exec.Command("git", "commit", "-m", "[pudding] gitignore setup")
+		commit := exec.Command("git", "commit", "-m", "["+brand.Lower()+"] gitignore setup")
 		commit.Dir = worktreeDir
 		commit.Env = env
 		if out, err := commit.CombinedOutput(); err != nil {
@@ -274,7 +280,7 @@ func ensureGitignorePudding(worktreeDir string) error {
 }
 
 // Apply merges the cook branch into the current branch of the main repo and runs teardown on success.
-// The trailer Pudding-Cook: <uuid> in the merge commit allows tracing commits back to a cook.
+// The trailer is brand-aware (e.g. Gump-Run:) so merge commits stay traceable after rebranding.
 func (c *Cook) Apply() error {
 	dirty, err := sandbox.HasUncommittedChanges(c.RepoRoot)
 	if err != nil {
@@ -289,14 +295,16 @@ func (c *Cook) Apply() error {
 	}
 	if currentBranch != c.OrigBranch {
 		// Warning only; merge may still work.
-		fmt.Fprintf(os.Stderr, "warning: you are on branch %s, cook was started on %s — merge may produce unexpected results\n", currentBranch, c.OrigBranch)
+		fmt.Fprintf(os.Stderr, "warning: you are on branch %s, run was started on %s — merge may produce unexpected results\n", currentBranch, c.OrigBranch)
 	}
 	stepsCount := 0
 	if st, err := ReadStatus(c.CookDir); err == nil {
 		stepsCount = st.StepsCount
 	}
-	msg := fmt.Sprintf("Pudding cook: %s\n\nSpec: %s\nCook-ID: %s\nSteps: %d\n\nPudding-Cook: %s",
-		c.RecipeName, filepath.Base(c.SpecPath), c.ID, stepsCount, c.ID)
+	titlePrefix := "Gump run"
+	idLabel := "Run-ID"
+	msg := fmt.Sprintf("%s: %s\n\nSpec: %s\n%s: %s\nSteps: %d\n\n%s %s",
+		titlePrefix, c.RecipeName, filepath.Base(c.SpecPath), idLabel, c.ID, stepsCount, brand.MergeTrailer(), c.ID)
 	cmd := exec.Command("git", "merge", c.BranchName, "--no-ff", "-m", msg)
 	cmd.Dir = c.RepoRoot
 	out, err := cmd.CombinedOutput()
@@ -315,6 +323,6 @@ func (c *Cook) Apply() error {
 	if err := c.Teardown(); err != nil {
 		return err
 	}
-	fmt.Printf("Cook %s applied successfully. %d files changed.\n", c.ID, n)
+	fmt.Printf("Run %s applied successfully. %d files changed.\n", c.ID, n)
 	return nil
 }

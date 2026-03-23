@@ -5,11 +5,12 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/isomorphx/pudding/internal/diff"
-	"github.com/isomorphx/pudding/internal/ledger"
-	"github.com/isomorphx/pudding/internal/plan"
-	"github.com/isomorphx/pudding/internal/recipe"
-	"github.com/isomorphx/pudding/internal/sandbox"
+	"github.com/isomorphx/gump/internal/diff"
+	"github.com/isomorphx/gump/internal/brand"
+	"github.com/isomorphx/gump/internal/ledger"
+	"github.com/isomorphx/gump/internal/plan"
+	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/sandbox"
 )
 
 // parallelResult holds the outcome of one parallel unit (sub-step or task) for barrier and merge.
@@ -36,8 +37,8 @@ func RunParallelGroup(e *Engine, step *recipe.Step, stepPath string, subSteps []
 	var wg sync.WaitGroup
 	for i := range units {
 		u := &units[i]
-		wtDir := filepath.Join(repoRoot, ".pudding", "worktrees", "cook-"+cookID, "parallel-"+u.Name)
-		brName := "pudding/cook-" + cookID + "-parallel-" + u.Name
+		wtDir := filepath.Join(repoRoot, brand.StateDir(), "worktrees", brand.WorktreeDirPrefix()+cookID, "parallel-"+u.Name)
+		brName := brand.WorktreeBranchPrefix() + cookID + "-parallel-" + u.Name
 		if err := sandbox.CreateWorktreeAtCommit(repoRoot, wtDir, brName, baseCommit); err != nil {
 			return fmt.Errorf("parallel worktree %s: %w", u.Name, err)
 		}
@@ -64,7 +65,7 @@ func RunParallelGroup(e *Engine, step *recipe.Step, stepPath string, subSteps []
 			}
 			if err == nil {
 				if unit.OutputMode == "diff" {
-					// Exclude .pudding and provider context files so only repo code is merged.
+					// Exclude <brand> worktrees and provider context files so only repo code is merged.
 					dc, _ := sandbox.FinalDiffExclude(eng.Cook.WorktreeDir, baseCommit, sandbox.ParallelMergeExcludes)
 					res.Diff = dc
 				}

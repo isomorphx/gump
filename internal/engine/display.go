@@ -16,11 +16,11 @@ const (
 	boxWidth           = 60
 )
 
-// CookHeader prints the cook box header (Feature 12).
+// CookHeader prints the run box header (Feature 12).
 func CookHeader(recipeName, cookID, spec string) {
-	title := fmt.Sprintf("%s (cook %s)", recipeName, cookID)
+	title := fmt.Sprintf("%s (run %s)", recipeName, cookID)
 	if len(title) > 45 {
-		title = recipeName + " (cook " + cookID[:8] + "…)"
+		title = recipeName + " (run " + cookID[:8] + "…)"
 	}
 	nDash := boxWidth - 4 - len(title) // "╭─ " + title + " " + "╮"
 	if nDash < 0 {
@@ -145,10 +145,10 @@ func CookFooter(pass bool, totalCost float64, steps, stepTotal, retries int, dur
 		stepsStr = fmt.Sprintf("%d/%d", steps, stepTotal)
 	}
 	if pass {
-		fmt.Fprintf(os.Stderr, "Cook total: %s | %s steps | %d retries | %s\n", formatCost(totalCost), stepsStr, retries, formatDuration(duration))
+		fmt.Fprintf(os.Stderr, "Run total: %s | %s steps | %d retries | %s\n", formatCost(totalCost), stepsStr, retries, formatDuration(duration))
 		fmt.Fprintf(os.Stderr, "Result: PASS\n")
 	} else {
-		fmt.Fprintf(os.Stderr, "Cook FATAL at step: %s\n", fatalStep)
+		fmt.Fprintf(os.Stderr, "Run FATAL at step: %s\n", fatalStep)
 		fmt.Fprintf(os.Stderr, "Error: %s\n", errMsg)
 		fmt.Fprintf(os.Stderr, "Total: %s | %s steps | %d retries | %s\n", formatCost(totalCost), stepsStr, retries, formatDuration(duration))
 		if worktreePreserved != "" {
@@ -166,13 +166,13 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%dm%02ds", s/60, s%60)
 }
 
-// CookTotalLine prints "[pudding] cook total: $0.99 | N/M steps" (after each step). stepTotal 0 means show only N.
+// CookTotalLine prints a brand-aware running total after each step.
 func CookTotalLine(totalCost float64, steps, stepTotal int) {
 	stepsStr := fmt.Sprintf("%d", steps)
 	if stepTotal > 0 {
 		stepsStr = fmt.Sprintf("%d/%d", steps, stepTotal)
 	}
-	fmt.Fprintf(os.Stderr, "[pudding] cook total: %s | %s steps\n", formatCost(totalCost), stepsStr)
+	fmt.Fprintf(os.Stderr, "[gump] run total: %s | %s steps\n", formatCost(totalCost), stepsStr)
 }
 
 // TruncateStreamMessage returns first phrase truncated to n chars when !Verbose.

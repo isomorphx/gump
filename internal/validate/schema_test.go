@@ -3,7 +3,7 @@ package validate
 import (
 	"testing"
 
-	"github.com/isomorphx/pudding/internal/statebag"
+	"github.com/isomorphx/gump/internal/statebag"
 )
 
 func TestRunSchemaValidator_NoOutput(t *testing.T) {
