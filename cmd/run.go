@@ -20,17 +20,17 @@ import (
 )
 
 var (
-	cookRecipe    string
+	cookRecipe      string
 	cookRecipeAlias string
-	cookAgent     string
-	cookDryRun    bool
-	cookAgentStub bool
-	cookReplay    bool
-	cookFromStep  string
-	cookCookID    string
+	cookAgent       string
+	cookDryRun      bool
+	cookAgentStub   bool
+	cookReplay      bool
+	cookFromStep    string
+	cookCookID      string
 	cookCookIDAlias string
-	cookVerbose   bool
-	cookPauseAfter string
+	cookVerbose     bool
+	cookPauseAfter  string
 )
 
 var cookCmd = &cobra.Command{
@@ -385,8 +385,10 @@ func printStepsV4(steps []recipe.Step, indent string, startIdx int) {
 		if s.Parallel {
 			fmt.Printf("  parallel=true")
 		}
-		if s.Recipe != "" {
-			fmt.Printf("  recipe=%s", s.Recipe)
+		if s.Workflow != "" {
+			fmt.Printf("  workflow=%s", s.Workflow)
+		} else if s.Recipe != "" {
+			fmt.Printf("  workflow=%s", s.Recipe)
 		}
 		// Agent step fields.
 		if s.Agent != "" {
@@ -406,6 +408,18 @@ func printStepsV4(steps []recipe.Step, indent string, startIdx int) {
 				fmt.Printf("  session=reuse:%s", s.Session.Target)
 			} else {
 				fmt.Printf("  session=%s", s.Session.Mode)
+			}
+		}
+		if s.Guard.MaxTurns > 0 || s.Guard.MaxBudget > 0 || s.Guard.NoWrite != nil {
+			fmt.Printf("  guard:")
+			if s.Guard.MaxTurns > 0 {
+				fmt.Printf(" max_turns=%d", s.Guard.MaxTurns)
+			}
+			if s.Guard.MaxBudget > 0 {
+				fmt.Printf(" max_budget=%.2f", s.Guard.MaxBudget)
+			}
+			if s.Guard.NoWrite != nil {
+				fmt.Printf(" no_write=%t", *s.Guard.NoWrite)
 			}
 		}
 
@@ -467,7 +481,7 @@ func formatStrategyV4(entries []recipe.StrategyEntry) string {
 // printStateBagResolutionsV4 prints which `{steps.<name>.output}` placeholders
 // resolve to which fully-qualified step outputs under StateBag scope rules.
 func printStateBagResolutionsV4(rec *recipe.Recipe) {
-	refsRe := regexp.MustCompile(`\{steps\.([^}.]+)\.(output|diff|files)\}`)
+	refsRe := regexp.MustCompile(`\{steps\.(.+?)\.(output|diff|files)\}`)
 
 	type node struct {
 		fullPath string

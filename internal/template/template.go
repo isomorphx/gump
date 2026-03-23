@@ -1,15 +1,15 @@
 package template
 
 import (
-	"regexp"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/isomorphx/gump/internal/statebag"
 )
 
-var stepsRefRegex = regexp.MustCompile(`\{steps\.([^}.]+)\.(output|diff|files|session_id|status|duration|cost|turns|retries|tokens_in|tokens_out|cache_read|cache_write|check_result)\}`)
+var stepsRefRegex = regexp.MustCompile(`\{steps\.(.+?)\.(output|diff|files|session_id|status|duration|cost|turns|retries|tokens_in|tokens_out|cache_read|cache_write|check_result)\}`)
 var taskVarRegex = regexp.MustCompile(`\{task\.([a-zA-Z0-9_]+)\}`)
 var runRefRegex = regexp.MustCompile(`\{run\.(cost|duration|tokens_in|tokens_out|retries|status)\}`)
 

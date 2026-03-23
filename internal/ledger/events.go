@@ -110,6 +110,14 @@ type GateFailed struct {
 
 func (GateFailed) EventType() string { return "gate_failed" }
 
+type GuardTriggered struct {
+	Step   string `json:"step"`
+	Guard  string `json:"guard"`
+	Reason string `json:"reason"`
+}
+
+func (GuardTriggered) EventType() string { return "guard_triggered" }
+
 // HITLPaused is emitted when the cook blocks for human review before continuing.
 type HITLPaused struct {
 	Step string `json:"step"`
@@ -200,18 +208,18 @@ type CircuitBreaker struct {
 	Step          string `json:"step"`
 	Scope         string `json:"scope"`
 	Reason        string `json:"reason"`
-	TotalAttempts int   `json:"total_attempts"`
+	TotalAttempts int    `json:"total_attempts"`
 }
 
 func (CircuitBreaker) EventType() string { return "circuit_breaker" }
 
 // RunCompleted is emitted at the very end of Run(); state-bag and final-diff must already be written.
 type RunCompleted struct {
-	RunID        string            `json:"run_id"`
-	Status       string            `json:"status"`
-	DurationMs   int               `json:"duration_ms"`
-	TotalCost    float64           `json:"total_cost_usd"`
-	Artifacts    map[string]string `json:"artifacts"`
+	RunID      string            `json:"run_id"`
+	Status     string            `json:"status"`
+	DurationMs int               `json:"duration_ms"`
+	TotalCost  float64           `json:"total_cost_usd"`
+	Artifacts  map[string]string `json:"artifacts"`
 }
 
 func (RunCompleted) EventType() string { return "run_completed" }

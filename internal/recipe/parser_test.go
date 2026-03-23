@@ -174,3 +174,32 @@ steps:
 		t.Errorf("error should mention prompt file not found and path: %v", err)
 	}
 }
+
+func TestParse_WorkflowInputsAndGuard(t *testing.T) {
+	yaml := []byte(`
+name: parent
+steps:
+  - name: sub
+    workflow: child
+    with:
+      msg: hello
+  - name: work
+    agent: codex
+    prompt: test
+    guard:
+      max_turns: 2
+`)
+	r, err := Parse(yaml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Steps[0].Workflow != "child" {
+		t.Fatalf("workflow not parsed: %+v", r.Steps[0])
+	}
+	if r.Steps[0].With["msg"] != "hello" {
+		t.Fatalf("with msg not parsed")
+	}
+	if r.Steps[1].Guard.MaxTurns != 2 {
+		t.Fatalf("guard not parsed")
+	}
+}

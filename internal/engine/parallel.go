@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/isomorphx/gump/internal/diff"
 	"github.com/isomorphx/gump/internal/brand"
+	"github.com/isomorphx/gump/internal/diff"
 	"github.com/isomorphx/gump/internal/ledger"
 	"github.com/isomorphx/gump/internal/plan"
 	"github.com/isomorphx/gump/internal/recipe"
@@ -29,7 +29,7 @@ type parallelResult struct {
 }
 
 // RunParallelGroup runs sub-steps or tasks in parallel worktrees, then merges diff outputs or fails on conflict.
-func RunParallelGroup(e *Engine, step *recipe.Step, stepPath string, subSteps []recipe.Step, planTasks []plan.Task, baseCommit string, lastSessionByAgent map[string]string, parentSession recipe.SessionConfig, groupAgentOverride string) error {
+func RunParallelGroup(e *Engine, step *recipe.Step, stepPath string, subSteps []recipe.Step, planTasks []plan.Task, baseCommit string, lastSessionByAgent map[string]string, parentSession recipe.SessionConfig, groupAgentOverride string, inheritedVars map[string]string) error {
 	repoRoot := e.Cook.RepoRoot
 	cookID := e.Cook.ID
 	units := buildParallelUnits(step, stepPath, subSteps, planTasks)
@@ -55,7 +55,17 @@ func RunParallelGroup(e *Engine, step *recipe.Step, stepPath string, subSteps []
 				_ = sandbox.RemoveWorktree(repoRoot, eng.Cook.WorktreeDir, eng.Cook.BranchName)
 			}()
 			sessionMap := make(map[string]string)
-			err := eng.executeSteps(unit.Steps, unit.Task, unit.PathPrefix, sessionMap, parentSession, groupAgentOverride)
+			var err error
+			if step.Workflow != "" && len(step.Steps) == 0 && unit.Task != nil {
+				childRec, childVars, werr := eng.resolveWorkflow(step, unit.PathPrefix, unit.Task, inheritedVars)
+				if werr != nil {
+					err = werr
+				} else {
+					err = eng.executeSteps(childRec.Steps, unit.Task, unit.PathPrefix, sessionMap, parentSession, groupAgentOverride, childVars)
+				}
+			} else {
+				err = eng.executeSteps(unit.Steps, unit.Task, unit.PathPrefix, sessionMap, parentSession, groupAgentOverride, inheritedVars)
+			}
 			res := parallelResult{
 				StepName:    unit.Name,
 				WorktreeDir: eng.Cook.WorktreeDir,
@@ -101,11 +111,11 @@ func RunParallelGroup(e *Engine, step *recipe.Step, stepPath string, subSteps []
 }
 
 type parallelUnit struct {
-	Name        string
-	PathPrefix  string
-	Steps       []recipe.Step
-	Task        *plan.Task
-	OutputMode  string
+	Name       string
+	PathPrefix string
+	Steps      []recipe.Step
+	Task       *plan.Task
+	OutputMode string
 }
 
 func buildParallelUnits(step *recipe.Step, stepPath string, subSteps []recipe.Step, planTasks []plan.Task) []parallelUnit {

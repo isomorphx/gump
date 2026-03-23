@@ -43,10 +43,10 @@ type StateBag struct {
 	run map[string]string
 
 	// Numeric accumulators used to safely update run.cost/tokens across parallel steps.
-	runCostUSD  float64
-	runTokensIn int
+	runCostUSD   float64
+	runTokensIn  int
 	runTokensOut int
-	runRetries int
+	runRetries   int
 }
 
 // New returns an empty StateBag.
@@ -152,9 +152,10 @@ func buildScopeChain(scopePath string) []string {
 
 // resolveInSource finds the entry for shortName in a single source map by walking the scope chain (closest scope first). Returns nil if none; panics if ambiguous.
 func resolveInSource(source map[string]Entry, shortName string, scopePath string) *Entry {
+	shortNameSlash := strings.ReplaceAll(strings.ReplaceAll(shortName, ".steps.", "/"), ".", "/")
 	var candidates []Entry
 	for _, e := range source {
-		if path.Base(e.StepPath) != shortName && e.StepPath != shortName {
+		if path.Base(e.StepPath) != shortName && e.StepPath != shortName && e.StepPath != shortNameSlash && path.Base(e.StepPath) != path.Base(shortNameSlash) {
 			continue
 		}
 		candidates = append(candidates, e)
@@ -186,6 +187,63 @@ func resolveInSource(source map[string]Entry, shortName string, scopePath string
 // resolveByScope picks the entry for shortName closest to scopePath from current entries only. After ResetGroup, keys moved to prev are not visible so {steps.code.output} resolves to "" (retry semantics).
 func (sb *StateBag) resolveByScope(shortName string, scopePath string) *Entry {
 	return resolveInSource(sb.entries, shortName, scopePath)
+}
+
+// Graft merges a child state bag into this bag under prefix.
+func (sb *StateBag) Graft(prefix string, child *StateBag) {
+	if child == nil {
+		return
+	}
+	child.mu.RLock()
+	childEntries := make(map[string]Entry, len(child.entries))
+	for k, v := range child.entries {
+		childEntries[k] = v
+	}
+	childRun := make(map[string]string, len(child.run))
+	for k, v := range child.run {
+		childRun[k] = v
+	}
+	child.mu.RUnlock()
+
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	if sb.entries == nil {
+		sb.entries = make(map[string]Entry)
+	}
+	for k, v := range childEntries {
+		target := prefix + ".steps." + strings.ReplaceAll(k, "/", ".")
+		if strings.HasPrefix(k, "run.") {
+			target = prefix + "." + k
+		}
+		v.StepPath = target
+		sb.entries[target] = v
+	}
+	for k, v := range childRun {
+		if k != "" {
+			sb.run[k] = v
+		}
+	}
+}
+
+func (sb *StateBag) CloneRun() map[string]string {
+	sb.mu.RLock()
+	defer sb.mu.RUnlock()
+	out := make(map[string]string, len(sb.run))
+	for k, v := range sb.run {
+		out[k] = v
+	}
+	return out
+}
+
+func (sb *StateBag) SetRunAll(run map[string]string) {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	if sb.run == nil {
+		sb.run = map[string]string{}
+	}
+	for k, v := range run {
+		sb.run[k] = v
+	}
 }
 
 // ResetGroup moves entries under groupPath from "current" to "prev" for retry semantics (step 6).
@@ -357,7 +415,7 @@ func (sb *StateBag) Serialize() ([]byte, error) {
 	sb.mu.RLock()
 	defer sb.mu.RUnlock()
 	payload := struct {
-		Entries map[string]Entry `json:"entries"`
+		Entries map[string]Entry  `json:"entries"`
 		Run     map[string]string `json:"run"`
 	}{
 		Entries: sb.entries,
@@ -369,7 +427,7 @@ func (sb *StateBag) Serialize() ([]byte, error) {
 // Restore reconstructs a StateBag from JSON (for replay).
 func Restore(data []byte) (*StateBag, error) {
 	var payload struct {
-		Entries map[string]Entry `json:"entries"`
+		Entries map[string]Entry  `json:"entries"`
 		Run     map[string]string `json:"run"`
 	}
 	if err := json.Unmarshal(data, &payload); err != nil {

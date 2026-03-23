@@ -123,3 +123,15 @@ func WithTimeout(proc *Process, timeout time.Duration) context.CancelFunc {
 	}()
 	return cancel
 }
+
+// Terminate asks a process to stop now using the same grace policy as timeouts.
+func Terminate(proc *Process) {
+	if proc == nil || proc.Cmd == nil || proc.Cmd.Process == nil {
+		return
+	}
+	_ = proc.Cmd.Process.Signal(syscall.SIGTERM)
+	time.Sleep(KillGrace)
+	if proc.Cmd.Process != nil {
+		_ = proc.Cmd.Process.Kill()
+	}
+}

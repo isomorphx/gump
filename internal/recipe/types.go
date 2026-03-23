@@ -4,10 +4,16 @@ import "strings"
 
 // Recipe is the v4 mapping: name, description, steps, with optional max_budget.
 type Recipe struct {
-	Name        string  `yaml:"name"`
-	Description string  `yaml:"description"`
-	Steps       []Step  `yaml:"steps"`
-	MaxBudget   float64 `yaml:"max_budget"`
+	Name        string              `yaml:"name"`
+	Description string              `yaml:"description"`
+	Steps       []Step              `yaml:"steps"`
+	MaxBudget   float64             `yaml:"max_budget"`
+	Inputs      map[string]InputDef `yaml:"inputs"`
+}
+
+type InputDef struct {
+	Required bool   `yaml:"required"`
+	Default  string `yaml:"default"`
 }
 
 // SessionConfig is the parsed session policy: reuse, fresh, or reuse-targeted (reuse: step-name).
@@ -26,8 +32,8 @@ type Step struct {
 	Output string `yaml:"output"` // "diff" (default), "plan", "artifact", "review"
 
 	Context []ContextSource `yaml:"context"`
-	Session SessionConfig    `yaml:"-"`
-	Timeout string           `yaml:"timeout"`
+	Session SessionConfig   `yaml:"-"`
+	Timeout string          `yaml:"timeout"`
 
 	// v4 budget gates the cost model only (runtime is unchanged in spec M1).
 	MaxBudget float64 `yaml:"max_budget"`
@@ -38,12 +44,25 @@ type Step struct {
 	OnFailure *OnFailure  `yaml:"-"`
 
 	// Orchestration step fields.
-	Steps    []Step `yaml:"steps"`
-	Foreach  string `yaml:"foreach"` // name of step with output: plan to iterate
-	Recipe   string `yaml:"recipe"`
-	Parallel bool   `yaml:"parallel"`
+	Steps    []Step            `yaml:"steps"`
+	Foreach  string            `yaml:"foreach"` // name of step with output: plan to iterate
+	Recipe   string            `yaml:"recipe"`  // legacy alias for Workflow
+	Workflow string            `yaml:"workflow"`
+	With     map[string]string `yaml:"with"`
+	Parallel bool              `yaml:"parallel"`
+	Guard    Guard             `yaml:"guard"`
+	// WHY: lets validator reject explicit max_turns: 0 while keeping omitted value optional.
+	GuardMaxTurnsSet bool `yaml:"-"`
+	// WHY: lets validator reject explicit max_budget: 0 while keeping omitted value optional.
+	GuardMaxBudgetSet bool `yaml:"-"`
 
 	MaxTurns int `yaml:"max_turns"`
+}
+
+type Guard struct {
+	MaxTurns  int     `yaml:"max_turns"`
+	MaxBudget float64 `yaml:"max_budget"`
+	NoWrite   *bool   `yaml:"no_write"`
 }
 
 // MaxAttempts is the total allowed gate attempts for this step (first try + retries); 1 means no retry loop.
@@ -80,7 +99,7 @@ func (s *Step) ExpandedOnFailureStrategy() []StrategyEntry {
 
 // OnFailure is the v4 replacement for legacy v3 retry (parser normalises it).
 type OnFailure struct {
-	Retry       int             `yaml:"retry"`        // max attempts (incl. first)
+	Retry       int             `yaml:"retry"` // max attempts (incl. first)
 	Strategy    []StrategyEntry `yaml:"strategy"`
 	RestartFrom string          `yaml:"restart_from"`
 }

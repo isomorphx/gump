@@ -17,11 +17,12 @@ var ParseWarn func(msg string)
 // recipeDir is the directory of the recipe file so prompt: file: <path> can be resolved relative to the recipe and keep long prompts out of YAML; empty for built-in recipes.
 func Parse(yamlBytes []byte, recipeDir string) (*Recipe, error) {
 	raw := struct {
-		Name        string          `yaml:"name"`
-		Description string          `yaml:"description"`
-		MaxBudget   float64         `yaml:"max_budget"`
-		Steps       []rawStep       `yaml:"steps"`
-		Review      *[]interface{}  `yaml:"review"` // legacy root-level review (M1 rejects)
+		Name        string              `yaml:"name"`
+		Description string              `yaml:"description"`
+		MaxBudget   float64             `yaml:"max_budget"`
+		Inputs      map[string]InputDef `yaml:"inputs"`
+		Steps       []rawStep           `yaml:"steps"`
+		Review      *[]interface{}      `yaml:"review"` // legacy root-level review (M1 rejects)
 	}{}
 	if err := yaml.Unmarshal(yamlBytes, &raw); err != nil {
 		if strings.Contains(err.Error(), "mapping values are not allowed") {
@@ -36,6 +37,7 @@ func Parse(yamlBytes []byte, recipeDir string) (*Recipe, error) {
 		Name:        raw.Name,
 		Description: raw.Description,
 		MaxBudget:   raw.MaxBudget,
+		Inputs:      raw.Inputs,
 		Steps:       make([]Step, 0, len(raw.Steps)),
 	}
 	for i := range raw.Steps {
@@ -49,25 +51,34 @@ func Parse(yamlBytes []byte, recipeDir string) (*Recipe, error) {
 }
 
 type rawStep struct {
-	Name       string        `yaml:"name"`
-	Type       string        `yaml:"type"`
-	Agent      string        `yaml:"agent"`
-	Prompt     interface{}   `yaml:"prompt"` // string (inline) or map with "file": path relative to recipe dir
-	Output     string        `yaml:"output"`
-	Gate       *[]interface{} `yaml:"gate"`
-	Validate   *[]interface{} `yaml:"validate"` // legacy (M1 rejects)
-	Retry      *rawRetry     `yaml:"retry"`     // legacy (M1 rejects)
-	OnFailure  *rawOnFailure `yaml:"on_failure"`
-	Steps      []rawStep     `yaml:"steps"`
-	Recipe     string        `yaml:"recipe"`
-	Parallel   bool          `yaml:"parallel"`
-	Foreach    string        `yaml:"foreach"`
-	Session    interface{}   `yaml:"session"` // string "reuse"/"fresh" etc, or map reuse: step-name
-	Context    []ContextSource `yaml:"context"`
-	Timeout    string        `yaml:"timeout"`
-	MaxBudget  float64       `yaml:"max_budget"`
-	HITL       bool          `yaml:"hitl"`
-	MaxTurns   int           `yaml:"max_turns"`
+	Name      string            `yaml:"name"`
+	Type      string            `yaml:"type"`
+	Agent     string            `yaml:"agent"`
+	Prompt    interface{}       `yaml:"prompt"` // string (inline) or map with "file": path relative to recipe dir
+	Output    string            `yaml:"output"`
+	Gate      *[]interface{}    `yaml:"gate"`
+	Validate  *[]interface{}    `yaml:"validate"` // legacy (M1 rejects)
+	Retry     *rawRetry         `yaml:"retry"`    // legacy (M1 rejects)
+	OnFailure *rawOnFailure     `yaml:"on_failure"`
+	Steps     []rawStep         `yaml:"steps"`
+	Recipe    string            `yaml:"recipe"`
+	Workflow  string            `yaml:"workflow"`
+	With      map[string]string `yaml:"with"`
+	Parallel  bool              `yaml:"parallel"`
+	Foreach   string            `yaml:"foreach"`
+	Session   interface{}       `yaml:"session"` // string "reuse"/"fresh" etc, or map reuse: step-name
+	Context   []ContextSource   `yaml:"context"`
+	Timeout   string            `yaml:"timeout"`
+	MaxBudget float64           `yaml:"max_budget"`
+	HITL      bool              `yaml:"hitl"`
+	MaxTurns  int               `yaml:"max_turns"`
+	Guard     rawGuard          `yaml:"guard"`
+}
+
+type rawGuard struct {
+	MaxTurns  *int     `yaml:"max_turns"`
+	MaxBudget *float64 `yaml:"max_budget"`
+	NoWrite   *bool    `yaml:"no_write"`
 }
 
 type rawRetry struct {
@@ -76,7 +87,7 @@ type rawRetry struct {
 }
 
 type rawOnFailure struct {
-	Retry       *int           `yaml:"retry"`
+	Retry       *int          `yaml:"retry"`
 	Strategy    []interface{} `yaml:"strategy"`
 	RestartFrom string        `yaml:"restart_from"`
 }
@@ -132,6 +143,14 @@ func parseStep(raw *rawStep, pathPrefix string, recipeDir string) (*Step, error)
 		subSteps = append(subSteps, *s)
 	}
 	session := parseSession(raw.Session)
+	workflow := strings.TrimSpace(raw.Workflow)
+	recipeAlias := strings.TrimSpace(raw.Recipe)
+	if workflow == "" && recipeAlias != "" {
+		workflow = recipeAlias
+		if ParseWarn != nil {
+			ParseWarn(fmt.Sprintf("%s.recipe is deprecated; use workflow", pathPrefix))
+		}
+	}
 	output := strings.TrimSpace(raw.Output)
 	if output == "" && raw.Agent != "" {
 		output = "diff"
@@ -142,7 +161,9 @@ func parseStep(raw *rawStep, pathPrefix string, recipeDir string) (*Step, error)
 		Prompt:    prompt,
 		Output:    output,
 		Steps:     subSteps,
-		Recipe:    raw.Recipe,
+		Recipe:    recipeAlias,
+		Workflow:  workflow,
+		With:      raw.With,
 		Parallel:  raw.Parallel,
 		Foreach:   strings.TrimSpace(raw.Foreach),
 		Session:   session,
@@ -151,10 +172,31 @@ func parseStep(raw *rawStep, pathPrefix string, recipeDir string) (*Step, error)
 		MaxBudget: raw.MaxBudget,
 		HITL:      raw.HITL,
 		MaxTurns:  raw.MaxTurns,
+		Guard: Guard{
+			MaxTurns:  intPtrOrZero(raw.Guard.MaxTurns),
+			MaxBudget: floatPtrOrZero(raw.Guard.MaxBudget),
+			NoWrite:   raw.Guard.NoWrite,
+		},
+		GuardMaxTurnsSet:  raw.Guard.MaxTurns != nil,
+		GuardMaxBudgetSet: raw.Guard.MaxBudget != nil,
 
 		Gate:      gateValidators,
 		OnFailure: onFailure,
 	}, nil
+}
+
+func intPtrOrZero(v *int) int {
+	if v == nil {
+		return 0
+	}
+	return *v
+}
+
+func floatPtrOrZero(v *float64) float64 {
+	if v == nil {
+		return 0
+	}
+	return *v
 }
 
 func derefInterfaceSlice(p *[]interface{}) []interface{} {

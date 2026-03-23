@@ -55,3 +55,20 @@ func TestStateBag_ResetGroup(t *testing.T) {
 		t.Errorf("after reset scope must resolve to empty (no prev fallback): got %q", v)
 	}
 }
+
+func TestStateBag_Graft(t *testing.T) {
+	parent := New()
+	parent.SetRunMetric("cost", "1.00")
+	child := New()
+	child.Set("echo", "hello", "", nil, "")
+	child.SetRunMetric("cost", "2.00")
+
+	parent.Graft("call-sub", child)
+
+	if got := parent.Get("call-sub.steps.echo", "", "output"); got != "hello" {
+		t.Fatalf("graft output = %q", got)
+	}
+	if got := parent.GetRunMetric("cost"); got != "2.00" {
+		t.Fatalf("run cost not propagated, got %q", got)
+	}
+}

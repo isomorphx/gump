@@ -15,7 +15,7 @@ func LeafSteps(rec *Recipe) []LeafStep {
 
 func walkSteps(steps []Step, pathPrefix string, out *[]LeafStep) {
 	for _, s := range steps {
-		if len(s.Steps) > 0 || s.Recipe != "" {
+		if len(s.Steps) > 0 || s.Workflow != "" || s.Recipe != "" {
 			prefix := s.Name
 			if pathPrefix != "" {
 				prefix = pathPrefix + "/" + s.Name

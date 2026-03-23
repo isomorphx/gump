@@ -25,6 +25,7 @@ var ValidateWarn func(path, message string)
 
 var validOutputValues = map[string]bool{"diff": true, "plan": true, "artifact": true, "review": true}
 var validStrategyTypes = map[string]bool{"same": true, "escalate": true, "replan": true}
+
 // validSessionModes allows reuse-on-retry so recipes can express "fresh first run, resume on retry" without storing session in State Bag.
 var validSessionModes = map[string]bool{"reuse": true, "fresh": true, "reuse-targeted": true, "reuse-on-retry": true}
 var validValidatorTypes = map[string]bool{
@@ -33,7 +34,7 @@ var validValidatorTypes = map[string]bool{
 }
 
 // stepsRefRegex matches {steps.<name>.output|diff|files|session_id}
-var stepsRefRegex = regexp.MustCompile(`\{steps\.([^}.]+)\.(output|diff|files|session_id)\}`)
+var stepsRefRegex = regexp.MustCompile(`\{steps\.(.+?)\.(output|diff|files|session_id)\}`)
 
 // Validate runs v4 structural rules.
 func Validate(r *Recipe) []ValidationError {
@@ -131,8 +132,10 @@ func validateStep(rec *Recipe, s *Step, path string, scopePath string, seenNames
 	hasAgent := s.Agent != ""
 	hasSteps := len(s.Steps) > 0
 	hasForeach := strings.TrimSpace(s.Foreach) != ""
-	hasRecipeRef := strings.TrimSpace(s.Recipe) != ""
+	hasWorkflowRef := strings.TrimSpace(s.Workflow) != "" || strings.TrimSpace(s.Recipe) != ""
 	hasGate := len(s.Gate) > 0
+	hasWith := len(s.With) > 0
+	hasGuard := s.Guard.MaxTurns > 0 || s.Guard.MaxBudget > 0 || s.Guard.NoWrite != nil
 
 	// Step name ambiguity guard: agent step and orchestration container.
 	if hasAgent && hasSteps {
@@ -145,8 +148,8 @@ func validateStep(rec *Recipe, s *Step, path string, scopePath string, seenNames
 	// Determine the step "form" (Agent / Gate / Orchestration).
 	if hasAgent {
 		// Agent Step
-		if hasSteps || hasForeach || hasRecipeRef {
-			errs = append(errs, ValidationError{Path: path, Message: fmt.Sprintf("step %q (agent step) cannot have 'steps', 'foreach', or 'recipe'", s.Name)})
+		if hasSteps || hasForeach || hasWorkflowRef {
+			errs = append(errs, ValidationError{Path: path, Message: fmt.Sprintf("step %q (agent step) cannot have 'steps', 'foreach', or 'workflow'", s.Name)})
 		}
 		if s.Output != "" && !validOutputValues[s.Output] {
 			errs = append(errs, ValidationError{Path: path, Message: "output must be \"diff\", \"plan\", \"artifact\", or \"review\""})
@@ -155,7 +158,7 @@ func validateStep(rec *Recipe, s *Step, path string, scopePath string, seenNames
 		if s.OnFailure != nil && !hasGate && ValidateWarn != nil {
 			ValidateWarn(path, "on_failure present but gate is empty — on_failure without gate has no meaning")
 		}
-	} else if hasGate && !hasSteps && !hasForeach && !hasRecipeRef {
+	} else if hasGate && !hasSteps && !hasForeach && !hasWorkflowRef {
 		// Gate Step
 		// Gate step cannot have any "agent" or "orchestration" fields.
 		if s.Agent != "" {
@@ -182,8 +185,8 @@ func validateStep(rec *Recipe, s *Step, path string, scopePath string, seenNames
 		if s.Parallel {
 			errs = append(errs, ValidationError{Path: path, Message: fmt.Sprintf("step %q is a gate step and cannot have 'parallel'", s.Name)})
 		}
-		if hasSteps || hasForeach || hasRecipeRef {
-			errs = append(errs, ValidationError{Path: path, Message: fmt.Sprintf("step %q is a gate step and cannot have sub-steps/foreach/recipe", s.Name)})
+		if hasSteps || hasForeach || hasWorkflowRef {
+			errs = append(errs, ValidationError{Path: path, Message: fmt.Sprintf("step %q is a gate step and cannot have sub-steps/foreach/workflow", s.Name)})
 		}
 		// gate required and non-empty.
 		if !hasGate {
@@ -191,7 +194,7 @@ func validateStep(rec *Recipe, s *Step, path string, scopePath string, seenNames
 		}
 	} else {
 		// Orchestration Step
-		hasAtLeast := hasSteps || hasForeach || hasRecipeRef
+		hasAtLeast := hasSteps || hasForeach || hasWorkflowRef
 		if !hasAtLeast {
 			errs = append(errs, ValidationError{Path: path, Message: fmt.Sprintf("step %q has no agent, gate, or sub-steps. Every step must do something.", s.Name)})
 		}
@@ -207,6 +210,31 @@ func validateStep(rec *Recipe, s *Step, path string, scopePath string, seenNames
 		if s.HITL {
 			errs = append(errs, ValidationError{Path: path, Message: fmt.Sprintf("step %q is an orchestration step and cannot have 'hitl'", s.Name)})
 		}
+	}
+
+	if hasWith && !hasWorkflowRef {
+		errs = append(errs, ValidationError{Path: path, Message: "with requires workflow"})
+	}
+	if hasWorkflowRef && hasAgent {
+		errs = append(errs, ValidationError{Path: path, Message: "workflow step cannot set agent"})
+	}
+	if hasWorkflowRef && hasSteps && !hasForeach {
+		errs = append(errs, ValidationError{Path: path, Message: "workflow step cannot include inline steps unless used with foreach"})
+	}
+	if hasWorkflowRef && hasGuard {
+		errs = append(errs, ValidationError{Path: path, Message: "guard is not allowed on workflow step"})
+	}
+	if hasGuard && !hasAgent {
+		errs = append(errs, ValidationError{Path: path, Message: "guard is only allowed on agent steps"})
+	}
+	if s.GuardMaxTurnsSet && s.Guard.MaxTurns <= 0 {
+		errs = append(errs, ValidationError{Path: path + ".guard.max_turns", Message: "max_turns must be > 0"})
+	}
+	if s.GuardMaxBudgetSet && s.Guard.MaxBudget <= 0 {
+		errs = append(errs, ValidationError{Path: path + ".guard.max_budget", Message: "max_budget must be > 0"})
+	}
+	if s.MaxTurns > 0 && ValidateWarn != nil {
+		ValidateWarn(path, "max_turns is deprecated; use guard.max_turns")
 	}
 
 	// foreach rule (plan output).
@@ -301,9 +329,28 @@ func validateStep(rec *Recipe, s *Step, path string, scopePath string, seenNames
 			continue
 		}
 		refName := strings.TrimSpace(m[1])
+		refPath := strings.ReplaceAll(strings.ReplaceAll(refName, ".steps.", "/"), ".", "/")
 		candidates := findStepPathsByName(stepNamesByPath, refName)
+		if _, ok := stepNamesByPath[refPath]; ok {
+			candidates = append(candidates, refPath)
+		}
+		if len(candidates) > 1 {
+			seen := map[string]struct{}{}
+			uniq := make([]string, 0, len(candidates))
+			for _, c := range candidates {
+				if _, ok := seen[c]; ok {
+					continue
+				}
+				seen[c] = struct{}{}
+				uniq = append(uniq, c)
+			}
+			candidates = uniq
+		}
 		if len(candidates) == 0 {
-			errs = append(errs, ValidationError{Path: path, Message: fmt.Sprintf("prompt references unknown step %q in {steps.%s.%s}", refName, refName, m[2])})
+			// WHY: child workflows are validated in isolation; unknown refs may be intentionally injected by parent via with:/state graft.
+			if ValidateWarn != nil {
+				ValidateWarn(path, fmt.Sprintf("prompt references unknown step %q in {steps.%s.%s}", refName, refName, m[2]))
+			}
 		} else if len(candidates) > 1 {
 			errs = append(errs, ValidationError{Path: path, Message: fmt.Sprintf("ambiguous step reference %q — use fully-qualified path", refName)})
 		}

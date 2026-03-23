@@ -143,3 +143,48 @@ func TestValidate_SessionReuseTargetDifferentAgentIsError(t *testing.T) {
 		t.Fatalf("expected session reuse mismatch error, got: %s", combined)
 	}
 }
+
+func TestValidate_WorkflowStepRules(t *testing.T) {
+	r := &Recipe{
+		Name: "x",
+		Steps: []Step{
+			{Name: "sub", Workflow: "child", Agent: "codex"},
+		},
+	}
+	errs := Validate(r)
+	if len(errs) == 0 {
+		t.Fatal("expected workflow+agent error")
+	}
+}
+
+func TestValidate_GuardOnlyOnAgent(t *testing.T) {
+	r := &Recipe{
+		Name: "x",
+		Steps: []Step{
+			{Name: "group", Steps: []Step{{Name: "a", Agent: "codex", Prompt: "p"}}, Guard: Guard{MaxTurns: 1}},
+		},
+	}
+	errs := Validate(r)
+	if len(errs) == 0 {
+		t.Fatal("expected guard validation error")
+	}
+}
+
+func TestValidate_GuardMaxBudgetZeroRejected(t *testing.T) {
+	r := &Recipe{
+		Name: "x",
+		Steps: []Step{
+			{
+				Name:              "a",
+				Agent:             "codex",
+				Prompt:            "p",
+				Guard:             Guard{MaxBudget: 0},
+				GuardMaxBudgetSet: true,
+			},
+		},
+	}
+	errs := Validate(r)
+	if len(errs) == 0 {
+		t.Fatal("expected guard.max_budget validation error")
+	}
+}

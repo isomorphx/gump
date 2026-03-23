@@ -406,7 +406,7 @@ func TestSmokeGC(t *testing.T) {
 		}
 	}
 	if dirs != 1 {
-			t.Errorf("expected exactly 1 run dir after gc --keep-last 1, got %d", dirs)
+		t.Errorf("expected exactly 1 run dir after gc --keep-last 1, got %d", dirs)
 	}
 	if !strings.Contains(stdout, "Cleaned") {
 		t.Errorf("stdout should contain Cleaned: %s", stdout)
@@ -1036,4 +1036,54 @@ func TestSmokeStateBagMetricsLive(t *testing.T) {
 	if !strings.Contains(string(data), `"run"`) || !strings.Contains(string(data), `"entries"`) {
 		t.Fatalf("state-bag should contain run and entries sections: %s", string(data))
 	}
+}
+
+// TestSmokeWorkflowComposition validates standalone workflow composition with inputs on a live agent path.
+func TestSmokeWorkflowComposition(t *testing.T) {
+	requireAgent(t, "claude")
+	dir := setupSmokeRepo(t)
+	writeSpec(t, dir, "Say hello.")
+	writeRecipe(t, dir, "sub-smoke", `name: sub-smoke
+inputs:
+  msg:
+    required: true
+steps:
+  - name: echo
+    agent: claude-haiku
+    output: artifact
+    prompt: "{msg}"
+`)
+	writeRecipe(t, dir, "parent-smoke", `name: parent-smoke
+steps:
+  - name: call-sub
+    workflow: sub-smoke
+    with:
+      msg: hello from smoke
+`)
+	stdout, stderr, code := runGump(t, dir, "run", "spec.md", "--workflow", "parent-smoke")
+	if code != 0 {
+		t.Fatalf("run exit %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	assertRunPass(t, dir)
+}
+
+// TestSmokeGuardMaxTurnsLive ensures high max_turns does not regress normal execution flow.
+func TestSmokeGuardMaxTurnsLive(t *testing.T) {
+	requireAgent(t, "claude")
+	dir := setupSmokeRepo(t)
+	writeSpec(t, dir, "Create a one-line summary.")
+	writeRecipe(t, dir, "guard-max-turns-live", `name: guard-max-turns-live
+steps:
+  - name: summarize
+    agent: claude-haiku
+    output: artifact
+    prompt: "{spec}"
+    guard:
+      max_turns: 100
+`)
+	stdout, stderr, code := runGump(t, dir, "run", "spec.md", "--workflow", "guard-max-turns-live")
+	if code != 0 {
+		t.Fatalf("run exit %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	assertRunPass(t, dir)
 }

@@ -69,3 +69,12 @@ func TestResolve_RunAndStepMetricsRefs(t *testing.T) {
 		t.Errorf("got %q", out)
 	}
 }
+
+func TestResolve_NestedWorkflowStateBagRef(t *testing.T) {
+	sb := statebag.New()
+	sb.Set("call-sub.steps.echo", "hello", "", nil, "")
+	out := Resolve("X={steps.call-sub.steps.echo.output}", nil, sb, "")
+	if out != "X=hello" {
+		t.Fatalf("got %q", out)
+	}
+}

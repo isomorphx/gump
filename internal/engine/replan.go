@@ -19,7 +19,7 @@ func (e *Engine) ExecuteReplan(replanAgent string, step recipe.Step, scopePath s
 	if step.Output == "plan" && originalPrompt == "" {
 		originalPrompt = "Analyze the following specification and produce a plan.\n\n{spec}"
 	}
-	vars := e.buildVars(nil, nil, nil)
+	vars := e.buildVars(nil, nil, nil, nil)
 	originalResolved := template.Resolve(originalPrompt, vars, e.StateBag, scopePath)
 	itemName, itemDesc, itemFiles := "", originalResolved, ""
 	if task != nil {

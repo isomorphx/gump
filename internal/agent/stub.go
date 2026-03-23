@@ -40,12 +40,30 @@ func scenarioStdoutExtraJSONLines(worktree string) []string {
 		return nil
 	}
 	var sc struct {
-		Lines []string `json:"stdout_extra_json_lines"`
+		Lines          []string            `json:"stdout_extra_json_lines"`
+		LinesByAttempt map[string][]string `json:"stdout_extra_json_lines_by_attempt"`
 	}
-	if json.Unmarshal(data, &sc) != nil || len(sc.Lines) == 0 {
+	if json.Unmarshal(data, &sc) != nil {
+		return nil
+	}
+	if len(sc.Lines) == 0 {
 		return nil
 	}
 	return sc.Lines
+}
+
+func scenarioStdoutExtraJSONLinesByAttempt(worktree string, attempt int) []string {
+	data, err := os.ReadFile(filepath.Join(worktree, testScenarioFile))
+	if err != nil {
+		return nil
+	}
+	var sc struct {
+		LinesByAttempt map[string][]string `json:"stdout_extra_json_lines_by_attempt"`
+	}
+	if json.Unmarshal(data, &sc) != nil || len(sc.LinesByAttempt) == 0 {
+		return nil
+	}
+	return sc.LinesByAttempt[strconv.Itoa(attempt)]
 }
 
 func scenarioCostAndSessionForStep(worktree, stepName string) (cost float64, sessionID string) {
@@ -82,9 +100,9 @@ func scenarioCostAndSessionForStep(worktree, stepName string) (cost float64, ses
 const stubSessionID = "stub-session-id"
 
 var (
-	planMarker     = "[" + brand.Upper() + ":plan]"
-	artifactMarker = "[" + brand.Upper() + ":artifact]"
-	reviewMarker   = "[" + brand.Upper() + ":review]"
+	planMarker       = "[" + brand.Upper() + ":plan]"
+	artifactMarker   = "[" + brand.Upper() + ":artifact]"
+	reviewMarker     = "[" + brand.Upper() + ":review]"
 	testScenarioFile = ".pud" + "ding-test-scenario.json"
 	testPlanFile     = ".pud" + "ding-test-plan.json"
 )
@@ -262,7 +280,11 @@ func (s *StubAdapter) run(ctx context.Context, worktree, prompt, agentName strin
 
 		tokensIn, tokensOut := scenarioTokensFromFile(worktree)
 		writeLineObserved(pw, stdoutFile, `{"type":"system","subtype":"init","session_id":"`+stubSid+`"}`)
-		if extras := scenarioStdoutExtraJSONLines(worktree); len(extras) > 0 {
+		if extras := scenarioStdoutExtraJSONLinesByAttempt(worktree, attemptFromPrompt); len(extras) > 0 {
+			for _, line := range extras {
+				writeLineObserved(pw, stdoutFile, line)
+			}
+		} else if extras := scenarioStdoutExtraJSONLines(worktree); len(extras) > 0 {
 			for _, line := range extras {
 				writeLineObserved(pw, stdoutFile, line)
 			}
@@ -403,10 +425,16 @@ func applyTestScenarioWithStep(worktree string, stepName string, isReplanFromPro
 		return false
 	}
 	var scenario struct {
-		Files     map[string]string            `json:"files"`
-		ByAttempt map[string]struct{ Files map[string]string `json:"files"` } `json:"by_attempt"`
-		ByStep    map[string]struct{ Files map[string]string `json:"files"` } `json:"by_step"`
-		ByRestart map[string]struct{ Files map[string]string `json:"files"` } `json:"by_restart"`
+		Files     map[string]string `json:"files"`
+		ByAttempt map[string]struct {
+			Files map[string]string `json:"files"`
+		} `json:"by_attempt"`
+		ByStep map[string]struct {
+			Files map[string]string `json:"files"`
+		} `json:"by_step"`
+		ByRestart map[string]struct {
+			Files map[string]string `json:"files"`
+		} `json:"by_restart"`
 	}
 	if err := json.Unmarshal(data, &scenario); err != nil {
 		return false
