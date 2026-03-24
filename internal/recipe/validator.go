@@ -434,10 +434,18 @@ func validateRestartFromGraph(rec *Recipe, nodes []stepNode, stepNamesByPath map
 
 		targetName := strings.TrimSpace(n.step.OnFailure.RestartFrom)
 		candidates := findStepPathsByName(stepNamesByPath, targetName)
+		groupPath := parentStepPath(n.path)
+		filtered := make([]string, 0, len(candidates))
+		for _, c := range candidates {
+			if parentStepPath(c) == groupPath || strings.HasPrefix(c, n.path+"/") {
+				filtered = append(filtered, c)
+			}
+		}
+		candidates = filtered
 		if len(candidates) == 0 {
 			errs = append(errs, ValidationError{
 				Path:    n.path + ".on_failure.restart_from",
-				Message: fmt.Sprintf("restart_from target %q: step not found", targetName),
+				Message: fmt.Sprintf("restart_from target %q: step not found in same group", targetName),
 			})
 			continue
 		}
@@ -504,6 +512,13 @@ func validateRestartFromGraph(rec *Recipe, nodes []stepNode, stepNamesByPath map
 		}
 	}
 	return errs
+}
+
+func parentStepPath(path string) string {
+	if i := strings.LastIndex(path, "/"); i >= 0 {
+		return path[:i]
+	}
+	return ""
 }
 
 func isNumeric(s string) bool {

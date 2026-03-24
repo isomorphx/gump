@@ -1,6 +1,7 @@
 package ledger
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,5 +81,32 @@ func TestArtifactName(t *testing.T) {
 	}
 	if got := ArtifactName("implement/task-1/red", 2, "diff", "patch"); got != "implement-task-1-red-attempt2-diff.patch" {
 		t.Errorf("got %s", got)
+	}
+}
+
+func TestLedger_NDJSONRemainsValidWithControlChars(t *testing.T) {
+	dir := t.TempDir()
+	l, err := New(dir, "cook-ctrl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	if err := l.Emit(StepStarted{Step: "code\u0000\u0007", Agent: "stub", Attempt: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, manifestName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if !json.Valid([]byte(line)) {
+			t.Fatalf("invalid ndjson line: %q", line)
+		}
 	}
 }

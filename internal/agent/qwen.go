@@ -220,6 +220,23 @@ func (a *QwenAdapter) parseQwenLine(line, raw []byte, process *Process) StreamEv
 		return StreamEvent{Type: "system", Raw: raw}
 	case "assistant":
 		if base.Message != nil {
+			in, out := 0, 0
+			var usageWrap struct {
+				Message *struct {
+					Usage *struct {
+						InputTokens  int `json:"input_tokens"`
+						OutputTokens int `json:"output_tokens"`
+						CacheRead    int `json:"cache_read_input_tokens"`
+					} `json:"usage"`
+				} `json:"message"`
+			}
+			if json.Unmarshal(line, &usageWrap) == nil && usageWrap.Message != nil && usageWrap.Message.Usage != nil {
+				in = usageWrap.Message.Usage.InputTokens
+				out = usageWrap.Message.Usage.OutputTokens
+				process.AddPartialMetrics(RunResult{InputTokens: in, OutputTokens: out, CacheReadTokens: usageWrap.Message.Usage.CacheRead, NumTurns: 1})
+			} else {
+				process.AddPartialMetrics(RunResult{InputTokens: in, OutputTokens: out, NumTurns: 1})
+			}
 			for _, c := range base.Message.Content {
 				if c.Type == "text" && c.Text != "" {
 					acc.LastResult = c.Text

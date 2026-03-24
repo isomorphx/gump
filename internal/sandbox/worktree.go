@@ -29,7 +29,18 @@ func HasUncommittedChanges(dir string) (bool, error) {
 	if err != nil {
 		return true, err
 	}
-	return len(out) > 0, nil
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.Contains(line, ".gump/") || strings.Contains(line, ".pudding/") {
+			continue
+		}
+		return true, nil
+	}
+	return false, nil
 }
 
 // CurrentBranch returns the current branch name in dir (e.g. "main").

@@ -29,14 +29,14 @@ func TestResolve_TaskVars(t *testing.T) {
 func TestResolve_UnknownLeftAsIs(t *testing.T) {
 	vars := map[string]string{"spec": "x"}
 	out := Resolve("{spec} and {unknown}", vars, nil, "")
-	if out != "x and {unknown}" {
+	if out != "x and " {
 		t.Errorf("got %q", out)
 	}
 }
 
 func TestResolve_NilVars(t *testing.T) {
 	out := Resolve("{spec}", nil, nil, "")
-	if out != "{spec}" {
+	if out != "" {
 		t.Errorf("got %q", out)
 	}
 }
@@ -75,6 +75,27 @@ func TestResolve_NestedWorkflowStateBagRef(t *testing.T) {
 	sb.Set("call-sub.steps.echo", "hello", "", nil, "")
 	out := Resolve("X={steps.call-sub.steps.echo.output}", nil, sb, "")
 	if out != "X=hello" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestResolve_EscapedDoubleBracesRemainLiteral(t *testing.T) {
+	out := Resolve("json: {{example}} and {spec}", map[string]string{"spec": "ok"}, nil, "")
+	if out != "json: {example} and ok" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestResolve_UnresolvedVariablesAreCleaned(t *testing.T) {
+	out := Resolve("a\n{error}\nb {missing}\n{steps.future.output}\nc", nil, nil, "")
+	if out != "a\nb \nc" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestResolve_RemovesOnlyPlaceholderLinesThatBecomeEmpty(t *testing.T) {
+	out := Resolve("start\n\n{empty}\nkeep\n", map[string]string{"empty": ""}, nil, "")
+	if out != "start\n\nkeep\n" {
 		t.Fatalf("got %q", out)
 	}
 }

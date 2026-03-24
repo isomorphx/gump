@@ -905,6 +905,52 @@ func TestSmokeDXStreaming(t *testing.T) {
 	}
 }
 
+func TestSmokeDisplayTurnBased(t *testing.T) {
+	requireAgent(t, "claude")
+	dir := setupSmokeRepo(t)
+	writeSpec(t, dir, specAdd)
+	_, stderr, code := runGump(t, dir, "run", "spec.md", "--workflow", "freeform", "--agent", "claude-haiku")
+	if code != 0 {
+		t.Fatalf("run exit %d", code)
+	}
+	if !strings.Contains(stderr, "T1") {
+		t.Fatalf("stderr should contain turn marker T1: %s", stderr)
+	}
+	if strings.Contains(stderr, "░░░░░") {
+		t.Fatalf("stderr should not contain legacy bars: %s", stderr)
+	}
+}
+
+func TestSmokeEscapingLive(t *testing.T) {
+	dir := setupSmokeRepo(t)
+	writeSpec(t, dir, "Ensure escaped braces survive templating.")
+	writeFile(t, dir, "context-doc.md", "literal {{json_example}} marker")
+	writeRecipe(t, dir, "escape-live", `name: escape-live
+steps:
+  - name: echo
+    agent: stub
+    output: artifact
+    context:
+      - file: "context-doc.md"
+    prompt: |
+      Keep this literal token: {{json_example}}
+`)
+	_, stderr, code := runGump(t, dir, "run", "spec.md", "--workflow", "escape-live", "--agent-stub")
+	if code != 0 {
+		t.Fatalf("run exit %d: %s", code, stderr)
+	}
+	runDir := latestRunDir(t, dir)
+	runID := filepath.Base(runDir)
+	wtDir := filepath.Join(dir, ".gump", "worktrees", "run-"+runID)
+	data, err := os.ReadFile(filepath.Join(wtDir, "CLAUDE.md"))
+	if err != nil {
+		t.Fatalf("read CLAUDE.md: %v", err)
+	}
+	if !strings.Contains(string(data), "{json_example}") {
+		t.Fatalf("context should keep literal braces, got: %s", string(data))
+	}
+}
+
 // TestSmokeLedgerV4Events checks gate naming, session_mode, and observed_at-prefixed stdout lines on a live run.
 func TestSmokeLedgerV4Events(t *testing.T) {
 	requireAgent(t, "claude")

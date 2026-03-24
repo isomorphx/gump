@@ -151,6 +151,9 @@ func (a *ClaudeAdapter) Stream(process *Process) <-chan StreamEvent {
 					a.lastResultByProc[process] = res
 					a.mu.Unlock()
 				}
+			} else if ev.Type == "assistant" {
+				in, out, cacheRead, turns := partialUsageFromStreamJSON(line)
+				process.AddPartialMetrics(RunResult{InputTokens: in, OutputTokens: out, CacheReadTokens: cacheRead, NumTurns: turns})
 			}
 			ch <- ev
 		}
@@ -160,6 +163,22 @@ func (a *ClaudeAdapter) Stream(process *Process) <-chan StreamEvent {
 		_ = process.Stdout.Close()
 	}()
 	return ch
+}
+
+func partialUsageFromStreamJSON(line []byte) (int, int, int, int) {
+	var msg struct {
+		Message *struct {
+			Usage *struct {
+				InputTokens  int `json:"input_tokens"`
+				OutputTokens int `json:"output_tokens"`
+				CacheRead    int `json:"cache_read_input_tokens"`
+			} `json:"usage"`
+		} `json:"message"`
+	}
+	if json.Unmarshal(line, &msg) != nil || msg.Message == nil || msg.Message.Usage == nil {
+		return 0, 0, 0, 0
+	}
+	return msg.Message.Usage.InputTokens, msg.Message.Usage.OutputTokens, msg.Message.Usage.CacheRead, 1
 }
 
 func parseStreamLine(line, raw []byte) StreamEvent {

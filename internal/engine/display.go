@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/isomorphx/gump/internal/agent"
 )
 
 // Verbose enables full streaming output (no truncation). Set by CLI --verbose.
@@ -15,6 +17,12 @@ const (
 	streamTruncShell   = 60
 	boxWidth           = 60
 )
+
+var streamTurnCounter int
+var activeTurnTracker *TurnTracker
+var liveTurnNumber int
+var liveTurnWidth int
+var carriageReturnEnabled *bool
 
 // CookHeader prints the run box header (Feature 12).
 func CookHeader(recipeName, cookID, spec string) {
@@ -37,6 +45,10 @@ func CookHeader(recipeName, cookID, spec string) {
 
 // StepHeader prints [N/total] step-name (agent) [task 1/4] [retry 2/3] [session: X] (Feature 12).
 func StepHeader(stepIndex, stepTotal int, stepPath, agent string, taskInfo, retryInfo, sessionInfo string) {
+	resetTurnCounter()
+	activeTurnTracker = NewTurnTracker(agent)
+	liveTurnNumber = 0
+	liveTurnWidth = 0
 	idxStr := fmt.Sprintf("%d", stepIndex)
 	if stepTotal > 0 {
 		idxStr = fmt.Sprintf("%d/%d", stepIndex, stepTotal)
@@ -67,6 +79,7 @@ func AgentResultText(result string) {
 
 // AgentSummaryLine prints "        ✓ done 106s | $0.30 | 12k/200k ctx (6%) | 6 turns" (or "1 turn" when numTurns == 1).
 func AgentSummaryLine(stepName string, durationSec, costUSD float64, ctxStr string, numTurns int) {
+	flushTurnDisplay()
 	durStr := formatDurationSec(durationSec)
 	costStr := formatCost(costUSD)
 	turnStr := "turns"
@@ -147,6 +160,7 @@ func CookFooter(pass bool, totalCost float64, steps, stepTotal, retries int, dur
 	if pass {
 		fmt.Fprintf(os.Stderr, "Run total: %s | %s steps | %d retries | %s\n", formatCost(totalCost), stepsStr, retries, formatDuration(duration))
 		fmt.Fprintf(os.Stderr, "Result: PASS\n")
+		fmt.Fprintf(os.Stderr, "\nNext steps:\n  gump report\n  gump apply\n")
 	} else {
 		fmt.Fprintf(os.Stderr, "Run FATAL at step: %s\n", fatalStep)
 		fmt.Fprintf(os.Stderr, "Error: %s\n", errMsg)
@@ -154,8 +168,16 @@ func CookFooter(pass bool, totalCost float64, steps, stepTotal, retries int, dur
 		if worktreePreserved != "" {
 			fmt.Fprintf(os.Stderr, "Worktree preserved: %s\n", worktreePreserved)
 		}
+		fmt.Fprintf(os.Stderr, "\nNext steps:\n  gump report\n  gump run --replay --from-step %s\n  gump gc --keep-last 1\n", fallbackStepName(fatalStep))
 	}
 	fmt.Fprintf(os.Stderr, "%s\n", sep)
+}
+
+func fallbackStepName(step string) string {
+	if strings.TrimSpace(step) == "" {
+		return "impl"
+	}
+	return step
 }
 
 func formatDuration(d time.Duration) string {
@@ -196,4 +218,114 @@ func TruncateStreamShell(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+func handleTurnEvent(ev agent.StreamEvent, agentName string) {
+	if activeTurnTracker == nil {
+		activeTurnTracker = NewTurnTracker(agentName)
+	}
+	completed, current := activeTurnTracker.Consume(ev)
+	if terminalSupportsCarriageReturn() && current != nil && !current.Interrupted {
+		renderLiveTurn(*current)
+	}
+	if completed != nil {
+		printTurn(*completed)
+	}
+}
+
+func flushTurnDisplay() {
+	if activeTurnTracker == nil {
+		return
+	}
+	if t := activeTurnTracker.Flush(); t != nil {
+		printTurn(*t)
+	}
+}
+
+func interruptActiveTurn() {
+	if activeTurnTracker == nil {
+		return
+	}
+	if t := activeTurnTracker.Interrupt(); t != nil {
+		printTurn(*t)
+	}
+}
+
+func printTurn(t Turn) {
+	if terminalSupportsCarriageReturn() && liveTurnNumber == t.Number {
+		line := "     " + formatTurnLine(t)
+		if len(line) < liveTurnWidth {
+			line += strings.Repeat(" ", liveTurnWidth-len(line))
+		}
+		fmt.Fprintf(os.Stderr, "\r%s\n", line)
+		liveTurnNumber = 0
+		liveTurnWidth = 0
+	} else if !Verbose {
+		fmt.Fprintf(os.Stderr, "     %s\n", formatTurnLine(t))
+	} else {
+		fmt.Fprintf(os.Stderr, "     %s\n", formatTurnLine(t))
+	}
+	if !Verbose {
+		return
+	}
+	actions := t.Actions
+	if len(actions) > 20 {
+		for _, a := range actions[:10] {
+			fmt.Fprintf(os.Stderr, "         %s\n", formatActionLine(a))
+		}
+		fmt.Fprintf(os.Stderr, "         ... +%d more\n", len(actions)-10)
+		return
+	}
+	for _, a := range actions {
+		fmt.Fprintf(os.Stderr, "         %s\n", formatActionLine(a))
+	}
+}
+
+func renderLiveTurn(t Turn) {
+	if !terminalSupportsCarriageReturn() || t.IsComplete {
+		return
+	}
+	line := "     " + formatTurnLine(t)
+	if len(line) < liveTurnWidth {
+		line += strings.Repeat(" ", liveTurnWidth-len(line))
+	} else {
+		liveTurnWidth = len(line)
+	}
+	liveTurnNumber = t.Number
+	fmt.Fprintf(os.Stderr, "\r%s", line)
+}
+
+func terminalSupportsCarriageReturn() bool {
+	if carriageReturnEnabled != nil {
+		return *carriageReturnEnabled
+	}
+	ok := true
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("TERM")), "dumb") {
+		ok = false
+	}
+	if fi, err := os.Stderr.Stat(); err == nil {
+		if fi.Mode()&os.ModeCharDevice == 0 {
+			ok = false
+		}
+	}
+	carriageReturnEnabled = &ok
+	return ok
+}
+
+func resetTurnCounter() { streamTurnCounter = 0 }
+
+func asString(v interface{}) string {
+	s, _ := v.(string)
+	return s
+}
+
+func numFromAny(v interface{}) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case int:
+		return float64(n)
+	default:
+		return 0
+	}
 }

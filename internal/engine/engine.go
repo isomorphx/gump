@@ -766,6 +766,12 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 	guardName := ""
 	guardReason := ""
 	for ev := range adapter.Stream(proc) {
+		inDelta, outDelta, turnDelta := extractPartialUsage(ev.Raw)
+		proc.AddPartialMetrics(agent.RunResult{
+			InputTokens:  inDelta,
+			OutputTokens: outDelta,
+			NumTurns:     turnDelta,
+		})
 		if g, r, ok := guardRuntime.CheckEvent(ev.Raw); ok {
 			guardTriggered = true
 			guardName = g
@@ -783,6 +789,18 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 		fmt.Fprintf(os.Stderr, "[%s]\tfatal\tFATAL: %v\n", stepPath, err)
 		return fmt.Errorf("step %s: %w", step.Name, err), preStepCommit
 	}
+	runUsageApplied := false
+	applyRunUsage := func(cost float64, tokensIn int, tokensOut int, turns int, cacheRead int, cacheCreate int, durationMs int) {
+		if runUsageApplied {
+			return
+		}
+		runUsageApplied = true
+		e.totalCostUSD += cost
+		e.StateBag.AddRunCost(cost)
+		e.StateBag.IncrementRunTokensIn(tokensIn)
+		e.StateBag.IncrementRunTokensOut(tokensOut)
+		e.StateBag.UpdateStepAgentMetrics(stepPath, durationMs, cost, turns, tokensIn, tokensOut, cacheRead, cacheCreate)
+	}
 	if guardRuntime != nil {
 		guardRuntime.AddCost(result.CostUSD)
 		if !guardTriggered {
@@ -794,17 +812,55 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 		}
 	}
 	if guardTriggered {
+		partial := proc.PartialMetrics()
 		_ = e.Cook.ResetTo(preStepCommit)
+		applyRunUsage(partial.CostUSD, partial.InputTokens, partial.OutputTokens, partial.NumTurns, partial.CacheReadTokens, partial.CacheCreationTokens, int(time.Since(exec.StartedAt).Milliseconds()))
 		exec.Status = StepFatal
 		exec.ValidateError = fmt.Sprintf("guard %s triggered: %s", guardName, guardReason)
 		exec.ValidateDiff = ""
 		exec.FinishedAt = time.Now()
+		interruptActiveTurn()
 		e.Steps = append(e.Steps, exec)
 		if e.Cook.Ledger != nil {
 			_ = e.Cook.Ledger.Emit(ledger.GuardTriggered{Step: stepPath, Guard: guardName, Reason: guardReason})
+			_ = e.Cook.Ledger.Emit(ledger.AgentKilled{
+				Step:         stepPath,
+				Reason:       "guard:" + guardName,
+				DurationMs:   int(time.Since(exec.StartedAt).Milliseconds()),
+				InputTokens:  partial.InputTokens,
+				OutputTokens: partial.OutputTokens,
+				CostUSD:      partial.CostUSD,
+				TurnsPartial: partial.NumTurns,
+			})
 		}
 		e.setLastStepOutcome(stepPath, attempt, "guard_failed", int(time.Since(exec.StartedAt).Milliseconds()), nil, outputMode, "", false)
 		return fmt.Errorf("step %s: guard %s triggered: %s", step.Name, guardName, guardReason), preStepCommit
+	}
+	isTimeoutError := result.IsError && (result.ExitCode == -1 || (proc != nil && proc.TimedOut))
+	if isTimeoutError {
+		partial := proc.PartialMetrics()
+		if partial.InputTokens == 0 && partial.OutputTokens == 0 && partial.NumTurns == 0 && partial.CostUSD == 0 {
+			partial = *result
+		}
+		applyRunUsage(partial.CostUSD, partial.InputTokens, partial.OutputTokens, partial.NumTurns, partial.CacheReadTokens, partial.CacheCreationTokens, int(time.Since(exec.StartedAt).Milliseconds()))
+		if e.Cook.Ledger != nil {
+			_ = e.Cook.Ledger.Emit(ledger.AgentKilled{
+				Step:         stepPath,
+				Reason:       "timeout",
+				DurationMs:   int(time.Since(exec.StartedAt).Milliseconds()),
+				InputTokens:  partial.InputTokens,
+				OutputTokens: partial.OutputTokens,
+				CostUSD:      partial.CostUSD,
+				TurnsPartial: partial.NumTurns,
+			})
+		}
+		exec.Status = StepFatal
+		exec.FinishedAt = time.Now()
+		interruptActiveTurn()
+		e.Steps = append(e.Steps, exec)
+		e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), nil, outputMode, "", false)
+		fmt.Fprintf(os.Stderr, "[%s]\tfatal\tFATAL: timeout\n", stepPath)
+		return fmt.Errorf("step %s: timeout", step.Name), preStepCommit
 	}
 	if e.budgetTracker != nil {
 		if w := e.budgetTracker.WarningIfUnavailable(result.CostUSD); w != "" && !e.budgetWarnOnce {
@@ -827,22 +883,9 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 			return fmt.Errorf("step %s: %w", step.Name, err), preStepCommit
 		}
 	}
-	e.totalCostUSD += result.CostUSD
-	// WHY: update step/run metrics as soon as the agent reports completion so
-	// later steps can interpolate {steps.X.*} and {run.*}.
-	e.StateBag.UpdateStepAgentMetrics(
-		stepPath,
-		result.DurationMs,
-		result.CostUSD,
-		result.NumTurns,
-		result.InputTokens,
-		result.OutputTokens,
-		result.CacheReadTokens,
-		result.CacheCreationTokens,
-	)
-	e.StateBag.AddRunCost(result.CostUSD)
-	e.StateBag.IncrementRunTokensIn(result.InputTokens)
-	e.StateBag.IncrementRunTokensOut(result.OutputTokens)
+	// WHY: apply agent usage exactly once per attempt so normal/timeout/guard
+	// paths cannot double-count run cost/tokens.
+	applyRunUsage(result.CostUSD, result.InputTokens, result.OutputTokens, result.NumTurns, result.CacheReadTokens, result.CacheCreationTokens, result.DurationMs)
 	AgentResultText(result.Result)
 	ctxStr := ""
 	if info := agent.LookupModel(agentToUse); info != nil && info.ContextWindow > 0 {
@@ -857,7 +900,7 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 	}
 	AgentSummaryLine(step.Name, float64(result.DurationMs)/1000, result.CostUSD, ctxStr, result.NumTurns)
 	agentArtifacts := make(map[string]string)
-	if e.Cook.Ledger != nil && proc != nil {
+	if e.Cook.Ledger != nil && proc != nil && !isTimeoutError {
 		stdoutName := ledger.ArtifactName(stepPath, attempt, "stdout", "log")
 		stderrName := ledger.ArtifactName(stepPath, attempt, "stderr", "log")
 		if b, _ := os.ReadFile(proc.StdoutFile); len(b) > 0 {
@@ -1584,6 +1627,33 @@ func (e *Engine) consumePendingRestartFrom(stepPath string) *ErrorContext {
 	return &c
 }
 
+func extractPartialUsage(raw []byte) (tokensIn int, tokensOut int, turns int) {
+	var base map[string]interface{}
+	if json.Unmarshal(raw, &base) != nil {
+		return 0, 0, 0
+	}
+	if t, _ := base["type"].(string); t == "assistant" {
+		turns = 1
+	}
+	if msg, ok := base["message"].(map[string]interface{}); ok {
+		if usage, ok := msg["usage"].(map[string]interface{}); ok {
+			tokensIn += int(numFromAny(usage["input_tokens"]))
+			tokensOut += int(numFromAny(usage["output_tokens"]))
+		}
+	}
+	if usage, ok := base["usage"].(map[string]interface{}); ok {
+		tokensIn += int(numFromAny(usage["input_tokens"]))
+		tokensOut += int(numFromAny(usage["output_tokens"]))
+	}
+	if item, ok := base["item"].(map[string]interface{}); ok {
+		if usage, ok := item["usage"].(map[string]interface{}); ok {
+			tokensIn += int(numFromAny(usage["input_tokens"]))
+			tokensOut += int(numFromAny(usage["output_tokens"]))
+		}
+	}
+	return tokensIn, tokensOut, turns
+}
+
 // buildVars builds template variables; errorContext and extraVars are optional (retry and replan sub-tasks).
 func (e *Engine) buildVars(taskContext *plan.Task, errorContext *ErrorContext, extraVars map[string]string, inheritedVars map[string]string) map[string]string {
 	vars := map[string]string{
@@ -1688,224 +1758,7 @@ func (e *Engine) resolveWorkflow(step *recipe.Step, stepPath string, taskContext
 
 // formatStreamEventToTerminal prints a single line for assistant text, [tool] name, or [result]; best-effort, no error on parse failure.
 func formatStreamEventToTerminal(ev agent.StreamEvent, agentName string) {
-	switch ev.Type {
-	case "system", "rate_limit_event", "result":
-		return
-	case "assistant":
-		formatAssistantToTerminal(ev.Raw, agentName)
-	case "user":
-		formatUserToTerminal(ev.Raw, agentName)
-	default:
-		// raw or unknown: skip so we don't flood stderr
-	}
-}
-
-func formatAssistantToTerminal(raw []byte, agentName string) {
-	prefix := agentName
-	if i := strings.Index(agentName, "-"); i > 0 {
-		prefix = agentName[:i]
-	}
-	switch prefix {
-	case "codex":
-		formatCodexAssistantToTerminal(raw)
-		return
-	case "gemini":
-		formatGeminiAssistantToTerminal(raw)
-		return
-	case "qwen":
-		formatQwenAssistantToTerminal(raw)
-		return
-	case "opencode":
-		// OpenCode uses file-backed stdout; Stream returns closed channel so no real-time lines.
-		return
-	}
-	var msg struct {
-		Message struct {
-			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-				Name string `json:"name"`
-			} `json:"content"`
-		} `json:"message"`
-	}
-	if json.Unmarshal(raw, &msg) != nil {
-		return
-	}
-	for _, c := range msg.Message.Content {
-		if c.Type == "text" && c.Text != "" {
-			fmt.Fprintf(os.Stderr, "░░░░░ %s\n", TruncateStreamMessage(strings.TrimSpace(c.Text), streamTruncMessage))
-		}
-		if c.Type == "tool_use" && c.Name != "" {
-			fmt.Fprintf(os.Stderr, "░░░░░ %s\n", c.Name)
-		}
-	}
-}
-
-func formatQwenAssistantToTerminal(raw []byte) {
-	var msg struct {
-		Message *struct {
-			Content []struct {
-				Type  string `json:"type"`
-				Text  string `json:"text"`
-				Name  string `json:"name"`
-				Input *struct {
-					FilePath string `json:"file_path"`
-				} `json:"input"`
-			} `json:"content"`
-		} `json:"message"`
-	}
-	if json.Unmarshal(raw, &msg) != nil || msg.Message == nil {
-		return
-	}
-	for _, c := range msg.Message.Content {
-		if c.Type == "text" && c.Text != "" {
-			fmt.Fprintf(os.Stderr, "░░░░░ %s\n", TruncateStreamMessage(strings.TrimSpace(c.Text), streamTruncMessage))
-		}
-		if c.Type == "tool_use" && c.Name != "" {
-			extra := ""
-			if c.Input != nil && c.Input.FilePath != "" {
-				extra = " " + c.Input.FilePath
-			}
-			fmt.Fprintf(os.Stderr, "░░░░░ %s%s\n", c.Name, extra)
-		}
-	}
-}
-
-func formatCodexAssistantToTerminal(raw []byte) {
-	var ev struct {
-		Type string `json:"type"`
-		Item *struct {
-			Type    string `json:"type"`
-			Text    string `json:"text"`
-			Command string `json:"command"`
-		} `json:"item"`
-	}
-	if json.Unmarshal(raw, &ev) != nil || ev.Item == nil {
-		return
-	}
-	if ev.Item.Type == "agent_message" && ev.Item.Text != "" {
-		fmt.Fprintf(os.Stderr, "░░░░░ %s\n", TruncateStreamMessage(strings.TrimSpace(ev.Item.Text), streamTruncMessage))
-	}
-	if ev.Item.Type == "command_execution" && ev.Item.Command != "" {
-		fmt.Fprintf(os.Stderr, "░░░░░ shell: %s\n", TruncateStreamShell(ev.Item.Command, streamTruncShell))
-	}
-}
-
-func formatGeminiAssistantToTerminal(raw []byte) {
-	var ev struct {
-		Type     string `json:"type"`
-		Content  string `json:"content"`
-		ToolName string `json:"tool_name"`
-		Params   *struct {
-			FilePath string `json:"file_path"`
-		} `json:"parameters"`
-	}
-	if json.Unmarshal(raw, &ev) != nil {
-		return
-	}
-	if ev.Content != "" {
-		fmt.Fprintf(os.Stderr, "░░░░░ %s\n", TruncateStreamMessage(strings.TrimSpace(ev.Content), streamTruncMessage))
-	}
-	if ev.ToolName != "" {
-		extra := ""
-		if ev.Params != nil && ev.Params.FilePath != "" {
-			extra = " " + ev.Params.FilePath
-		}
-		fmt.Fprintf(os.Stderr, "░░░░░ %s%s\n", ev.ToolName, extra)
-	}
-}
-
-func formatUserToTerminal(raw []byte, agentName string) {
-	prefix := agentName
-	if i := strings.Index(agentName, "-"); i > 0 {
-		prefix = agentName[:i]
-	}
-	if prefix == "qwen" {
-		var msg struct {
-			Message *struct {
-				Content []struct {
-					Type    string `json:"type"`
-					IsError bool   `json:"is_error"`
-				} `json:"content"`
-			} `json:"message"`
-		}
-		if json.Unmarshal(raw, &msg) != nil || msg.Message == nil {
-			return
-		}
-		for _, c := range msg.Message.Content {
-			if c.Type == "tool_result" {
-				if Verbose {
-					if c.IsError {
-						fmt.Fprintf(os.Stderr, "░░░░░ result: error\n")
-					} else {
-						fmt.Fprintf(os.Stderr, "░░░░░ result: ok\n")
-					}
-				}
-				return
-			}
-		}
-		return
-	}
-	if prefix == "opencode" {
-		return
-	}
-	if prefix == "codex" {
-		var ev struct {
-			Type string `json:"type"`
-			Item *struct {
-				Type     string `json:"type"`
-				ExitCode *int   `json:"exit_code"`
-			} `json:"item"`
-		}
-		if json.Unmarshal(raw, &ev) != nil || ev.Item == nil {
-			return
-		}
-		if Verbose {
-			if ev.Item.Type == "command_execution" {
-				exit := "?"
-				if ev.Item.ExitCode != nil {
-					exit = fmt.Sprintf("%d", *ev.Item.ExitCode)
-				}
-				fmt.Fprintf(os.Stderr, "░░░░░ result: exit:%s\n", exit)
-			}
-			if ev.Item.Type == "file_change" {
-				fmt.Fprintf(os.Stderr, "░░░░░ result: file_change\n")
-			}
-		}
-		return
-	}
-	if prefix == "gemini" {
-		var ev struct {
-			Type   string `json:"type"`
-			Status string `json:"status"`
-		}
-		if json.Unmarshal(raw, &ev) != nil {
-			return
-		}
-		fmt.Fprintf(os.Stderr, "[result] %s\n", ev.Status)
-		return
-	}
-	var body struct {
-		ToolUseResult *struct {
-			Type     string `json:"type"`
-			FilePath string `json:"filePath"`
-		} `json:"tool_use_result"`
-	}
-	if json.Unmarshal(raw, &body) != nil || body.ToolUseResult == nil {
-		return
-	}
-	t := body.ToolUseResult.Type
-	if t == "" {
-		t = "result"
-	}
-	fmt.Fprintf(os.Stderr, "[result] %s %s\n", t, body.ToolUseResult.FilePath)
-}
-
-func truncStr(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
+	handleTurnEvent(ev, agentName)
 }
 
 // formatAgentSummary prints the post-agent line per spec: step name, duration, cost, context % when known, turns; warns if context > 80%.

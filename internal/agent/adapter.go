@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os/exec"
+	"sync"
 	"time"
 )
 
@@ -51,6 +52,8 @@ type Process struct {
 	Cancel           context.CancelFunc
 	TimedOut         bool
 	TimeoutDuration  time.Duration
+	partialMu        sync.RWMutex
+	partial          RunResult
 }
 
 // StreamEvent is one line from the agent's NDJSON stdout; Type drives terminal display,
@@ -85,4 +88,29 @@ type ModelMetrics struct {
 	CacheCreationTokens  int
 	CacheReadTokens      int
 	CostUSD              float64
+}
+
+// AddPartialMetrics accumulates best-effort metrics seen before process completion.
+func (p *Process) AddPartialMetrics(delta RunResult) {
+	if p == nil {
+		return
+	}
+	p.partialMu.Lock()
+	defer p.partialMu.Unlock()
+	p.partial.InputTokens += delta.InputTokens
+	p.partial.OutputTokens += delta.OutputTokens
+	p.partial.CacheReadTokens += delta.CacheReadTokens
+	p.partial.CacheCreationTokens += delta.CacheCreationTokens
+	p.partial.NumTurns += delta.NumTurns
+	p.partial.CostUSD += delta.CostUSD
+}
+
+// PartialMetrics returns metrics accumulated so far (used before kill paths).
+func (p *Process) PartialMetrics() RunResult {
+	if p == nil {
+		return RunResult{}
+	}
+	p.partialMu.RLock()
+	defer p.partialMu.RUnlock()
+	return p.partial
 }

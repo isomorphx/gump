@@ -12,10 +12,18 @@ import (
 var stepsRefRegex = regexp.MustCompile(`\{steps\.(.+?)\.(output|diff|files|session_id|status|duration|cost|turns|retries|tokens_in|tokens_out|cache_read|cache_write|check_result)\}`)
 var taskVarRegex = regexp.MustCompile(`\{task\.([a-zA-Z0-9_]+)\}`)
 var runRefRegex = regexp.MustCompile(`\{run\.(cost|duration|tokens_in|tokens_out|retries|status)\}`)
+var unresolvedVarRegex = regexp.MustCompile(`\{[a-zA-Z0-9_.-]+\}`)
 
 // Resolve replaces {key} placeholders. vars are resolved first; then {steps.<name>.output|diff} via stateBag when non-nil.
 // If stateBag is nil (e.g. dry-run), steps refs are resolved to empty string.
 func Resolve(tmpl string, vars map[string]string, stateBag *statebag.StateBag, scopePath string) string {
+	linesWithPlaceholder := markLinesWithPlaceholder(tmpl)
+	const lbraceSentinel = "\x00GUMP_LBRACE\x00"
+	const rbraceSentinel = "\x00GUMP_RBRACE\x00"
+	// WHY: `{{...}}` must survive variable resolution as literal braces.
+	tmpl = strings.ReplaceAll(tmpl, "{{", lbraceSentinel)
+	tmpl = strings.ReplaceAll(tmpl, "}}", rbraceSentinel)
+
 	// WHY: During the v3→v4 migration, templates might still reference legacy
 	// `{task.*}` variables. We support them by resolving as `{item.*}` and
 	// emitting a single warning whenever we have to translate.
@@ -101,5 +109,37 @@ func Resolve(tmpl string, vars map[string]string, stateBag *statebag.StateBag, s
 	} else {
 		tmpl = stepsRefRegex.ReplaceAllStringFunc(tmpl, func(string) string { return "" })
 	}
+	// WHY: clean only unresolved placeholder lines; keep intentional spacing in templates.
+	tmpl = cleanupUnresolvedPlaceholders(tmpl, linesWithPlaceholder)
+	tmpl = strings.ReplaceAll(tmpl, lbraceSentinel, "{")
+	tmpl = strings.ReplaceAll(tmpl, rbraceSentinel, "}")
 	return tmpl
+}
+
+func cleanupUnresolvedPlaceholders(input string, originalPlaceholderLines map[int]bool) string {
+	lines := strings.Split(input, "\n")
+	kept := make([]string, 0, len(lines))
+	for idx, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if unresolvedVarRegex.MatchString(trimmed) && unresolvedVarRegex.ReplaceAllString(trimmed, "") == "" {
+			continue
+		}
+		cleaned := unresolvedVarRegex.ReplaceAllString(line, "")
+		if originalPlaceholderLines[idx] && strings.TrimSpace(cleaned) == "" {
+			continue
+		}
+		kept = append(kept, cleaned)
+	}
+	return strings.Join(kept, "\n")
+}
+
+func markLinesWithPlaceholder(input string) map[int]bool {
+	out := map[int]bool{}
+	lines := strings.Split(input, "\n")
+	for i, line := range lines {
+		if unresolvedVarRegex.MatchString(line) {
+			out[i] = true
+		}
+	}
+	return out
 }

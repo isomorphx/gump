@@ -224,3 +224,41 @@ func TestValidate_GuardMaxBudgetZeroRejected(t *testing.T) {
 		t.Fatal("expected guard.max_budget validation error")
 	}
 }
+
+func TestValidate_RestartFromMustStayInSameGroup(t *testing.T) {
+	r := &Recipe{
+		Name: "x",
+		Steps: []Step{
+			{
+				Name: "group-a",
+				Steps: []Step{
+					{Name: "check", Gate: []Validator{{Type: "bash", Arg: "true"}}},
+					{
+						Name:   "code",
+						Agent:  "stub",
+						Prompt: "x",
+						OnFailure: &OnFailure{
+							Retry:       1,
+							RestartFrom: "other",
+							Strategy:    []StrategyEntry{{Type: "same", Count: 1}},
+						},
+					},
+				},
+			},
+			{
+				Name: "group-b",
+				Steps: []Step{
+					{Name: "other", Agent: "stub", Prompt: "x"},
+				},
+			},
+		},
+	}
+	errs := Validate(r)
+	combined := ""
+	for _, e := range errs {
+		combined += e.Error() + "\n"
+	}
+	if !strings.Contains(combined, "same group") {
+		t.Fatalf("expected same-group restart_from validation error, got: %s", combined)
+	}
+}

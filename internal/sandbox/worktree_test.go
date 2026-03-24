@@ -95,3 +95,21 @@ func TestResetTo(t *testing.T) {
 		t.Error("x.txt should be gone after reset")
 	}
 }
+
+func TestHasUncommittedChanges_IgnoresGumpRuntimeState(t *testing.T) {
+	repo := t.TempDir()
+	initGitRepo(t, repo)
+	if err := os.MkdirAll(filepath.Join(repo, ".gump", "runs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".gump", "runs", "state.json"), []byte(`{"ok":true}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dirty, err := HasUncommittedChanges(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dirty {
+		t.Fatal("expected .gump runtime changes to be ignored")
+	}
+}

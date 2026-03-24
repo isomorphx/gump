@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/isomorphx/gump/internal/brand"
@@ -148,7 +149,7 @@ func (a *OpenCodeAdapter) start(ctx context.Context, worktree string, timeout ti
 
 	proc := &Process{
 		Cmd:        cmd,
-		Stdout:     io.NopCloser(bytes.NewReader(nil)),
+		Stdout:     io.NopCloser(strings.NewReader("")),
 		Stderr:     io.NopCloser(bytes.NewReader(nil)),
 		StdoutFile: stdoutPath,
 		StderrFile: stderrPath,
@@ -166,10 +167,102 @@ func (a *OpenCodeAdapter) start(ctx context.Context, worktree string, timeout ti
 	return proc, nil
 }
 
-// Stream returns a channel that closes immediately so terminal display is post-hoc; artefact is written to file.
+// Stream tails file-backed stdout so OpenCode participates in live turn display.
 func (a *OpenCodeAdapter) Stream(process *Process) <-chan StreamEvent {
-	ch := make(chan StreamEvent)
-	close(ch)
+	ch := make(chan StreamEvent, 64)
+	go func() {
+		defer close(ch)
+		f, err := os.Open(process.StdoutFile)
+		if err != nil {
+			return
+		}
+		defer f.Close()
+		offset := int64(0)
+		remain := ""
+		deadTicks := 0
+		finishedSeen := false
+		for {
+			buf := make([]byte, 64*1024)
+			n, _ := f.ReadAt(buf, offset)
+			if n > 0 {
+				offset += int64(n)
+				blob := remain + string(buf[:n])
+				lines := strings.Split(blob, "\n")
+				remain = lines[len(lines)-1]
+				for _, line := range lines[:len(lines)-1] {
+					line = strings.TrimSpace(line)
+					if line == "" {
+						continue
+					}
+					raw := []byte(line)
+					evType := "raw"
+					var base struct {
+						Type string `json:"type"`
+						Part *struct {
+							Tokens *struct {
+								Input  int `json:"input"`
+								Output int `json:"output"`
+								Cache  *struct {
+									Read int `json:"read"`
+								} `json:"cache"`
+							} `json:"tokens"`
+						} `json:"part"`
+					}
+					if json.Unmarshal(raw, &base) == nil {
+						switch base.Type {
+						case "step_start", "tool_use", "text":
+							evType = "assistant"
+						case "tool_result":
+							evType = "user"
+						case "step_finish":
+							evType = "result"
+							finishedSeen = true
+							if base.Part != nil && base.Part.Tokens != nil {
+								cacheRead := 0
+								if base.Part.Tokens.Cache != nil {
+									cacheRead = base.Part.Tokens.Cache.Read
+								}
+								process.AddPartialMetrics(RunResult{
+									InputTokens:    base.Part.Tokens.Input,
+									OutputTokens:   base.Part.Tokens.Output,
+									CacheReadTokens: cacheRead,
+									NumTurns:       1,
+								})
+							}
+						default:
+							evType = "raw"
+						}
+					}
+					ch <- StreamEvent{Type: evType, Raw: raw}
+				}
+				deadTicks = 0
+			} else {
+				if finishedSeen {
+					deadTicks++
+					if deadTicks > 4 {
+						if strings.TrimSpace(remain) != "" {
+							ch <- StreamEvent{Type: "raw", Raw: []byte(strings.TrimSpace(remain))}
+						}
+						return
+					}
+					time.Sleep(50 * time.Millisecond)
+					continue
+				}
+				if process.Cmd != nil && process.Cmd.Process != nil {
+					if err := syscall.Kill(process.Cmd.Process.Pid, 0); err != nil {
+						deadTicks++
+					}
+				}
+				if deadTicks > 4 {
+					if strings.TrimSpace(remain) != "" {
+						ch <- StreamEvent{Type: "raw", Raw: []byte(strings.TrimSpace(remain))}
+					}
+					return
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+		}
+	}()
 	return ch
 }
 

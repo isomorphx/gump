@@ -234,7 +234,8 @@ func TestG3_E2E10_NonRegression(t *testing.T) {
 	// WHY: this test already runs inside the e2e package; re-running `./...` from
 	// here nests another full e2e run (including this test), which can exceed the
 	// default `go test` timeout and appear as a hang on Cmd.Wait().
-	cmd := exec.Command("go", "test", "./cmd", "./internal/...")
+	// WHY: non-regression should remain fast and deterministic (no live agent e2e paths).
+	cmd := exec.Command("go", "test", "-timeout", "3m", "./cmd", "./internal/...")
 	cmd.Dir = modRoot
 	cmd.Env = append(os.Environ(), "G3_NONREG_INNER=1")
 	out, err := cmd.CombinedOutput()

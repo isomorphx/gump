@@ -205,6 +205,12 @@ func (a *CodexAdapter) parseCodexLine(line, raw []byte, process *Process) Stream
 			acc.InputTokens += base.Usage.InputTokens
 			acc.OutputTokens += base.Usage.OutputTokens
 			acc.CacheRead += base.Usage.CachedInput
+			process.AddPartialMetrics(RunResult{
+				InputTokens:    base.Usage.InputTokens,
+				OutputTokens:   base.Usage.OutputTokens,
+				CacheReadTokens: base.Usage.CachedInput,
+				NumTurns:       1,
+			})
 		}
 		return StreamEvent{Type: "result", Raw: raw}
 	case "item.completed":

@@ -3,6 +3,7 @@ package ledger
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,6 +57,10 @@ func (l *Ledger) Emit(event Event) error {
 	line, err := json.Marshal(payload)
 	if err != nil {
 		return err
+	}
+	if !json.Valid(line) {
+		log.Printf("ledger: invalid ndjson line skipped for event %q", event.EventType())
+		return nil
 	}
 	_, err = l.file.Write(append(line, '\n'))
 	return err

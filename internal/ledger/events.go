@@ -69,6 +69,18 @@ type AgentCompleted struct {
 
 func (AgentCompleted) EventType() string { return "agent_completed" }
 
+type AgentKilled struct {
+	Step         string  `json:"step"`
+	Reason       string  `json:"reason"`
+	DurationMs   int     `json:"duration_ms"`
+	InputTokens  int     `json:"input_tokens"`
+	OutputTokens int     `json:"output_tokens"`
+	CostUSD      float64 `json:"cost_usd"`
+	TurnsPartial int     `json:"turns_partial"`
+}
+
+func (AgentKilled) EventType() string { return "agent_killed" }
+
 // StateBagUpdated is emitted after each Set so report can show which outputs were stored.
 type StateBagUpdated struct {
 	Key      string `json:"key"`
