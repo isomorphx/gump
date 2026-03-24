@@ -6,10 +6,12 @@ package config
 type Config struct {
 	DefaultAgent string
 	LogLevel     string
-	CompileCmd   string
-	TestCmd      string
-	LintCmd      string
-	CoverageCmd  string
+	// Analytics controls anonymous telemetry; default true, opt-out via config set.
+	Analytics   bool
+	CompileCmd  string
+	TestCmd     string
+	LintCmd     string
+	CoverageCmd string
 	// ErrorContextMax* bound gate stderr and diff injected on retry so huge validator output cannot blow the model budget.
 	ErrorContextMaxErrorChars int
 	ErrorContextMaxDiffChars  int
@@ -23,6 +25,7 @@ type Config struct {
 type Source struct {
 	DefaultAgent string
 	LogLevel     string
+	Analytics    string
 	CompileCmd   string
 	TestCmd      string
 	LintCmd      string

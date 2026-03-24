@@ -18,6 +18,8 @@ steps:
       - name: apply
         agent: claude-haiku
         output: diff
+        guard:
+          max_turns: 60
         prompt: |
           Refactor according to: {item.description}
           Only modify: {item.files}

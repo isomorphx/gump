@@ -4,5 +4,7 @@ steps:
   - name: execute
     agent: claude-opus
     output: diff
+    guard:
+      max_turns: 80
     prompt: "{spec}"
     gate: [compile]

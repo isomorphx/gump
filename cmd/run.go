@@ -4,11 +4,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/isomorphx/gump/internal/agent"
 	"github.com/isomorphx/gump/internal/config"
@@ -16,6 +20,8 @@ import (
 	"github.com/isomorphx/gump/internal/engine"
 	"github.com/isomorphx/gump/internal/recipe"
 	"github.com/isomorphx/gump/internal/sandbox"
+	"github.com/isomorphx/gump/internal/telemetry"
+	"github.com/isomorphx/gump/internal/version"
 	"github.com/spf13/cobra"
 )
 
@@ -258,9 +264,11 @@ func runCook(cmd *cobra.Command, args []string) error {
 		configSource = "gump.toml"
 	}
 	if cookDryRun {
-		fmt.Println("Gump — dry run")
+		fmt.Println("Gump Dry Run")
+		fmt.Println("─────────────────────────────────────────────────────────")
 		fmt.Println()
-		fmt.Printf("Recipe:    %s (%s)\n", resolved.Name, resolved.Source)
+		fmt.Printf("Workflow:  %s\n", resolved.Name)
+		fmt.Printf("Source:    %s\n", resolved.Source)
 		if rec.Description != "" {
 			fmt.Printf("Description: %s\n", rec.Description)
 		}
@@ -271,9 +279,14 @@ func runCook(cmd *cobra.Command, args []string) error {
 		} else {
 			fmt.Printf("Budget:    $0.00\n")
 		}
+		if cfg.Analytics {
+			fmt.Printf("Analytics: enabled\n")
+		} else {
+			fmt.Printf("Analytics: disabled\n")
+		}
 		fmt.Println()
 		fmt.Println("Steps:")
-		printStepsV4(rec.Steps, "  ", 1)
+		printStepsV4(rec.Steps, "  ", "")
 		fmt.Println()
 		printStateBagResolutionsV4(rec)
 		return nil
@@ -317,7 +330,13 @@ func runCook(cmd *cobra.Command, args []string) error {
 		}
 		eng.PauseAfterStep = cookPauseAfter
 	}
+	anonymousID, telemetryFirstRun := telemetry.InitAnonymousID(cfg.Analytics, os.Stderr)
+	runStartedAt := time.Now()
+	sendTelemetry := func(runStatus string) {
+		telemetry.Send(cfg.Analytics, anonymousID, telemetryFirstRun, version.Version, buildTelemetryPayload(rec, resolved.Source, eng, runStatus, runStartedAt, repoRoot))
+	}
 	if err := eng.Run(); err != nil {
+		sendTelemetry("fail")
 		if errors.Is(err, engine.ErrCookAborted) {
 			_ = cook.WriteStatus(c.CookDir, "aborted")
 			return err
@@ -328,8 +347,207 @@ func runCook(cmd *cobra.Command, args []string) error {
 	if err := cook.WriteStatusWithSteps(c.CookDir, "pass", len(eng.Steps)); err != nil {
 		return err
 	}
+	sendTelemetry("pass")
 	fmt.Printf("Run complete (%d steps). Run 'gump apply' to merge results.\n", len(eng.Steps))
 	return nil
+}
+
+func buildTelemetryPayload(rec *recipe.Recipe, source string, eng *engine.Engine, runStatus string, startedAt time.Time, repoRoot string) telemetry.RunPayload {
+	workflowSource := "builtin"
+	switch source {
+	case "project", "user":
+		workflowSource = source
+	}
+	agentsSet := map[string]struct{}{}
+	hasForeach, hasParallel, hasGuard, hasHITL, hasSubworkflow, usesSessionReuse := false, false, false, false, false, false
+	var walk func(steps []recipe.Step)
+	walk = func(steps []recipe.Step) {
+		for _, s := range steps {
+			if s.Foreach != "" {
+				hasForeach = true
+			}
+			if s.Parallel {
+				hasParallel = true
+			}
+			if s.Workflow != "" || s.Recipe != "" {
+				hasSubworkflow = true
+			}
+			if s.HITL {
+				hasHITL = true
+			}
+			if s.Agent != "" {
+				agentsSet[s.Agent] = struct{}{}
+			}
+			if s.Guard.MaxTurns > 0 || s.Guard.MaxBudget > 0 || s.Guard.NoWrite != nil {
+				hasGuard = true
+			}
+			if s.Session.Mode == "reuse" || s.Session.Mode == "reuse-targeted" || s.Session.Mode == "reuse-on-retry" {
+				usesSessionReuse = true
+			}
+			if len(s.Steps) > 0 {
+				walk(s.Steps)
+			}
+		}
+	}
+	walk(rec.Steps)
+	agents := make([]string, 0, len(agentsSet))
+	for a := range agentsSet {
+		agents = append(agents, a)
+	}
+	sort.Strings(agents)
+
+	guardHitsByStep := map[string]int{}
+	var totalRetries, guardTriggers int
+	for _, s := range eng.Steps {
+		if s.Attempt > 1 {
+			totalRetries++
+		}
+	}
+	for _, s := range eng.Steps {
+		if s.Status == engine.StepFatal && strings.Contains(strings.ToLower(s.ValidateError), "guard ") {
+			guardHitsByStep[s.StepPath]++
+			guardTriggers++
+		}
+	}
+	latestByStep := map[string]engine.StepExecution{}
+	for _, s := range eng.Steps {
+		latestByStep[s.StepPath] = s
+	}
+	steps := make([]telemetry.StepPayload, 0, len(latestByStep))
+	for _, s := range latestByStep {
+		st := string(s.Status)
+		if st == "fatal" {
+			st = "fail"
+		}
+		short := path.Base(s.StepPath)
+		cost, _ := strconv.ParseFloat(eng.StateBag.Get(short, s.StepPath, "cost"), 64)
+		turns, _ := strconv.Atoi(eng.StateBag.Get(short, s.StepPath, "turns"))
+		tokensIn, _ := strconv.Atoi(eng.StateBag.Get(short, s.StepPath, "tokens_in"))
+		tokensOut, _ := strconv.Atoi(eng.StateBag.Get(short, s.StepPath, "tokens_out"))
+		steps = append(steps, telemetry.StepPayload{
+			Name:          anonymizeForeachPath(s.StepPath),
+			Agent:         s.Agent,
+			Output:        s.OutputMode,
+			Status:        st,
+			Duration:      int(s.FinishedAt.Sub(s.StartedAt).Milliseconds()),
+			Cost:          cost,
+			Turns:         turns,
+			Retries:       maxInt(0, s.Attempt-1),
+			GuardHits:     guardHitsByStep[s.StepPath],
+			TokensIn:      tokensIn,
+			TokensOut:     tokensOut,
+			ContextUsage:  0,
+			TTFD:          0,
+			EscalatedFrom: nil,
+			EscalatedTo:   nil,
+		})
+	}
+	sort.Slice(steps, func(i, j int) bool { return steps[i].Name < steps[j].Name })
+	totalCost, _ := strconv.ParseFloat(eng.StateBag.GetRunMetric("cost"), 64)
+
+	return telemetry.RunPayload{
+		Workflow:         rec.Name,
+		WorkflowSource:   workflowSource,
+		IsCustomWorkflow: workflowSource != "builtin",
+		RunStatus:        runStatus,
+		DurationMs:       int(time.Since(startedAt).Milliseconds()),
+		TotalCostUSD:     totalCost, // known limitation for G3: best available estimate may be partial
+		AgentsUsed:       agents,
+		AgentCount:       len(agents),
+		StepCount:        len(steps),
+		HasForeach:       hasForeach,
+		HasParallel:      hasParallel,
+		HasGuard:         hasGuard,
+		HasHITL:          hasHITL,
+		HasSubworkflow:   hasSubworkflow,
+		UsesSessionReuse: usesSessionReuse,
+		TotalRetries:     totalRetries,
+		GuardTriggers:    guardTriggers,
+		RepoLanguage:     detectRepoLanguage(repoRoot),
+		RepoSizeBucket:   detectRepoSizeBucket(repoRoot),
+		Steps:            steps,
+	}
+}
+
+func anonymizeForeachPath(path string) string {
+	parts := strings.Split(path, "/")
+	// WHY: foreach item names can leak repository semantics; replace the item segment while preserving step shape.
+	if len(parts) >= 3 {
+		parts[len(parts)-2] = "*"
+	}
+	return strings.Join(parts, "/")
+}
+
+func detectRepoLanguage(root string) string {
+	counts := map[string]int{}
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if name == ".git" || name == ".gump" || name == ".pudding" || name == "node_modules" || name == "vendor" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		switch filepath.Ext(p) {
+		case ".go":
+			counts["go"]++
+		case ".ts", ".tsx":
+			counts["typescript"]++
+		case ".js", ".jsx":
+			counts["javascript"]++
+		case ".py":
+			counts["python"]++
+		case ".rs":
+			counts["rust"]++
+		}
+		return nil
+	})
+	best := "unknown"
+	bestN := 0
+	for k, n := range counts {
+		if n > bestN {
+			best, bestN = k, n
+		}
+	}
+	return best
+}
+
+func detectRepoSizeBucket(root string) string {
+	var n int
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if name == ".git" || name == ".gump" || name == ".pudding" || name == "node_modules" || name == "vendor" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		n++
+		return nil
+	})
+	switch {
+	case n < 1000:
+		return "<1k"
+	case n <= 10000:
+		return "1k-10k"
+	case n <= 100000:
+		return "10k-100k"
+	default:
+		return ">100k"
+	}
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // agentsCLIFromRecipe builds a map of agent name -> CLI version for cook_started. Stub mode uses "stub-1.0.0"; otherwise "unknown".
@@ -368,50 +586,55 @@ func walkStepNames(steps []recipe.Step, fn func(name string)) {
 	}
 }
 
-func printStepsV4(steps []recipe.Step, indent string, startIdx int) {
+func printStepsV4(steps []recipe.Step, indent string, parentNum string) {
 	for i, s := range steps {
-		stepIdx := startIdx + i
-		prefix := indent + fmt.Sprintf("%d. ", stepIdx)
-		fmt.Printf("%s%s", prefix, s.Name)
+		stepNum := fmt.Sprintf("%d", i+1)
+		if parentNum != "" {
+			stepNum = parentNum + "." + stepNum
+		}
+		fmt.Printf("%s%s. %s\n", indent, stepNum, s.Name)
+		detailIndent := indent + "   "
 
 		// Gate step / agent step: v4 uses `gate` keyword; parser normalises into Step.Gate.
 		if len(s.Gate) > 0 {
-			fmt.Printf("  gate=%s", formatValidators(s.Gate))
+			fmt.Printf("%sgate=%s\n", detailIndent, formatValidators(s.Gate))
 		}
 		// Orchestration fields.
 		if s.Foreach != "" {
-			fmt.Printf("  foreach=%s", s.Foreach)
+			fmt.Printf("%sforeach=%s\n", detailIndent, s.Foreach)
 		}
 		if s.Parallel {
-			fmt.Printf("  parallel=true")
+			fmt.Printf("%sparallel=true\n", detailIndent)
 		}
 		if s.Workflow != "" {
-			fmt.Printf("  workflow=%s", s.Workflow)
+			fmt.Printf("%sworkflow=%s\n", detailIndent, s.Workflow)
 		} else if s.Recipe != "" {
-			fmt.Printf("  workflow=%s", s.Recipe)
+			fmt.Printf("%sworkflow=%s\n", detailIndent, s.Recipe)
 		}
 		// Agent step fields.
 		if s.Agent != "" {
-			fmt.Printf("  agent=%s", s.Agent)
+			fmt.Printf("%sagent=%s", detailIndent, s.Agent)
 			if strings.TrimSpace(s.Output) != "" {
 				fmt.Printf("  output=%s", s.Output)
 			}
+			fmt.Printf("\n")
 		} else if strings.TrimSpace(s.Output) != "" {
 			// WHY: gate steps can omit output, but we still print it if present
 			// so dry-run stays faithful to the YAML.
-			fmt.Printf("  output=%s", s.Output)
+			fmt.Printf("%soutput=%s\n", detailIndent, s.Output)
 		}
 
 		// Session is optional; show non-default modes (including `reuse`).
 		if s.Session.Mode != "" && s.Session.Mode != "fresh" {
 			if s.Session.Mode == "reuse-targeted" {
-				fmt.Printf("  session=reuse:%s", s.Session.Target)
+				fmt.Printf("%ssession=reuse:%s\n", detailIndent, s.Session.Target)
 			} else {
-				fmt.Printf("  session=%s", s.Session.Mode)
+				fmt.Printf("%ssession=%s\n", detailIndent, s.Session.Mode)
 			}
 		}
-		if s.Guard.MaxTurns > 0 || s.Guard.MaxBudget > 0 || s.Guard.NoWrite != nil {
-			fmt.Printf("  guard:")
+		hasExplicitGuard := s.Guard.MaxTurns > 0 || s.Guard.MaxBudget > 0 || s.Guard.NoWrite != nil
+		if hasExplicitGuard {
+			fmt.Printf("%sguard:", detailIndent)
 			if s.Guard.MaxTurns > 0 {
 				fmt.Printf(" max_turns=%d", s.Guard.MaxTurns)
 			}
@@ -421,23 +644,23 @@ func printStepsV4(steps []recipe.Step, indent string, startIdx int) {
 			if s.Guard.NoWrite != nil {
 				fmt.Printf(" no_write=%t", *s.Guard.NoWrite)
 			}
+			fmt.Printf("\n")
+		} else if s.Agent != "" && s.Output != "" && s.Output != "diff" {
+			// WHY: non-diff outputs are write-restricted by default; showing it in dry-run prevents surprises.
+			fmt.Printf("%sguard: no_write=true (implicit)\n", detailIndent)
 		}
 
 		// v4 retry policy is moved under `on_failure:`.
 		if s.OnFailure != nil {
-			fmt.Printf("\n")
-			fmt.Printf("%s  on_failure:\n", indent+fmt.Sprintf("%d. ", stepIdx))
-			fmt.Printf("%s    retry=%d\n", indent+fmt.Sprintf("%d. ", stepIdx), s.OnFailure.Retry)
-			fmt.Printf("%s    strategy=%s\n", indent+fmt.Sprintf("%d. ", stepIdx), formatStrategyV4(s.OnFailure.Strategy))
+			fmt.Printf("%son_failure: retry=%d", detailIndent, s.OnFailure.Retry)
 			if s.OnFailure.RestartFrom != "" {
-				fmt.Printf("%s    restart_from=%s\n", indent+fmt.Sprintf("%d. ", stepIdx), s.OnFailure.RestartFrom)
+				fmt.Printf(" restart_from=%s", s.OnFailure.RestartFrom)
 			}
+			fmt.Printf("\n")
 		}
-		fmt.Println()
 
 		if len(s.Steps) > 0 {
-			subIndent := indent + "     "
-			printStepsV4(s.Steps, subIndent, 1)
+			printStepsV4(s.Steps, detailIndent, stepNum)
 		}
 	}
 }
@@ -550,7 +773,7 @@ func printStateBagResolutionsV4(rec *recipe.Recipe) {
 	}
 
 	var any bool
-	fmt.Println("State Bag resolutions:")
+	fmt.Println("State Bag Resolutions:")
 	for _, n := range nodes {
 		if n.prompt == "" {
 			continue

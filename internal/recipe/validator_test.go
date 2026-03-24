@@ -157,6 +157,42 @@ func TestValidate_WorkflowStepRules(t *testing.T) {
 	}
 }
 
+func TestValidate_WorkflowStepRejectsGateParallelOnFailure(t *testing.T) {
+	r := &Recipe{
+		Name: "x",
+		Steps: []Step{
+			{
+				Name:     "sub",
+				Workflow: "child",
+				Gate:     []Validator{{Type: "compile"}},
+				Parallel: true,
+				OnFailure: &OnFailure{
+					Retry: 1,
+				},
+			},
+		},
+	}
+	errs := Validate(r)
+	if len(errs) == 0 {
+		t.Fatal("expected workflow step structural errors")
+	}
+	var hasGate, hasParallel, hasOnFailure bool
+	for _, e := range errs {
+		if strings.Contains(e.Message, "cannot set gate") {
+			hasGate = true
+		}
+		if strings.Contains(e.Message, "cannot set parallel") {
+			hasParallel = true
+		}
+		if strings.Contains(e.Message, "cannot set on_failure") {
+			hasOnFailure = true
+		}
+	}
+	if !hasGate || !hasParallel || !hasOnFailure {
+		t.Fatalf("missing expected errors, got: %v", errs)
+	}
+}
+
 func TestValidate_GuardOnlyOnAgent(t *testing.T) {
 	r := &Recipe{
 		Name: "x",

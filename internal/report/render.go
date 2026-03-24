@@ -134,6 +134,7 @@ func RenderCookReport(cr *CookReport, o RenderOpts) string {
 	fmt.Fprintf(&b, "Tokens       %s in / %s out\n", formatIntThousands(cr.TotalTokensIn), formatIntThousands(cr.TotalTokensOut))
 	fmt.Fprintf(&b, "Files        %d changed (+%d / -%d)\n", cr.FilesChanged, cr.LinesAdded, cr.LinesRemoved)
 	fmt.Fprintf(&b, "Retries      %d\n", cr.Retries)
+	fmt.Fprintf(&b, "Guard triggers: %d\n", cr.GuardTriggers)
 	fmt.Fprintf(&b, "Agents       %s\n", strings.Join(cr.Agents, ", "))
 
 	fmt.Fprintf(&b, "\nSteps\n")
@@ -183,6 +184,13 @@ func RenderCookReport(cr *CookReport, o RenderOpts) string {
 			}
 			bar := contextBar(pct/100, 20, o)
 			fmt.Fprintf(&b, "  %-18s %5s %s\n", trimW(s.Name, 18), label, bar)
+		}
+	}
+	if len(cr.Guards) > 0 {
+		fmt.Fprintf(&b, "\nGuards\n")
+		fmt.Fprintf(&b, "%s\n", o.hBar())
+		for _, g := range cr.Guards {
+			fmt.Fprintf(&b, "  %-20s %s (attempt %d)\n", trimW(g.Step, 20), g.Guard, g.Attempt)
 		}
 	}
 

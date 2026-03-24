@@ -57,6 +57,14 @@ type CookReport struct {
 	ContextUsage   map[string]float64
 	StallTotal     StallMetrics
 	TurnDist       map[string]int
+	GuardTriggers  int
+	Guards         []GuardTrigger
+}
+
+type GuardTrigger struct {
+	Step    string
+	Guard   string
+	Attempt int
 }
 
 // NormalizeManifestEvent maps legacy v3 ledger keys so operators can audit old runs without a separate code path.
@@ -135,6 +143,7 @@ func BuildCookReport(cookDir string) (*CookReport, error) {
 	stepStarts := map[string]int{}
 	ac := map[string]*stepAccum{}
 	gateOf := map[string]string{}
+	var guards []GuardTrigger
 
 	for _, line := range lines {
 		line = bytes.TrimSpace(line)
@@ -265,6 +274,14 @@ func BuildCookReport(cookDir string) (*CookReport, error) {
 		case "gate_failed":
 			sp, _ := ev["step"].(string)
 			gateOf[sp] = "fail"
+		case "guard_triggered":
+			sp, _ := ev["step"].(string)
+			gd, _ := ev["guard"].(string)
+			guards = append(guards, GuardTrigger{
+				Step:    anonymizeForeachStepPath(sp),
+				Guard:   gd,
+				Attempt: stepStarts[sp],
+			})
 		}
 	}
 	_ = stepsN
@@ -283,18 +300,20 @@ func BuildCookReport(cookDir string) (*CookReport, error) {
 	}
 
 	cr := &CookReport{
-		CookID:         cookID,
-		Recipe:         recipe,
-		Status:         cookStatus,
-		DurationMs:     durationMs,
-		TotalCostUSD:   totalCost,
-		Retries:        retries,
-		MaxBudgetUSD:   maxBudget,
-		Agents:         agents,
-		TTFD:           map[string]int{},
-		StallLoops:     map[string]StallMetrics{},
-		ContextUsage:   map[string]float64{},
-		TurnDist:       map[string]int{},
+		CookID:        cookID,
+		Recipe:        recipe,
+		Status:        cookStatus,
+		DurationMs:    durationMs,
+		TotalCostUSD:  totalCost,
+		Retries:       retries,
+		MaxBudgetUSD:  maxBudget,
+		Agents:        agents,
+		TTFD:          map[string]int{},
+		StallLoops:    map[string]StallMetrics{},
+		ContextUsage:  map[string]float64{},
+		TurnDist:      map[string]int{},
+		GuardTriggers: len(guards),
+		Guards:        guards,
 	}
 
 	if finalPatchPath != "" {
@@ -433,6 +452,15 @@ func BuildCookReport(cookDir string) (*CookReport, error) {
 	cr.StallTotal = AggregateStall(collectStalls(cr.Steps))
 
 	return cr, nil
+}
+
+func anonymizeForeachStepPath(stepPath string) string {
+	parts := strings.Split(stepPath, "/")
+	// WHY: guard reports should keep step shape while masking foreach item names.
+	if len(parts) >= 3 {
+		parts[len(parts)-2] = "*"
+	}
+	return strings.Join(parts, "/")
 }
 
 func pathBase(p string) string {

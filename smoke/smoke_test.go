@@ -131,7 +131,7 @@ func TestSmokeDryRunV4(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("run exit %d: %s", code, stdout)
 	}
-	for _, s := range []string{"Budget:", "$5.00", "gate=", "on_failure:", "State Bag resolutions:"} {
+	for _, s := range []string{"Budget:", "$5.00", "gate=", "on_failure:", "State Bag Resolutions:"} {
 		if !strings.Contains(stdout, s) {
 			t.Errorf("stdout missing %q: %s", s, stdout)
 		}
@@ -1004,6 +1004,45 @@ func TestSmokeReportLastN(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "Success rate") {
 		t.Errorf("report should contain Success rate: %s", stdout)
+	}
+}
+
+func TestSmokeFullV03(t *testing.T) {
+	dir := setupSmokeRepo(t)
+	writeSpec(t, dir, specAdd)
+	stdout, stderr, _ := runGump(t, dir, "run", "spec.md", "--workflow", "tdd", "--agent-stub")
+	if !strings.Contains(stderr, "[gump]") {
+		t.Fatalf("expected stream marker [gump] in stderr: %s", stderr)
+	}
+	runDir := latestRunDir(t, dir)
+	if _, err := os.Stat(filepath.Join(runDir, "state-bag.json")); err != nil {
+		t.Fatalf("state-bag.json missing: %v", err)
+	}
+	reportOut, _, rc := runGump(t, dir, "report")
+	if rc != 0 {
+		t.Fatalf("report exit %d: %s", rc, reportOut)
+	}
+	if !strings.Contains(reportOut, "Gump Report") && !strings.Contains(stdout, "Gump Report") {
+		t.Fatalf("report output missing title: %s", reportOut)
+	}
+}
+
+func TestSmokeTelemetryOptOut(t *testing.T) {
+	dir := setupSmokeRepo(t)
+	_, _, code := runGump(t, dir, "config", "set", "analytics", "false")
+	if code != 0 {
+		t.Fatalf("config set analytics false failed: %d", code)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".gump", "config.toml"))
+	if err != nil {
+		t.Fatalf("read ~/.gump/config.toml: %v", err)
+	}
+	if !strings.Contains(string(data), "enabled = false") {
+		t.Fatalf("expected analytics opt-out persisted in config.toml: %s", string(data))
 	}
 }
 

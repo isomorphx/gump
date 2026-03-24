@@ -21,6 +21,7 @@ type AggregateReport struct {
 	AvgCostUSD    float64
 	TotalCostUSD  float64
 	AvgRetries    float64
+	GuardTriggers int
 	Rows          []AggregateStepRow
 	CostByRun     []struct {
 		Label string
@@ -116,8 +117,8 @@ func BuildAggregateReport(repoRoot string, cookIDs []string) (*AggregateReport, 
 		return nil, fmt.Errorf("no run data")
 	}
 	ar := &AggregateReport{
-		N:          len(cooks),
-		TotalRuns:  len(cooks),
+		N:         len(cooks),
+		TotalRuns: len(cooks),
 	}
 	if len(recipes) == 1 {
 		for r := range recipes {
@@ -156,6 +157,7 @@ func BuildAggregateReport(repoRoot string, cookIDs []string) (*AggregateReport, 
 		if err != nil {
 			continue
 		}
+		ar.GuardTriggers += cr.GuardTriggers
 		data, _ := os.ReadFile(filepath.Join(dir, "manifest.ndjson"))
 		for _, s := range cr.Steps {
 			pat := normalizeStepPattern(s.Name, s.Item)
@@ -255,6 +257,7 @@ func RenderAggregateReport(ar *AggregateReport, o RenderOpts) string {
 	fmt.Fprintf(&b, "  Avg cost       $%.2f\n", ar.AvgCostUSD)
 	fmt.Fprintf(&b, "  Total cost     $%.2f\n", ar.TotalCostUSD)
 	fmt.Fprintf(&b, "  Avg retries    %.1f\n", ar.AvgRetries)
+	fmt.Fprintf(&b, "  Guard triggers: %d\n", ar.GuardTriggers)
 
 	fmt.Fprintf(&b, "\nSteps × Agents\n")
 	fmt.Fprintf(&b, "%s\n", h)

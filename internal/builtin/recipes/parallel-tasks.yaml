@@ -18,6 +18,8 @@ steps:
       - name: impl
         agent: claude-sonnet
         output: diff
+        guard:
+          max_turns: 60
         prompt: |
           Implement: {item.description}
           Only touch: {item.files}

@@ -38,10 +38,10 @@ func envWithout(env []string, keys ...string) []string {
 }
 
 var (
-	binaryPath string
-	binaryPathV99 string
+	binaryPath     string
+	binaryPathV99  string
 	binaryPathV001 string
-	stubBinDir string // PATH prefix so pudding runs stub qwen/opencode instead of real CLIs
+	stubBinDir     string // PATH prefix so pudding runs stub qwen/opencode instead of real CLIs
 )
 
 func TestMain(m *testing.M) {
@@ -104,9 +104,9 @@ func envWithStubPath() map[string]string {
 		return nil
 	}
 	return map[string]string{
-		"PATH":                   stubBinDir + string(filepath.ListSeparator) + os.Getenv("PATH"),
+		"PATH": stubBinDir + string(filepath.ListSeparator) + os.Getenv("PATH"),
 		// Prefer `GUMP_*`, but keep `PUDDING_*` for backward compatibility with adapters/tests.
-		"GUMP_E2E_QWEN_BIN":     filepath.Join(stubBinDir, "qwen"),
+		"GUMP_E2E_QWEN_BIN":    filepath.Join(stubBinDir, "qwen"),
 		"PUDDING_E2E_QWEN_BIN": filepath.Join(stubBinDir, "qwen"),
 	}
 }
@@ -681,7 +681,7 @@ func TestCookDryRunNoWorktree(t *testing.T) {
 			t.Errorf(".pudding/cooks/ should be empty, got %d entries", len(entries))
 		}
 	}
-	if !strings.Contains(stdout, "dry run") {
+	if !strings.Contains(stdout, "Gump Dry Run") {
 		t.Errorf("stdout should contain dry run: %s", stdout)
 	}
 }
@@ -1319,7 +1319,7 @@ func TestCookDryRunDoesNotRunEngine(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stdout)
 	}
-	if !strings.Contains(stdout, "dry run") || !strings.Contains(stdout, "Steps:") {
+	if !strings.Contains(stdout, "Gump Dry Run") || !strings.Contains(stdout, "Steps:") {
 		t.Error("dry-run should print plan")
 	}
 	worktreesDir := filepath.Join(dir, ".gump", "worktrees")

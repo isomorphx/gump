@@ -17,6 +17,8 @@ steps:
       - name: tests
         agent: claude-haiku
         output: diff
+        guard:
+          max_turns: 40
         prompt: |
           Write comprehensive tests for: {item.description}
           Cover edge cases and error conditions.
@@ -29,6 +31,8 @@ steps:
       - name: impl
         agent: claude-haiku
         output: diff
+        guard:
+          max_turns: 60
         session: reuse
         prompt: |
           Implement code to pass all tests.

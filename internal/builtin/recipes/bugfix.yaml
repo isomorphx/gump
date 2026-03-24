@@ -17,6 +17,8 @@ steps:
       - name: reproduce
         agent: claude-haiku
         output: diff
+        guard:
+          max_turns: 30
         prompt: |
           Write a test that reproduces this bug: {item.description}
         gate: [compile, tests_found]
@@ -27,6 +29,8 @@ steps:
       - name: patch
         agent: claude-haiku
         output: diff
+        guard:
+          max_turns: 40
         session: reuse
         prompt: |
           Fix the bug. The reproduction test must pass.

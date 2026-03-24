@@ -12,9 +12,9 @@ const (
 	userConfigFile = "config.toml"
 )
 
-func userConfigDir() string { return brand.StateDir() }
+func userConfigDir() string     { return brand.StateDir() }
 func projectConfigName() string { return brand.Lower() + ".toml" }
-func envPrefix() string { return brand.Upper() }
+func envPrefix() string         { return brand.Upper() }
 
 // Load merges config in priority order so project overrides user overrides defaults.
 // We do not fail when config files are missing so a fresh install works without setup.
@@ -22,11 +22,13 @@ func Load() (*Config, *Source, error) {
 	cfg := &Config{
 		DefaultAgent: "claude-sonnet",
 		LogLevel:     "info",
-		UpdateCheck: true,
+		Analytics:    true,
+		UpdateCheck:  true,
 	}
 	src := &Source{
 		DefaultAgent: "default",
 		LogLevel:     "default",
+		Analytics:    "default",
 	}
 
 	// User config: ~/.<brand>/config.toml
@@ -73,11 +75,14 @@ func findProjectConfig(dir string) string {
 type fileConfig struct {
 	DefaultAgent string `toml:"default_agent"`
 	LogLevel     string `toml:"log_level"`
-	Update       struct {
+	Analytics    struct {
+		Enabled *bool `toml:"enabled"`
+	} `toml:"analytics"`
+	Update struct {
 		// Pointer lets us detect "not set" vs "set to false/true".
 		Check *bool `toml:"check"`
 	} `toml:"update"`
-	Validation   struct {
+	Validation struct {
 		CompileCmd  string `toml:"compile_cmd"`
 		TestCmd     string `toml:"test_cmd"`
 		LintCmd     string `toml:"lint_cmd"`
@@ -105,6 +110,10 @@ func applyFile(cfg *Config, src *Source, path, label string) {
 	if f.LogLevel != "" {
 		cfg.LogLevel = f.LogLevel
 		src.LogLevel = label
+	}
+	if f.Analytics.Enabled != nil {
+		cfg.Analytics = *f.Analytics.Enabled
+		src.Analytics = label
 	}
 	// Spec semantics: if any source says `check = false`, disable update checking.
 	// This is NOT a priority/cascade; it is an OR on "false means disabled".

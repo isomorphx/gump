@@ -218,6 +218,17 @@ func validateStep(rec *Recipe, s *Step, path string, scopePath string, seenNames
 	if hasWorkflowRef && hasAgent {
 		errs = append(errs, ValidationError{Path: path, Message: "workflow step cannot set agent"})
 	}
+	if hasWorkflowRef && !hasAgent && !hasSteps && !hasForeach {
+		if hasGate {
+			errs = append(errs, ValidationError{Path: path, Message: "workflow step cannot set gate"})
+		}
+		if s.Parallel {
+			errs = append(errs, ValidationError{Path: path, Message: "workflow step cannot set parallel"})
+		}
+		if s.OnFailure != nil {
+			errs = append(errs, ValidationError{Path: path, Message: "workflow step cannot set on_failure"})
+		}
+	}
 	if hasWorkflowRef && hasSteps && !hasForeach {
 		errs = append(errs, ValidationError{Path: path, Message: "workflow step cannot include inline steps unless used with foreach"})
 	}

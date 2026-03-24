@@ -273,7 +273,7 @@ func TestM1_10_DryRunStateBagResolutions(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stdout)
 	}
-	if !strings.Contains(stdout, "State Bag resolutions:") {
+	if !strings.Contains(stdout, "State Bag Resolutions:") {
 		t.Fatalf("stdout missing State Bag resolutions: %s", stdout)
 	}
 	if !strings.Contains(stdout, "steps.impl.output") || !strings.Contains(stdout, "→") {
@@ -344,4 +344,3 @@ func TestM1_13_BuiltinRecipesParseAndValidate(t *testing.T) {
 		}
 	}
 }
-
