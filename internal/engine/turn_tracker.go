@@ -220,6 +220,25 @@ func extractActionsAndTokens(raw []byte) ([]Action, int, int) {
 			}
 		}
 	}
+	if t := asString(base["type"]); t == "tool_call/started" || t == "tool_call/completed" {
+		if toolCall, ok := base["tool_call"].(map[string]interface{}); ok {
+			for toolType, details := range toolCall {
+				target := ""
+				if d, ok := details.(map[string]interface{}); ok {
+					if args, ok := d["args"].(map[string]interface{}); ok {
+						target = asString(args["path"])
+						if target == "" {
+							target = asString(args["command"])
+						}
+					}
+				}
+				if strings.EqualFold(toolType, "editToolCall") {
+					toolType = "write"
+				}
+				actions = append(actions, Action{Type: toolType, Target: target})
+			}
+		}
+	}
 	if t := asString(base["type"]); t == "step_finish" {
 		if part, ok := base["part"].(map[string]interface{}); ok {
 			if tok, ok := part["tokens"].(map[string]interface{}); ok {

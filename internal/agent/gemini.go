@@ -16,14 +16,16 @@ import (
 )
 
 const (
-	geminiBin         = "gemini"
-	geminiStreamJSON  = "stream-json"
+	geminiBin        = "gemini"
+	geminiStreamJSON = "stream-json"
 )
 
 var geminiAgentToModel = map[string]string{
-	"gemini-flash":      "gemini-3-flash-preview",
+	"gemini-flash":      "gemini-3-flash",
 	"gemini-pro":        "gemini-3.1-pro-preview",
-	"gemini-flash-lite": "gemini-3.1-flash-lite-preview",
+	"gemini-flash-lite": "gemini-3.1-flash-lite",
+	"gemini-25-pro":     "gemini-2.5-pro-preview",
+	"gemini-25-flash":   "gemini-2.5-flash",
 }
 
 func geminiModelFlag(agentName string) string {
@@ -152,12 +154,12 @@ func (a *GeminiAdapter) Stream(process *Process) <-chan StreamEvent {
 
 func (a *GeminiAdapter) parseGeminiLine(line, raw []byte, process *Process) StreamEvent {
 	var base struct {
-		Type    string `json:"type"`
-		Role    string `json:"role"`
-		Content string `json:"content"`
-		Status  string `json:"status"`
+		Type      string `json:"type"`
+		Role      string `json:"role"`
+		Content   string `json:"content"`
+		Status    string `json:"status"`
 		SessionID string `json:"session_id"`
-		Stats   *struct {
+		Stats     *struct {
 			InputTokens  int `json:"input_tokens"`
 			OutputTokens int `json:"output_tokens"`
 			Cached       int `json:"cached"`
@@ -246,15 +248,15 @@ func (a *GeminiAdapter) Wait(process *Process) (*RunResult, error) {
 	}
 	// NumTurns: Gemini stream-json does not expose turn count; tool_calls is the only usable proxy for reporting.
 	res := &RunResult{
-		ExitCode:          exitCode,
-		SessionID:         acc.SessionID,
-		NumTurns:          acc.ToolCalls,
-		InputTokens:       acc.InputTokens,
-		OutputTokens:      acc.OutputTokens,
-		CacheReadTokens:   acc.Cached,
-		Result:            acc.LastMessage,
-		DurationMs:        durationMs,
-		ModelUsage:        map[string]ModelMetrics{},
+		ExitCode:        exitCode,
+		SessionID:       acc.SessionID,
+		NumTurns:        acc.ToolCalls,
+		InputTokens:     acc.InputTokens,
+		OutputTokens:    acc.OutputTokens,
+		CacheReadTokens: acc.Cached,
+		Result:          acc.LastMessage,
+		DurationMs:      durationMs,
+		ModelUsage:      map[string]ModelMetrics{},
 	}
 	if acc.SessionID == "" {
 		log.Printf("gemini: no init.session_id in stream")

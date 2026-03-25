@@ -22,12 +22,14 @@ func Load() (*Config, *Source, error) {
 	cfg := &Config{
 		DefaultAgent: "claude-sonnet",
 		LogLevel:     "info",
+		Verbose:      false,
 		Analytics:    true,
 		UpdateCheck:  true,
 	}
 	src := &Source{
 		DefaultAgent: "default",
 		LogLevel:     "default",
+		Verbose:      "default",
 		Analytics:    "default",
 	}
 
@@ -75,7 +77,10 @@ func findProjectConfig(dir string) string {
 type fileConfig struct {
 	DefaultAgent string `toml:"default_agent"`
 	LogLevel     string `toml:"log_level"`
-	Analytics    struct {
+	Display      struct {
+		Verbose *bool `toml:"verbose"`
+	} `toml:"display"`
+	Analytics struct {
 		Enabled *bool `toml:"enabled"`
 	} `toml:"analytics"`
 	Update struct {
@@ -110,6 +115,10 @@ func applyFile(cfg *Config, src *Source, path, label string) {
 	if f.LogLevel != "" {
 		cfg.LogLevel = f.LogLevel
 		src.LogLevel = label
+	}
+	if f.Display.Verbose != nil {
+		cfg.Verbose = *f.Display.Verbose
+		src.Verbose = label
 	}
 	if f.Analytics.Enabled != nil {
 		cfg.Analytics = *f.Analytics.Enabled

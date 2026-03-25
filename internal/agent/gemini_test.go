@@ -13,9 +13,11 @@ func TestGeminiModelFlag(t *testing.T) {
 		wantOmit bool
 	}{
 		{"gemini", "", true},
-		{"gemini-flash", "gemini-3-flash-preview", false},
+		{"gemini-flash", "gemini-3-flash", false},
 		{"gemini-pro", "gemini-3.1-pro-preview", false},
-		{"gemini-flash-lite", "gemini-3.1-flash-lite-preview", false},
+		{"gemini-flash-lite", "gemini-3.1-flash-lite", false},
+		{"gemini-25-pro", "gemini-2.5-pro-preview", false},
+		{"gemini-25-flash", "gemini-2.5-flash", false},
 		{"gemini-custom", "custom", false},
 	}
 	for _, tt := range tests {

@@ -11,10 +11,12 @@ func TestModelFlag(t *testing.T) {
 		want  string
 	}{
 		{"claude-opus", "opus"},
+		{"claude-opusplan", "opusplan"},
 		{"claude-sonnet", "sonnet"},
 		{"claude-haiku", "haiku"},
 		{"claude-opus-4-6", "claude-opus-4-6"},
-		{"claude-sonnet-4-5", "claude-sonnet-4-5-20250929"},
+		{"claude-sonnet-4-6", "claude-sonnet-4-6"},
+		{"claude-haiku-4-5", "claude-haiku-4-5-20251001"},
 		{"unknown-agent", "unknown-agent"},
 	}
 	for _, tt := range tests {
@@ -74,4 +76,3 @@ func TestEnvWithout(t *testing.T) {
 		}
 	}
 }
-

@@ -25,11 +25,12 @@ const opencodeBin = "opencode"
 var opencodeSessionIDRegex = regexp.MustCompile(`^ses_`)
 
 var opencodeAgentToModel = map[string]string{
-	"opencode-sonnet": "anthropic/claude-sonnet-4-5",
-	"opencode-opus":   "anthropic/claude-opus-4-5",
+	"opencode-sonnet": "anthropic/claude-sonnet-4-6",
+	"opencode-opus":   "anthropic/claude-opus-4-6",
 	"opencode-haiku":  "anthropic/claude-haiku-4-5",
-	"opencode-gpt5":   "openai/gpt-5.3",
-	"opencode-gemini": "google/gemini-2.5-pro",
+	"opencode-gpt54":  "openai/gpt-5.4",
+	"opencode-gpt53":  "openai/gpt-5.3",
+	"opencode-gemini": "google/gemini-3.1-pro",
 }
 
 func opencodeModelFlag(agentName string) string {
@@ -47,9 +48,9 @@ func opencodeModelFlag(agentName string) string {
 
 // OpenCodeAdapter runs the OpenCode CLI; stdout is file-backed because the CLI blocks on pipe.
 type OpenCodeAdapter struct {
-	mu              sync.Mutex
-	lastLaunchCLI   string
-	maxTurnsWarned  bool
+	mu             sync.Mutex
+	lastLaunchCLI  string
+	maxTurnsWarned bool
 	// file-backed run: we keep handles to close after Wait and to read stdout
 	procFiles map[*Process]*opencodeProcFiles
 }
@@ -223,10 +224,10 @@ func (a *OpenCodeAdapter) Stream(process *Process) <-chan StreamEvent {
 									cacheRead = base.Part.Tokens.Cache.Read
 								}
 								process.AddPartialMetrics(RunResult{
-									InputTokens:    base.Part.Tokens.Input,
-									OutputTokens:   base.Part.Tokens.Output,
+									InputTokens:     base.Part.Tokens.Input,
+									OutputTokens:    base.Part.Tokens.Output,
 									CacheReadTokens: cacheRead,
-									NumTurns:       1,
+									NumTurns:        1,
 								})
 							}
 						default:
@@ -316,16 +317,16 @@ func (a *OpenCodeAdapter) Wait(process *Process) (*RunResult, error) {
 	}
 
 	res := &RunResult{
-		ExitCode:           exitCode,
-		SessionID:          agg.SessionID,
-		IsError:            agg.IsError,
-		DurationMs:         agg.DurationMs,
-		NumTurns:           agg.NumTurns,
-		Result:             agg.Result,
-		InputTokens:        agg.InputTokens,
-		OutputTokens:       agg.OutputTokens,
-		CacheReadTokens:    agg.CacheReadTokens,
-		ModelUsage:         map[string]ModelMetrics{},
+		ExitCode:        exitCode,
+		SessionID:       agg.SessionID,
+		IsError:         agg.IsError,
+		DurationMs:      agg.DurationMs,
+		NumTurns:        agg.NumTurns,
+		Result:          agg.Result,
+		InputTokens:     agg.InputTokens,
+		OutputTokens:    agg.OutputTokens,
+		CacheReadTokens: agg.CacheReadTokens,
+		ModelUsage:      map[string]ModelMetrics{},
 	}
 
 	if agg.SessionID == "" {
@@ -346,7 +347,9 @@ var errOpenCodeCLIFail error = &errorOpenCodeCLI{}
 
 type errorOpenCodeCLI struct{}
 
-func (e *errorOpenCodeCLI) Error() string { return "opencode: CLI exited non-zero (e.g. invalid flag or auth)" }
+func (e *errorOpenCodeCLI) Error() string {
+	return "opencode: CLI exited non-zero (e.g. invalid flag or auth)"
+}
 
 type opencodeAggregate struct {
 	SessionID       string

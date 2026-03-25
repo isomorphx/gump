@@ -1,6 +1,6 @@
 # Compiled binaries
-pudding
-/pudding
+gump
+/gump
 *.exe
 *.exe~
 *.dll
@@ -55,5 +55,4 @@ __debug_bin*
 
 # Spec
 spec*.md
-.pudding
 .gump

@@ -195,6 +195,14 @@ type ReplayStarted struct {
 
 func (ReplayStarted) EventType() string { return "replay_started" }
 
+type RunResumed struct {
+	RunID          string `json:"run_id"`
+	ResumedFrom    string `json:"resumed_from"`
+	PreviousStatus string `json:"previous_status"`
+}
+
+func (RunResumed) EventType() string { return "run_resumed" }
+
 // GroupCompleted is emitted at the end of a composite group.
 type GroupCompleted struct {
 	Step       string `json:"step"`

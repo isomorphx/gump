@@ -5,15 +5,16 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/isomorphx/gump/internal/config"
 	"github.com/isomorphx/gump/internal/brand"
+	"github.com/isomorphx/gump/internal/config"
 	"github.com/isomorphx/gump/internal/ledger"
 	"github.com/isomorphx/gump/internal/report"
 	"github.com/spf13/cobra"
 )
 
 var (
-	reportLastN int
+	reportLastN  int
+	reportDetail string
 )
 
 var reportCmd = &cobra.Command{
@@ -26,6 +27,7 @@ var reportCmd = &cobra.Command{
 
 func init() {
 	reportCmd.Flags().IntVar(&reportLastN, "last", 0, "Aggregate over the last N runs (default 1 if no run-id)")
+	reportCmd.Flags().StringVar(&reportDetail, "detail", "", "Show detailed artifacts for a step (e.g. --detail impl)")
 	rootCmd.AddCommand(reportCmd)
 }
 
@@ -62,6 +64,19 @@ func runReport(cmd *cobra.Command, args []string) error {
 		if len(cookIDs) == 0 {
 			return fmt.Errorf("no runs found — execute gump run first")
 		}
+	}
+
+	if reportDetail != "" {
+		if len(cookIDs) != 1 {
+			return fmt.Errorf("--detail expects a single run")
+		}
+		cookDir := filepath.Join(runsDir, cookIDs[0])
+		detail, err := report.BuildStepDetail(cookDir, reportDetail)
+		if err != nil {
+			return err
+		}
+		fmt.Print(report.RenderStepDetail(detail))
+		return nil
 	}
 
 	// Single-run TUI: one id and not a multi-run aggregate request (--last 2+).

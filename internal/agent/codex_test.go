@@ -8,12 +8,14 @@ import (
 
 func TestCodexModelFlag(t *testing.T) {
 	tests := []struct {
-		agent   string
-		want    string
+		agent    string
+		want     string
 		wantOmit bool
 	}{
 		{"codex", "", true},
-		{"codex-gpt5", "gpt-5.3-codex", false},
+		{"codex-gpt54", "gpt-5.4", false},
+		{"codex-gpt54-mini", "gpt-5.4-mini", false},
+		{"codex-gpt53", "gpt-5.3-codex", false},
 		{"codex-o3", "o3-codex", false},
 		{"codex-custom", "custom", false},
 	}
@@ -42,8 +44,8 @@ func TestCodexBuildArgs(t *testing.T) {
 		t.Errorf("launch without -m: got %v", args)
 	}
 	// With model
-	argsM := codexBuildArgs("hi", "codex-gpt5", false, "")
-	if !contains(argsM, "-m") || !contains(argsM, "gpt-5.3-codex") {
+	argsM := codexBuildArgs("hi", "codex-gpt54", false, "")
+	if !contains(argsM, "-m") || !contains(argsM, "gpt-5.4") {
 		t.Errorf("launch with model: got %v", argsM)
 	}
 	// Resume

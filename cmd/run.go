@@ -32,6 +32,7 @@ var (
 	cookDryRun      bool
 	cookAgentStub   bool
 	cookReplay      bool
+	cookResume      bool
 	cookFromStep    string
 	cookCookID      string
 	cookCookIDAlias string
@@ -44,7 +45,7 @@ var cookCmd = &cobra.Command{
 	Short: "Run a workflow against a spec file",
 	Long:  "Resolve the workflow, parse and validate it, then run the workflow (or dry-run to only show the plan).",
 	Args: func(cmd *cobra.Command, args []string) error {
-		if cookReplay {
+		if cookReplay || cookResume {
 			return nil
 		}
 		return cobra.ExactArgs(1)(cmd, args)
@@ -59,11 +60,12 @@ func init() {
 	cookCmd.Flags().BoolVar(&cookDryRun, "dry-run", false, "Only show plan, do not execute")
 	cookCmd.Flags().BoolVar(&cookAgentStub, "agent-stub", false, "Use stub agent for testing (writes files, no real agent)")
 	cookCmd.Flags().BoolVar(&cookReplay, "replay", false, "Replay from a step of the last fatal run (use with --from-step)")
+	cookCmd.Flags().BoolVar(&cookResume, "resume", false, "Resume the last fatal/aborted run in place")
 	cookCmd.Flags().StringVar(&cookFromStep, "from-step", "", "Step path or short name to start from (required for --replay)")
 	cookCmd.Flags().StringVar(&cookCookID, "run", "", "Run UUID to replay (default: last fatal run)")
 	cookCmd.Flags().StringVar(&cookCookIDAlias, "cook", "", "Deprecated alias for --run")
 	_ = cookCmd.Flags().MarkDeprecated("cook", "use --run instead")
-	cookCmd.Flags().BoolVar(&cookVerbose, "verbose", false, "Full streaming output (no truncation)")
+	cookCmd.Flags().BoolVarP(&cookVerbose, "verbose", "v", false, "Full streaming output (no truncation)")
 	cookCmd.Flags().StringVar(&cookPauseAfter, "pause-after", "", "Inject HITL pause after the given step name; the step must exist in the recipe")
 	rootCmd.AddCommand(cookCmd)
 }
@@ -94,6 +96,7 @@ func runCookReplay(specPath string, cfg *config.Config, resolved *recipe.Resolve
 			Gemini:   agent.NewGeminiAdapter(),
 			Qwen:     agent.NewQwenAdapter(),
 			OpenCode: agent.NewOpenCodeAdapter(),
+			Cursor:   agent.NewCursorAdapter(),
 		}
 	}
 	agentsCLI := agentsCLIFromRecipe(rec, cookAgentStub)
@@ -133,6 +136,9 @@ func runCook(cmd *cobra.Command, args []string) error {
 			cookCookID = cookCookIDAlias
 		}
 	}
+	if cookReplay && cookResume {
+		return fmt.Errorf("--replay and --resume are mutually exclusive")
+	}
 
 	cfg, _, err := config.Load()
 	if err != nil {
@@ -150,6 +156,50 @@ func runCook(cmd *cobra.Command, args []string) error {
 	var specPath string
 	var resolved *recipe.ResolvedRecipe
 	var rec *recipe.Recipe
+
+	if cookResume {
+		if len(args) > 0 {
+			return fmt.Errorf("spec file is not used with --resume")
+		}
+		var resolver agent.AdapterResolver
+		if cookAgentStub {
+			resolver = &agent.StubResolver{Stub: &agent.StubAdapter{}}
+		} else {
+			resolver = &agent.Registry{
+				Claude:   agent.NewClaudeAdapter(),
+				Codex:    agent.NewCodexAdapter(),
+				Gemini:   agent.NewGeminiAdapter(),
+				Qwen:     agent.NewQwenAdapter(),
+				OpenCode: agent.NewOpenCodeAdapter(),
+				Cursor:   agent.NewCursorAdapter(),
+			}
+		}
+		cwd, _ := os.Getwd()
+		repoRoot, err := sandbox.GitRepoRoot(cwd)
+		if err != nil {
+			return err
+		}
+		if cmd.Flags().Changed("verbose") {
+			engine.Verbose = cookVerbose
+		} else {
+			engine.Verbose = cfg.Verbose
+		}
+		c, stepsCount, err := engine.RunResume(repoRoot, cookCookID, resolver, cfg, nil)
+		if err != nil {
+			if c != nil {
+				_ = cook.WriteStatus(c.CookDir, "fatal")
+			}
+			return err
+		}
+		if c == nil {
+			return fmt.Errorf("resume: internal error (no run returned)")
+		}
+		if err := cook.WriteStatusWithSteps(c.CookDir, "pass", stepsCount); err != nil {
+			return err
+		}
+		fmt.Printf("Resume complete (run %s, %d steps). Run 'gump apply' to merge results.\n", c.ID, stepsCount)
+		return nil
+	}
 
 	if cookReplay {
 		if len(args) >= 1 && cookRecipe != "" {
@@ -317,13 +367,18 @@ func runCook(cmd *cobra.Command, args []string) error {
 			Gemini:   agent.NewGeminiAdapter(),
 			Qwen:     agent.NewQwenAdapter(),
 			OpenCode: agent.NewOpenCodeAdapter(),
+			Cursor:   agent.NewCursorAdapter(),
 		}
 	}
 
 	eng := engine.New(c, rec, resolver, cfg, string(specContent))
 	eng.AgentsCLI = agentsCLIFromRecipe(rec, cookAgentStub)
 	eng.CookAgentOverride = cookAgent
-	engine.Verbose = cookVerbose
+	if cmd.Flags().Changed("verbose") {
+		engine.Verbose = cookVerbose
+	} else {
+		engine.Verbose = cfg.Verbose
+	}
 	if cookPauseAfter != "" {
 		if recipe.FindStepByName(rec.Steps, cookPauseAfter, "") == nil {
 			return fmt.Errorf("--pause-after: step %q not found in recipe", cookPauseAfter)

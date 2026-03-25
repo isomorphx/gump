@@ -90,6 +90,15 @@ type rawOnFailure struct {
 	Retry       *int          `yaml:"retry"`
 	Strategy    []interface{} `yaml:"strategy"`
 	RestartFrom string        `yaml:"restart_from"`
+	GateFail    *rawFailureAction `yaml:"gate_fail"`
+	GuardFail   *rawFailureAction `yaml:"guard_fail"`
+	ReviewFail  *rawFailureAction `yaml:"review_fail"`
+}
+
+type rawFailureAction struct {
+	Retry       *int          `yaml:"retry"`
+	Strategy    []interface{} `yaml:"strategy"`
+	RestartFrom string        `yaml:"restart_from"`
 }
 
 func parseStep(raw *rawStep, pathPrefix string, recipeDir string) (*Step, error) {
@@ -119,17 +128,36 @@ func parseStep(raw *rawStep, pathPrefix string, recipeDir string) (*Step, error)
 
 	var onFailure *OnFailure
 	if raw.OnFailure != nil {
+		on := &OnFailure{}
+		if raw.OnFailure.Retry != nil {
+			on.Retry = *raw.OnFailure.Retry
+		}
+		on.RestartFrom = raw.OnFailure.RestartFrom
 		strategy, err := parseStrategy(raw.OnFailure.Strategy, pathPrefix+".on_failure.strategy")
 		if err != nil {
 			return nil, err
 		}
-		on := &OnFailure{
-			Retry:       0,
-			Strategy:    strategy,
-			RestartFrom: raw.OnFailure.RestartFrom,
+		on.Strategy = strategy
+		if raw.OnFailure.GateFail != nil {
+			act, err := parseFailureAction(raw.OnFailure.GateFail, pathPrefix+".on_failure.gate_fail")
+			if err != nil {
+				return nil, err
+			}
+			on.GateFail = act
 		}
-		if raw.OnFailure.Retry != nil {
-			on.Retry = *raw.OnFailure.Retry
+		if raw.OnFailure.GuardFail != nil {
+			act, err := parseFailureAction(raw.OnFailure.GuardFail, pathPrefix+".on_failure.guard_fail")
+			if err != nil {
+				return nil, err
+			}
+			on.GuardFail = act
+		}
+		if raw.OnFailure.ReviewFail != nil {
+			act, err := parseFailureAction(raw.OnFailure.ReviewFail, pathPrefix+".on_failure.review_fail")
+			if err != nil {
+				return nil, err
+			}
+			on.ReviewFail = act
 		}
 		onFailure = on
 	}
@@ -183,6 +211,22 @@ func parseStep(raw *rawStep, pathPrefix string, recipeDir string) (*Step, error)
 		Gate:      gateValidators,
 		OnFailure: onFailure,
 	}, nil
+}
+
+func parseFailureAction(raw *rawFailureAction, ctx string) (*FailureAction, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	out := &FailureAction{RestartFrom: raw.RestartFrom}
+	if raw.Retry != nil {
+		out.Retry = *raw.Retry
+	}
+	strategy, err := parseStrategy(raw.Strategy, ctx+".strategy")
+	if err != nil {
+		return nil, err
+	}
+	out.Strategy = strategy
+	return out, nil
 }
 
 func intPtrOrZero(v *int) int {

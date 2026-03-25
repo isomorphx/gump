@@ -15,13 +15,15 @@ func TestContextFileForAgent(t *testing.T) {
 		{"claude", "CLAUDE.md"},
 		{"claude-opus", "CLAUDE.md"},
 		{"codex", "AGENTS.md"},
-		{"codex-gpt5", "AGENTS.md"},
+		{"codex-gpt54", "AGENTS.md"},
 		{"gemini", "GEMINI.md"},
 		{"gemini-flash", "GEMINI.md"},
 		{"qwen", "QWEN.md"},
 		{"qwen-coder-plus", "QWEN.md"},
 		{"opencode", "AGENTS.md"},
 		{"opencode-sonnet", "AGENTS.md"},
+		{"cursor", ".cursor/rules/gump-agent.mdc"},
+		{"cursor-opus", ".cursor/rules/gump-agent.mdc"},
 	}
 	for _, tt := range tests {
 		got := ContextFileForAgent(tt.agent)
@@ -33,7 +35,7 @@ func TestContextFileForAgent(t *testing.T) {
 
 func TestWritePlanContext_RespectsContextFile(t *testing.T) {
 	dir := t.TempDir()
-	for _, ctxFile := range []string{"CLAUDE.md", "AGENTS.md", "GEMINI.md", "QWEN.md"} {
+	for _, ctxFile := range []string{"CLAUDE.md", "AGENTS.md", "GEMINI.md", "QWEN.md", ".cursor/rules/gump-agent.mdc"} {
 		err := WritePlanContext(dir, "spec content here", ctxFile)
 		if err != nil {
 			t.Fatalf("WritePlanContext(..., %q): %v", ctxFile, err)
@@ -48,6 +50,9 @@ func TestWritePlanContext_RespectsContextFile(t *testing.T) {
 		}
 		if !strings.Contains(string(data), "Gump — Agent Instructions") {
 			t.Errorf("%s: content missing header", ctxFile)
+		}
+		if strings.HasSuffix(ctxFile, ".mdc") && !strings.Contains(string(data), "alwaysApply: true") {
+			t.Errorf("%s: mdc content missing frontmatter", ctxFile)
 		}
 		_ = os.Remove(path)
 	}
@@ -80,6 +85,9 @@ func TestWriteWithBackup_BackupFilename(t *testing.T) {
 func TestRemoveOtherContextFiles(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range AllProviderContextFiles {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0755); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -96,6 +104,9 @@ func TestRemoveOtherContextFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "QWEN.md")); err == nil {
 		t.Error("QWEN.md should be removed")
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".cursor/rules/gump-agent.mdc")); err == nil {
+		t.Error("cursor gump-agent.mdc should be removed")
 	}
 }
 
@@ -115,6 +126,21 @@ func TestRestoreAllContextFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(backupPath); err == nil {
 		t.Error("backup file should be removed after restore")
+	}
+}
+
+func TestRestoreAllContextFiles_RemovesCursorRule(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".cursor/rules/gump-agent.mdc")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("generated"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	RestoreAllContextFiles(dir)
+	if _, err := os.Stat(path); err == nil {
+		t.Fatal("cursor gump-agent.mdc should be removed during restore")
 	}
 }
 

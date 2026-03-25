@@ -76,6 +76,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	checkGemini()
 	checkQwen()
 	checkOpenCode()
+	checkCursor()
 	return nil
 }
 
@@ -392,3 +393,55 @@ func checkOpenCode() {
 	fmt.Println("  opencode     ✗  harness failed (file or status missing)")
 }
 
+func checkCursor() {
+	if os.Getenv("GUMP_E2E_SKIP_CURSOR_DOCTOR") == "1" {
+		fmt.Println("  cursor: ok")
+		return
+	}
+	if _, err := exec.LookPath("cursor-agent"); err != nil {
+		fmt.Println("  cursor       not installed (skipped)")
+		return
+	}
+	// WHY: Cursor doctor checks have hung when wrapped in workspace/status flows.
+	// Keep this to the minimal known-good direct invocation.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	runCmd := exec.CommandContext(ctx, "cursor-agent",
+		"-p",
+		"--output-format", "json",
+		"--yolo",
+		"--trust",
+		"echo test",
+	)
+	out, runErr := runCmd.CombinedOutput()
+	if runErr != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			fmt.Println("  cursor: installed but not responding (timeout)")
+		} else {
+			fmt.Printf("  cursor       ✗  %v (harness failed)\n", runErr)
+		}
+		return
+	}
+	// Cursor json mode may return one object or an array of objects depending on version.
+	jsonOK := false
+	var one map[string]interface{}
+	if json.Unmarshal(out, &one) == nil {
+		if _, ok := one["session_id"]; ok {
+			jsonOK = true
+		}
+	}
+	if !jsonOK {
+		var many []map[string]interface{}
+		if json.Unmarshal(out, &many) == nil && len(many) > 0 {
+			last := many[len(many)-1]
+			if t, _ := last["type"].(string); t == "result" {
+				jsonOK = true
+			}
+		}
+	}
+	if jsonOK {
+		fmt.Println("  cursor: ok")
+		return
+	}
+	fmt.Println("  cursor       ⚠  compat mode (JSON parse failed, status works)")
+}

@@ -59,6 +59,8 @@ type Engine struct {
 	AgentsCLI            map[string]string
 	CookAgentOverride    string // CLI --agent overrides step agent when set
 	FromStep             string // when set (replay), skip steps until we reach this path
+	ResumePassedSteps    map[string]bool
+	ResumePreviousStatus string
 	replayOriginalCookID string // for replay_started event
 	replayRestoredCommit string
 	stepCompletedCount   int
@@ -76,6 +78,7 @@ type Engine struct {
 	// pendingRestartFrom delivers review/gate failure context to the first attempt after restart_from.
 	pendingRestartFrom map[string]*ErrorContext
 	restartCycle       int
+	lastFailureSource  string
 	// PauseAfterStep is set by CLI --pause-after to force HITL on that step name (in-memory only).
 	PauseAfterStep string
 }
@@ -97,6 +100,10 @@ func New(c *cook.Cook, rec *recipe.Recipe, r agent.AdapterResolver, cfg *config.
 func (e *Engine) Run() error {
 	defer agent.RestoreAllContextFiles(e.Cook.WorktreeDir)
 	e.cookRunStartedAt = time.Now()
+	// WHY: resume re-uses the worktree; a stale engine-step-attempt.json makes the stub pick the wrong by_attempt key.
+	if e.ResumePassedSteps != nil && len(e.ResumePassedSteps) > 0 {
+		_ = os.Remove(filepath.Join(e.Cook.WorktreeDir, brand.StateDir(), "engine-step-attempt.json"))
+	}
 	if e.Cook.Ledger != nil {
 		_ = e.Cook.Ledger.Emit(ledger.RunStarted{
 			RunID:     e.Cook.ID,
@@ -112,6 +119,13 @@ func (e *Engine) Run() error {
 				OriginalCookID: e.replayOriginalCookID,
 				FromStep:       e.FromStep,
 				RestoredCommit: e.replayRestoredCommit,
+			})
+		}
+		if e.FromStep != "" && e.ResumePreviousStatus != "" {
+			_ = e.Cook.Ledger.Emit(ledger.RunResumed{
+				RunID:          e.Cook.ID,
+				ResumedFrom:    e.FromStep,
+				PreviousStatus: e.ResumePreviousStatus,
 			})
 		}
 	}
@@ -144,6 +158,9 @@ func (e *Engine) executeSteps(steps []recipe.Step, taskContext *plan.Task, pathP
 					continue
 				}
 			}
+		}
+		if e.ResumePassedSteps != nil && e.ResumePassedSteps[stepPath] {
+			continue
 		}
 
 		// Composite: has sub-steps or recipe reference (with optional foreach over a plan step's output).
@@ -227,9 +244,9 @@ func (e *Engine) executeSteps(steps []recipe.Step, taskContext *plan.Task, pathP
 				}
 				return e.executeSteps(subSteps, nil, stepPath, sessionMap, step.Session, agentOverride, inheritedVars)
 			}
-			if step.OnFailure != nil && step.OnFailure.Retry > 1 {
+			if step.OnFailure != nil && step.MaxAttempts() > 1 {
 				preGroupCommit, _ := PreStepCommit(e.Cook.WorktreeDir)
-				maxAttempts := step.OnFailure.Retry
+				maxAttempts := step.MaxAttempts()
 				expanded := recipe.ExpandStrategy(step.OnFailure.Strategy)
 				if len(expanded) == 0 {
 					expanded = []recipe.StrategyEntry{{Type: "same", Count: 1}}
@@ -523,6 +540,7 @@ func (e *Engine) runAtomicStep(step *recipe.Step, stepPath string, taskContext *
 
 // runAtomicStepOnce runs one attempt of an atomic step; returns (err, preStepCommit) so retry can reset. preStepCommit is captured at start.
 func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskContext *plan.Task, lastSessionByAgent map[string]string, parentSession recipe.SessionConfig, attempt int, agentOverride string, errorContext *ErrorContext, extraVars map[string]string, inheritedVars map[string]string) (err error, preStepCommit string) {
+	e.lastFailureSource = ""
 	preStepCommit, _ = PreStepCommit(e.Cook.WorktreeDir)
 	maxGlobal := step.MaxAttempts()
 	if maxGlobal < 1 {
@@ -634,13 +652,17 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 		}
 	case "reuse":
 		if attempt == 1 && lastSessionByAgent != nil {
-			if sid, ok := lastSessionByAgent[agent.AgentPrefix(step.Agent)]; ok {
+			if sid, ok := lastSessionByAgent[agent.AgentPrefix(agentToUse)]; ok {
 				sessionID = sid
+			}
+			if sessionID == "" {
+				// WHY: resume runs skip previously completed steps, so the in-memory map is empty.
+				sessionID = e.StateBag.Get(stepPath, stepPath, "session_id")
 			}
 		}
 	case "reuse-targeted":
 		if attempt == 1 {
-			sessionID = e.resolveTargetedSession(effectiveSession.Target, step.Agent)
+			sessionID = e.resolveTargetedSession(effectiveSession.Target, agentToUse)
 			if sessionID == "" {
 				fmt.Fprintf(os.Stderr, "[%s] session: reuse: %s — target step not found or different agent, using fresh session\n", brand.Lower(), effectiveSession.Target)
 			}
@@ -834,6 +856,7 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 			})
 		}
 		e.setLastStepOutcome(stepPath, attempt, "guard_failed", int(time.Since(exec.StartedAt).Milliseconds()), nil, outputMode, "", false)
+		e.lastFailureSource = "guard_fail"
 		return fmt.Errorf("step %s: guard %s triggered: %s", step.Name, guardName, guardReason), preStepCommit
 	}
 	isTimeoutError := result.IsError && (result.ExitCode == -1 || (proc != nil && proc.TimedOut))
@@ -924,6 +947,7 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 		exec.FinishedAt = time.Now()
 		e.Steps = append(e.Steps, exec)
 		e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), nil, outputMode, "", false)
+		e.lastFailureSource = "gate_fail"
 		fmt.Fprintf(os.Stderr, "[%s]\tfatal\tFATAL: agent error\n", stepPath)
 		return fmt.Errorf("step %s: agent reported error", step.Name), preStepCommit
 	}
@@ -978,6 +1002,7 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 			exec.FinishedAt = time.Now()
 			e.Steps = append(e.Steps, exec)
 			e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), dc, outputMode, raw, true)
+			e.lastFailureSource = "review_fail"
 			fmt.Fprintf(os.Stderr, "[%s]\tFAIL\t%s\n", stepPath, errMsg)
 			RetryValidationFailed(errMsg, "")
 			if raw != "" {
@@ -1019,6 +1044,7 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 			exec.FinishedAt = time.Now()
 			e.Steps = append(e.Steps, exec)
 			e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), dc, outputMode, outputValue, true)
+			e.lastFailureSource = "review_fail"
 			fmt.Fprintf(os.Stderr, "[%s]\tFAIL\t%s\n", stepPath, errMsg)
 			RetryValidationFailed("review did not pass", "")
 			if e.globalStepAttempts[stepPath] > step.MaxAttempts() {
@@ -1092,6 +1118,7 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 			e.StateBag.SetStepCheckResult(stepPath, "fail")
 			e.StateBag.SetRunMetric("status", "fail")
 			e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), dc, outputMode, outputValue, true)
+			e.lastFailureSource = "gate_fail"
 			fmt.Fprintf(os.Stderr, "[%s]\tFAIL\t%s\n", stepPath, errMsg)
 			return fmt.Errorf("step %s: %s", step.Name, errMsg), preStepCommit
 		}
@@ -1164,6 +1191,7 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 		e.StateBag.SetStepCheckResult(stepPath, "fail")
 		e.StateBag.SetRunMetric("status", "fail")
 		e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), dc, outputMode, outputValue, true)
+		e.lastFailureSource = "gate_fail"
 		formatValidationDetails(os.Stderr, stepPath, vr)
 		RetryValidationFailed("validation failed: "+strings.Join(failedNames, ", "), "")
 		if e.globalStepAttempts[stepPath] > step.MaxAttempts() {
@@ -1501,6 +1529,10 @@ func (e *Engine) resolveTargetedSession(target string, currentAgent string) stri
 			}
 			return e.Steps[i].SessionID
 		}
+	}
+	// WHY: `gump run --resume` starts with an empty e.Steps; the state bag still holds the target step's session_id.
+	if sid := e.StateBag.Get(target, target, "session_id"); sid != "" {
+		return sid
 	}
 	return ""
 }

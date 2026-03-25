@@ -23,12 +23,13 @@ const (
 
 // codexAgentToModel maps recipe agent names to Codex -m flag so users get predictable models without knowing CLI identifiers.
 var codexAgentToModel = map[string]string{
-	"codex-gpt5":  "gpt-5.3-codex",
-	"codex-gpt53": "gpt-5.3-codex",
-	"codex-gpt52": "gpt-5.2-codex",
-	"codex-gpt51": "gpt-5.1-codex",
-	"codex-o3":    "o3-codex",
-	"codex-spark": "gpt-5.3-codex-spark",
+	"codex-gpt54":       "gpt-5.4",
+	"codex-gpt54-mini":  "gpt-5.4-mini",
+	"codex-gpt53":       "gpt-5.3-codex",
+	"codex-gpt53-spark": "gpt-5.3-codex-spark",
+	"codex-gpt52":       "gpt-5.2-codex",
+	"codex-gpt51-max":   "gpt-5.1-codex-max",
+	"codex-o3":          "o3-codex",
 }
 
 func codexModelFlag(agentName string) string {
@@ -53,15 +54,15 @@ type CodexAdapter struct {
 }
 
 type codexAccumulator struct {
-	SessionID     string
-	NumTurns      int
-	InputTokens   int
-	OutputTokens  int
-	CacheRead     int
-	LastMessage   string
-	HasTurnDone   bool
-	StreamError   string
-	StartTime     time.Time
+	SessionID    string
+	NumTurns     int
+	InputTokens  int
+	OutputTokens int
+	CacheRead    int
+	LastMessage  string
+	HasTurnDone  bool
+	StreamError  string
+	StartTime    time.Time
 }
 
 // NewCodexAdapter returns an adapter that invokes the `codex` CLI.
@@ -164,7 +165,7 @@ func (a *CodexAdapter) Stream(process *Process) <-chan StreamEvent {
 
 func (a *CodexAdapter) parseCodexLine(line, raw []byte, process *Process) StreamEvent {
 	var base struct {
-		Type string          `json:"type"`
+		Type string `json:"type"`
 		Item *struct {
 			ID       string `json:"id"`
 			Type     string `json:"type"`
@@ -175,9 +176,9 @@ func (a *CodexAdapter) parseCodexLine(line, raw []byte, process *Process) Stream
 		} `json:"item"`
 		ThreadID string `json:"thread_id"`
 		Usage    *struct {
-			InputTokens     int `json:"input_tokens"`
-			CachedInput     int `json:"cached_input_tokens"`
-			OutputTokens    int `json:"output_tokens"`
+			InputTokens  int `json:"input_tokens"`
+			CachedInput  int `json:"cached_input_tokens"`
+			OutputTokens int `json:"output_tokens"`
 		} `json:"usage"`
 	}
 	_ = json.Unmarshal(line, &base)
@@ -206,10 +207,10 @@ func (a *CodexAdapter) parseCodexLine(line, raw []byte, process *Process) Stream
 			acc.OutputTokens += base.Usage.OutputTokens
 			acc.CacheRead += base.Usage.CachedInput
 			process.AddPartialMetrics(RunResult{
-				InputTokens:    base.Usage.InputTokens,
-				OutputTokens:   base.Usage.OutputTokens,
+				InputTokens:     base.Usage.InputTokens,
+				OutputTokens:    base.Usage.OutputTokens,
 				CacheReadTokens: base.Usage.CachedInput,
-				NumTurns:       1,
+				NumTurns:        1,
 			})
 		}
 		return StreamEvent{Type: "result", Raw: raw}
@@ -285,15 +286,15 @@ func (a *CodexAdapter) Wait(process *Process) (*RunResult, error) {
 		durationMs = int(time.Since(acc.StartTime).Milliseconds())
 	}
 	res := &RunResult{
-		ExitCode:       exitCode,
-		SessionID:      acc.SessionID,
-		NumTurns:       acc.NumTurns,
-		InputTokens:    acc.InputTokens,
-		OutputTokens:   acc.OutputTokens,
+		ExitCode:        exitCode,
+		SessionID:       acc.SessionID,
+		NumTurns:        acc.NumTurns,
+		InputTokens:     acc.InputTokens,
+		OutputTokens:    acc.OutputTokens,
 		CacheReadTokens: acc.CacheRead,
-		Result:         acc.LastMessage,
-		DurationMs:     durationMs,
-		ModelUsage:     map[string]ModelMetrics{},
+		Result:          acc.LastMessage,
+		DurationMs:      durationMs,
+		ModelUsage:      map[string]ModelMetrics{},
 	}
 	if acc.SessionID == "" {
 		log.Printf("codex: no thread.started.thread_id in stream")

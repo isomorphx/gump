@@ -19,13 +19,14 @@ func init() {
 	rootCmd.AddCommand(modelsCmd)
 }
 
-// displayOrder is the order of aliases for "gump models" output (by provider: claude, codex, gemini, qwen, opencode).
+// displayOrder is the order of aliases for "gump models" output by provider.
 var modelsDisplayOrder = []string{
-	"claude", "claude-opus", "claude-opus[1m]", "claude-sonnet", "claude-sonnet[1m]", "claude-haiku",
-	"codex", "codex-gpt53", "codex-gpt52", "codex-gpt51", "codex-o3", "codex-spark",
-	"gemini", "gemini-flash", "gemini-pro", "gemini-flash-lite",
+	"claude", "claude-opusplan", "claude-opus", "claude-opus[1m]", "claude-sonnet", "claude-sonnet[1m]", "claude-haiku",
+	"codex", "codex-gpt54", "codex-gpt54-mini", "codex-gpt53", "codex-gpt53-spark", "codex-gpt52", "codex-gpt51-max", "codex-o3",
+	"gemini", "gemini-flash", "gemini-pro", "gemini-flash-lite", "gemini-25-pro", "gemini-25-flash",
 	"qwen", "qwen-plus", "qwen-local",
-	"opencode",
+	"opencode", "opencode-opus", "opencode-sonnet", "opencode-haiku", "opencode-gpt54", "opencode-gpt53", "opencode-gemini",
+	"cursor", "cursor-sonnet", "cursor-sonnet-thinking", "cursor-opus", "cursor-opus-thinking", "cursor-gpt5", "cursor-gemini",
 }
 
 func runModels(cmd *cobra.Command, args []string) error {

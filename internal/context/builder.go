@@ -1,12 +1,12 @@
 package context
 
 import (
+	stdctx "context"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
-	stdctx "context"
 	"strings"
 	"time"
 
@@ -26,25 +26,25 @@ const (
 // ContextParams is the full input for the v4 system prompt. One struct keeps retry truncation,
 // mode-specific sections, and provider-agnostic text in a single place so CLAUDE.md and AGENTS.md never diverge.
 type ContextParams struct {
-	OutputMode       string
-	Prompt           string
-	Spec             string
-	IsRetry          bool
-	Attempt          int
-	MaxAttempts      int
-	Error            string
-	Diff             string
-	ReviewComment    string
-	BlastRadius      []string
-	Conventions      string
-	ContextSources   []ContextSourceResult
-	SessionReuse     bool
-	IsReplan         bool
-	ItemName         string
-	ItemDesc         string
-	ItemFiles        string
-	MaxErrorChars    int
-	MaxDiffChars     int
+	OutputMode     string
+	Prompt         string
+	Spec           string
+	IsRetry        bool
+	Attempt        int
+	MaxAttempts    int
+	Error          string
+	Diff           string
+	ReviewComment  string
+	BlastRadius    []string
+	Conventions    string
+	ContextSources []ContextSourceResult
+	SessionReuse   bool
+	IsReplan       bool
+	ItemName       string
+	ItemDesc       string
+	ItemFiles      string
+	MaxErrorChars  int
+	MaxDiffChars   int
 }
 
 // ContextSourceResult is one resolved recipe context: entry (file contents or bash stdout).
@@ -56,21 +56,22 @@ type ContextSourceResult struct {
 
 // RetrySection is passed from the engine on validation failure so the next attempt can see diff/stderr.
 type RetrySection struct {
-	Attempt        int
-	MaxAttempts    int
-	Diff           string
-	Error          string
-	Remaining      int
-	EscalateFrom   string
-	EscalateTo     string
-	ReviewComment  string
+	Attempt       int
+	MaxAttempts   int
+	Diff          string
+	Error         string
+	Remaining     int
+	EscalateFrom  string
+	EscalateTo    string
+	ReviewComment string
 }
 
 var originalBackupByContextFile = map[string]string{
-	"CLAUDE.md": brand.StateDir() + "-original-CLAUDE.md",
-	"AGENTS.md": brand.StateDir() + "-original-AGENTS.md",
-	"GEMINI.md": brand.StateDir() + "-original-GEMINI.md",
-	"QWEN.md":   brand.StateDir() + "-original-QWEN.md",
+	"CLAUDE.md":                    brand.StateDir() + "-original-CLAUDE.md",
+	"AGENTS.md":                    brand.StateDir() + "-original-AGENTS.md",
+	"GEMINI.md":                    brand.StateDir() + "-original-GEMINI.md",
+	"QWEN.md":                      brand.StateDir() + "-original-QWEN.md",
+	".cursor/rules/gump-agent.mdc": ".pudding-original-cursor-gump-agent.mdc",
 }
 
 // BuildAgentContext returns the full markdown for the provider context file (CLAUDE.md, AGENTS.md, …).
@@ -145,7 +146,7 @@ func buildPlanBody(p ContextParams) string {
 		b.WriteString(buildRetrySection(p))
 	}
 	b.WriteString("\n## Output format\n\n")
-	b.WriteString("You MUST create a file called `"+brand.StateDir()+"/out/plan.json` in this repository.\n")
+	b.WriteString("You MUST create a file called `" + brand.StateDir() + "/out/plan.json` in this repository.\n")
 	b.WriteString("The file MUST contain a JSON array of items with this exact schema:\n\n")
 	b.WriteString("```json\n[\n  {\n")
 	b.WriteString(`    "name": "short-kebab-case-name",` + "\n")
@@ -184,7 +185,7 @@ func buildArtifactBody(p ContextParams) string {
 		b.WriteString(buildRetrySection(p))
 	}
 	b.WriteString("\n## Output format\n\n")
-	b.WriteString("You MUST write your output to the file `"+brand.StateDir()+"/out/artifact.txt` in this repository.\n")
+	b.WriteString("You MUST write your output to the file `" + brand.StateDir() + "/out/artifact.txt` in this repository.\n")
 	b.WriteString("The content is free-form text. Write whatever the task requires.\n")
 	b.WriteString("Do NOT modify any source code files unless the task explicitly requires it.\n\n")
 	b.WriteString("## Git rules\n\n")
@@ -209,7 +210,7 @@ func buildReviewBody(p ContextParams) string {
 		b.WriteString(buildRetrySection(p))
 	}
 	b.WriteString("\n## Output format\n\n")
-	b.WriteString("You MUST create a file called `"+brand.StateDir()+"/out/review.json` in this repository.\n")
+	b.WriteString("You MUST create a file called `" + brand.StateDir() + "/out/review.json` in this repository.\n")
 	b.WriteString("The file MUST contain a JSON object with this exact schema:\n\n")
 	b.WriteString("```json\n{\n")
 	b.WriteString(`  "pass": true,` + "\n")
@@ -293,7 +294,7 @@ func buildReplanMarkdown(p ContextParams) string {
 	b.WriteString("2. Propose a different approach entirely.\n")
 	b.WriteString("3. Implement it directly if the decomposition is unnecessary.\n\n")
 	b.WriteString("## Output format\n\n")
-	b.WriteString("Same as a plan step. Create `"+brand.StateDir()+"/out/plan.json` with the schema:\n\n")
+	b.WriteString("Same as a plan step. Create `" + brand.StateDir() + "/out/plan.json` with the schema:\n\n")
 	b.WriteString("```json\n[\n  {\n")
 	b.WriteString(`    "name": "short-kebab-case-name",` + "\n")
 	b.WriteString(`    "description": "What this task accomplishes.",` + "\n")
@@ -586,6 +587,9 @@ var agentInstructionsHeader = "# " + agentBrandTitle + " — Agent Instructions"
 // content from a previous step must not be mistaken for the user’s original (restore would undo the last step).
 func writeAgentContextFile(worktreeDir, contextFile, body string) error {
 	path := filepath.Join(worktreeDir, contextFile)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
 	backupName := originalBackupByContextFile[contextFile]
 	if backupName == "" {
 		backupName = brand.StateDir() + "-original-" + contextFile
@@ -595,6 +599,7 @@ func writeAgentContextFile(worktreeDir, contextFile, body string) error {
 		if _, err := os.Stat(backupPath); os.IsNotExist(err) {
 			data, _ := os.ReadFile(path)
 			if !strings.HasPrefix(strings.TrimSpace(string(data)), agentInstructionsHeader) {
+				_ = os.MkdirAll(filepath.Dir(backupPath), 0755)
 				_ = os.WriteFile(backupPath, data, 0644)
 			}
 		}

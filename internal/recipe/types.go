@@ -1,6 +1,15 @@
 package recipe
 
-import "strings"
+import (
+	"strings"
+)
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
 
 // Recipe is the v4 mapping: name, description, steps, with optional max_budget.
 type Recipe struct {
@@ -65,12 +74,34 @@ type Guard struct {
 	NoWrite   *bool   `yaml:"no_write"`
 }
 
-// MaxAttempts is the total allowed gate attempts for this step (first try + retries); 1 means no retry loop.
+// MaxAttempts caps global step attempts (engine globalStepAttempts).
+// Flat form: OnFailure.Retry is total attempts (legacy).
+// Conditional form: max of each branch's Retry plus one initial attempt; 1 if all zero.
 func (s *Step) MaxAttempts() int {
-	if s.OnFailure == nil || s.OnFailure.Retry <= 0 {
+	if s.OnFailure == nil {
 		return 1
 	}
-	return s.OnFailure.Retry
+	o := s.OnFailure
+	if !o.IsConditionalForm() {
+		if o.Retry <= 0 {
+			return 1
+		}
+		return o.Retry
+	}
+	m := 0
+	if o.GateFail != nil {
+		m = maxInt(m, o.GateFail.Retry)
+	}
+	if o.GuardFail != nil {
+		m = maxInt(m, o.GuardFail.Retry)
+	}
+	if o.ReviewFail != nil {
+		m = maxInt(m, o.ReviewFail.Retry)
+	}
+	if m <= 0 {
+		return 1
+	}
+	return m + 1
 }
 
 // RestartFromWithoutStrategy is true when on_failure only requests restart_from (no same/escalate/replan slots).
@@ -81,12 +112,25 @@ func (s *Step) RestartFromWithoutStrategy() bool {
 	return len(s.ExpandedOnFailureStrategy()) == 0
 }
 
-// ShouldRunWithRetryLoop is true when the step uses RunWithRetry (retries and/or restart_from-only).
+// ShouldRunWithRetryLoop is true when any on_failure branch allows retries or restart_from-only applies.
 func (s *Step) ShouldRunWithRetryLoop() bool {
 	if s.OnFailure == nil {
 		return false
 	}
-	return s.MaxAttempts() > 1 || s.RestartFromWithoutStrategy()
+	o := s.OnFailure
+	if o.Retry > 0 {
+		return true
+	}
+	if o.GateFail != nil && o.GateFail.Retry > 0 {
+		return true
+	}
+	if o.GuardFail != nil && o.GuardFail.Retry > 0 {
+		return true
+	}
+	if o.ReviewFail != nil && o.ReviewFail.Retry > 0 {
+		return true
+	}
+	return s.RestartFromWithoutStrategy()
 }
 
 // ExpandedOnFailureStrategy expands shorthand strategy entries for the engine retry loop.
@@ -102,6 +146,15 @@ type OnFailure struct {
 	Retry       int             `yaml:"retry"` // max attempts (incl. first)
 	Strategy    []StrategyEntry `yaml:"strategy"`
 	RestartFrom string          `yaml:"restart_from"`
+	GateFail    *FailureAction  `yaml:"gate_fail,omitempty"`
+	GuardFail   *FailureAction  `yaml:"guard_fail,omitempty"`
+	ReviewFail  *FailureAction  `yaml:"review_fail,omitempty"`
+}
+
+type FailureAction struct {
+	Retry       int             `yaml:"retry"`
+	Strategy    []StrategyEntry `yaml:"strategy,omitempty"`
+	RestartFrom string          `yaml:"restart_from,omitempty"`
 }
 
 // StrategyEntry is one strategy slot; Count expands shorthand (e.g. same: 3).
@@ -121,4 +174,53 @@ type Validator struct {
 type ContextSource struct {
 	File string `yaml:"file"`
 	Bash string `yaml:"bash"`
+}
+
+// IsConditionalForm reports whether on_failure uses source-specific routing.
+func (o *OnFailure) IsConditionalForm() bool {
+	if o == nil {
+		return false
+	}
+	return o.GateFail != nil || o.GuardFail != nil || o.ReviewFail != nil
+}
+
+// IsFlatForm reports whether on_failure uses the legacy shape.
+func (o *OnFailure) IsFlatForm() bool {
+	if o == nil {
+		return false
+	}
+	return o.Retry != 0 || len(o.Strategy) > 0 || strings.TrimSpace(o.RestartFrom) != ""
+}
+
+// ActionForFailureSource resolves the effective policy for a fail source.
+// WHY: conditional policies must still fall back to gate_fail by default.
+func (o *OnFailure) ActionForFailureSource(source string) *FailureAction {
+	if o == nil {
+		return nil
+	}
+	if !o.IsConditionalForm() {
+		return &FailureAction{
+			Retry:       o.Retry,
+			Strategy:    o.Strategy,
+			RestartFrom: o.RestartFrom,
+		}
+	}
+	switch source {
+	case "guard_fail":
+		if o.GuardFail != nil {
+			return o.GuardFail
+		}
+	case "review_fail":
+		if o.ReviewFail != nil {
+			return o.ReviewFail
+		}
+	case "gate_fail":
+		if o.GateFail != nil {
+			return o.GateFail
+		}
+	}
+	if o.GateFail != nil {
+		return o.GateFail
+	}
+	return nil
 }

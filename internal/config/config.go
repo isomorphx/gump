@@ -6,6 +6,7 @@ package config
 type Config struct {
 	DefaultAgent string
 	LogLevel     string
+	Verbose      bool
 	// Analytics controls anonymous telemetry; default true, opt-out via config set.
 	Analytics   bool
 	CompileCmd  string
@@ -25,6 +26,7 @@ type Config struct {
 type Source struct {
 	DefaultAgent string
 	LogLevel     string
+	Verbose      string
 	Analytics    string
 	CompileCmd   string
 	TestCmd      string

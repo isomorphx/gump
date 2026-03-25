@@ -26,6 +26,7 @@ type Registry struct {
 	Gemini   AgentAdapter
 	Qwen     AgentAdapter
 	OpenCode AgentAdapter
+	Cursor   AgentAdapter
 }
 
 // AdapterFor returns the adapter for the given agent name, or an error listing available providers.
@@ -60,8 +61,13 @@ func (r *Registry) AdapterFor(agentName string) (AgentAdapter, error) {
 			return nil, fmt.Errorf("opencode adapter not registered")
 		}
 		return r.OpenCode, nil
+	case "cursor":
+		if r.Cursor == nil {
+			return nil, fmt.Errorf("cursor adapter not registered")
+		}
+		return r.Cursor, nil
 	default:
-		return nil, fmt.Errorf("unknown agent '%s': no adapter registered for this provider. Available: claude, codex, gemini, qwen, opencode", agentName)
+		return nil, fmt.Errorf("unknown agent '%s': no adapter registered for this provider. Available: claude, codex, gemini, qwen, opencode, cursor", agentName)
 	}
 }
 
@@ -74,6 +80,8 @@ func ContextFileForAgent(agentName string) string {
 	switch prefix {
 	case "codex", "opencode":
 		return "AGENTS.md"
+	case "cursor":
+		return ".cursor/rules/gump-agent.mdc"
 	case "gemini":
 		return "GEMINI.md"
 	case "qwen":

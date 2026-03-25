@@ -17,20 +17,22 @@ import (
 )
 
 const (
-	claudeBin          = "claude"
-	maxTurnsDefault    = 25
-	maxScanTokenSize   = 1024 * 1024 // 1 MB per line so huge NDJSON lines don't grow buffer unbounded
-	allowedTools       = "Bash,Read,Write,Edit,Glob,Grep"
-	permissionMode     = "acceptEdits"
-	outputFormat       = "stream-json"
+	claudeBin        = "claude"
+	maxTurnsDefault  = 25
+	maxScanTokenSize = 1024 * 1024 // 1 MB per line so huge NDJSON lines don't grow buffer unbounded
+	allowedTools     = "Bash,Read,Write,Edit,Glob,Grep"
+	permissionMode   = "acceptEdits"
+	outputFormat     = "stream-json"
 )
 
 var agentToModel = map[string]string{
-	"claude-opus":        "opus",
-	"claude-sonnet":      "sonnet",
-	"claude-haiku":       "haiku",
-	"claude-opus-4-6":    "claude-opus-4-6",
-	"claude-sonnet-4-5":  "claude-sonnet-4-5-20250929",
+	"claude-opus":       "opus",
+	"claude-opusplan":   "opusplan",
+	"claude-sonnet":     "sonnet",
+	"claude-haiku":      "haiku",
+	"claude-opus-4-6":   "claude-opus-4-6",
+	"claude-sonnet-4-6": "claude-sonnet-4-6",
+	"claude-haiku-4-5":  "claude-haiku-4-5-20251001",
 }
 
 // ClaudeAdapter runs the Claude Code CLI in the worktree with stream-json and timeout handling.
@@ -48,6 +50,9 @@ func NewClaudeAdapter() *ClaudeAdapter {
 func modelFlag(agentName string) string {
 	if m, ok := agentToModel[agentName]; ok {
 		return m
+	}
+	if strings.HasPrefix(agentName, "claude-") {
+		return strings.TrimPrefix(agentName, "claude-")
 	}
 	return agentName
 }

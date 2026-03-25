@@ -306,20 +306,50 @@ func validateStep(rec *Recipe, s *Step, path string, scopePath string, seenNames
 	// on_failure validation (v4).
 	if s.OnFailure != nil {
 		p := path + ".on_failure"
-		if s.OnFailure.Retry < 0 {
-			errs = append(errs, ValidationError{Path: p + ".retry", Message: "retry must be >= 0"})
+		if s.OnFailure.IsConditionalForm() && s.OnFailure.IsFlatForm() {
+			errs = append(errs, ValidationError{Path: p, Message: "flat on_failure (retry/strategy/restart_from) and conditional on_failure (gate_fail/guard_fail/review_fail) are mutually exclusive"})
 		}
-		if s.OnFailure.Retry > 10 {
-			errs = append(errs, ValidationError{Path: p + ".retry", Message: "retry cannot exceed 10"})
-		}
-		for i, e := range s.OnFailure.Strategy {
-			sp := p + ".strategy[" + fmt.Sprint(i) + "]"
-			if !validStrategyTypes[e.Type] {
-				errs = append(errs, ValidationError{Path: sp, Message: "type must be \"same\", \"escalate\", or \"replan\""})
+		if !s.OnFailure.IsConditionalForm() {
+			if s.OnFailure.Retry < 0 {
+				errs = append(errs, ValidationError{Path: p + ".retry", Message: "retry must be >= 0"})
 			}
-			if (e.Type == "escalate" || e.Type == "replan") && e.Agent == "" {
-				errs = append(errs, ValidationError{Path: sp, Message: fmt.Sprintf("agent is required for %q", e.Type)})
+			if s.OnFailure.Retry > 10 {
+				errs = append(errs, ValidationError{Path: p + ".retry", Message: "retry cannot exceed 10"})
 			}
+			for i, e := range s.OnFailure.Strategy {
+				sp := p + ".strategy[" + fmt.Sprint(i) + "]"
+				if !validStrategyTypes[e.Type] {
+					errs = append(errs, ValidationError{Path: sp, Message: "type must be \"same\", \"escalate\", or \"replan\""})
+				}
+				if (e.Type == "escalate" || e.Type == "replan") && e.Agent == "" {
+					errs = append(errs, ValidationError{Path: sp, Message: fmt.Sprintf("agent is required for %q", e.Type)})
+				}
+			}
+		} else {
+			validateFailureAction := func(name string, a *FailureAction) {
+				if a == nil {
+					return
+				}
+				ap := p + "." + name
+				if a.Retry < 0 {
+					errs = append(errs, ValidationError{Path: ap + ".retry", Message: "retry must be >= 0"})
+				}
+				if a.Retry > 10 {
+					errs = append(errs, ValidationError{Path: ap + ".retry", Message: "retry cannot exceed 10"})
+				}
+				for i, e := range a.Strategy {
+					sp := ap + ".strategy[" + fmt.Sprint(i) + "]"
+					if !validStrategyTypes[e.Type] {
+						errs = append(errs, ValidationError{Path: sp, Message: "type must be \"same\", \"escalate\", or \"replan\""})
+					}
+					if (e.Type == "escalate" || e.Type == "replan") && e.Agent == "" {
+						errs = append(errs, ValidationError{Path: sp, Message: fmt.Sprintf("agent is required for %q", e.Type)})
+					}
+				}
+			}
+			validateFailureAction("gate_fail", s.OnFailure.GateFail)
+			validateFailureAction("guard_fail", s.OnFailure.GuardFail)
+			validateFailureAction("review_fail", s.OnFailure.ReviewFail)
 		}
 	}
 
@@ -420,44 +450,68 @@ func validateRestartFromGraph(rec *Recipe, nodes []stepNode, stepNamesByPath map
 		if n.step.OnFailure == nil {
 			continue
 		}
-		if strings.TrimSpace(n.step.OnFailure.RestartFrom) == "" {
-			continue
+		type restartPolicy struct {
+			path        string
+			retry       int
+			restartFrom string
 		}
-		// restart_from without retry limit.
-		if n.step.OnFailure.Retry <= 0 {
-			errs = append(errs, ValidationError{
-				Path:    n.path + ".on_failure",
-				Message: fmt.Sprintf("step '%s' has restart_from without retry limit. This would create an infinite loop.\nHint: add 'retry: N' to on_failure to limit the number of restarts.", n.step.Name),
-			})
-			// Continue graph build to also surface cycles when possible.
-		}
-
-		targetName := strings.TrimSpace(n.step.OnFailure.RestartFrom)
-		candidates := findStepPathsByName(stepNamesByPath, targetName)
-		groupPath := parentStepPath(n.path)
-		filtered := make([]string, 0, len(candidates))
-		for _, c := range candidates {
-			if parentStepPath(c) == groupPath || strings.HasPrefix(c, n.path+"/") {
-				filtered = append(filtered, c)
+		var policies []restartPolicy
+		if n.step.OnFailure.IsConditionalForm() {
+			add := func(name string, action *FailureAction) {
+				if action == nil || strings.TrimSpace(action.RestartFrom) == "" {
+					return
+				}
+				policies = append(policies, restartPolicy{
+					path:        n.path + ".on_failure." + name,
+					retry:       action.Retry,
+					restartFrom: action.RestartFrom,
+				})
 			}
-		}
-		candidates = filtered
-		if len(candidates) == 0 {
-			errs = append(errs, ValidationError{
-				Path:    n.path + ".on_failure.restart_from",
-				Message: fmt.Sprintf("restart_from target %q: step not found in same group", targetName),
+			add("gate_fail", n.step.OnFailure.GateFail)
+			add("guard_fail", n.step.OnFailure.GuardFail)
+			add("review_fail", n.step.OnFailure.ReviewFail)
+		} else if strings.TrimSpace(n.step.OnFailure.RestartFrom) != "" {
+			policies = append(policies, restartPolicy{
+				path:        n.path + ".on_failure",
+				retry:       n.step.OnFailure.Retry,
+				restartFrom: n.step.OnFailure.RestartFrom,
 			})
-			continue
 		}
-		if len(candidates) > 1 {
-			errs = append(errs, ValidationError{
-				Path:    n.path + ".on_failure.restart_from",
-				Message: fmt.Sprintf("restart_from target %q is ambiguous — use fully-qualified path", targetName),
-			})
-			continue
+		for _, pol := range policies {
+			if pol.retry <= 0 {
+				errs = append(errs, ValidationError{
+					Path:    pol.path,
+					Message: fmt.Sprintf("step '%s' has restart_from without retry limit. This would create an infinite loop.\nHint: add 'retry: N' to on_failure to limit the number of restarts.", n.step.Name),
+				})
+				// Continue graph build to also surface cycles when possible.
+			}
+			targetName := strings.TrimSpace(pol.restartFrom)
+			candidates := findStepPathsByName(stepNamesByPath, targetName)
+			groupPath := parentStepPath(n.path)
+			filtered := make([]string, 0, len(candidates))
+			for _, c := range candidates {
+				if parentStepPath(c) == groupPath || strings.HasPrefix(c, n.path+"/") {
+					filtered = append(filtered, c)
+				}
+			}
+			candidates = filtered
+			if len(candidates) == 0 {
+				errs = append(errs, ValidationError{
+					Path:    pol.path + ".restart_from",
+					Message: fmt.Sprintf("restart_from target %q: step not found in same group", targetName),
+				})
+				continue
+			}
+			if len(candidates) > 1 {
+				errs = append(errs, ValidationError{
+					Path:    pol.path + ".restart_from",
+					Message: fmt.Sprintf("restart_from target %q is ambiguous — use fully-qualified path", targetName),
+				})
+				continue
+			}
+			targetPath := candidates[0]
+			adj[n.path] = append(adj[n.path], targetPath)
 		}
-		targetPath := candidates[0]
-		adj[n.path] = append(adj[n.path], targetPath)
 	}
 
 	// DFS cycle detection.

@@ -27,21 +27,6 @@ type ErrorContext struct {
 // RunWithRetry runs one atomic step with the recipe on_failure policy.
 // runOnce runs the step once and returns (nil, _) on pass, (err, preStepCommit) on failure; preStepCommit is the worktree HEAD at start of runOnce so we can reset before the next attempt.
 func (e *Engine) RunWithRetry(step recipe.Step, scopePath string, taskContext *plan.Task, runOnce func(attempt int, agentOverride string, errorContext *ErrorContext) (err error, preStepCommit string)) error {
-	expanded := step.ExpandedOnFailureStrategy()
-	hasRestartOnly := step.OnFailure != nil && strings.TrimSpace(step.OnFailure.RestartFrom) != "" && len(expanded) == 0
-	if len(expanded) == 0 && !hasRestartOnly {
-		expanded = []recipe.StrategyEntry{{Type: "same", Count: 1}}
-	}
-	maxAttempts := step.MaxAttempts()
-	if maxAttempts <= 1 {
-		maxAttempts = 1
-	}
-	maxRetries := maxAttempts - 1
-	if hasRestartOnly {
-		// WHY: on_failure with restart_from but no strategy triggers restart on first gate failure (no same/escalate retries).
-		maxRetries = 0
-	}
-
 	err, preCommit := runOnce(1, "", nil)
 	if err == nil {
 		e.emitStepCompletedFromLast()
@@ -51,23 +36,62 @@ func (e *Engine) RunWithRetry(step recipe.Step, scopePath string, taskContext *p
 	if errorContext != nil {
 		errorContext.Attempt = 1
 	}
+	failCountsBySource := map[string]int{}
+	attempt := 1
 
-	for retryIndex := 0; retryIndex < maxRetries; retryIndex++ {
-		idx := retryIndex
-		if len(expanded) > 0 {
-			if idx >= len(expanded) {
-				idx = len(expanded) - 1
+	for {
+		source := e.lastFailureSource
+		if source == "" {
+			source = "gate_fail"
+		}
+		action := step.OnFailure.ActionForFailureSource(source)
+		if action == nil {
+			break
+		}
+		isConditional := step.OnFailure != nil && step.OnFailure.IsConditionalForm()
+		// Flat form keeps legacy behavior: retry is total attempts.
+		// Conditional form interprets retry as extra retries per source.
+		attemptLimit := action.Retry
+		if !isConditional && attemptLimit <= 0 {
+			attemptLimit = 1
+		}
+		if isConditional && attemptLimit < 0 {
+			attemptLimit = 0
+		}
+		failCountsBySource[source]++
+		canRetry := false
+		if isConditional {
+			canRetry = failCountsBySource[source] <= attemptLimit
+		} else {
+			canRetry = failCountsBySource[source] < attemptLimit
+		}
+		expanded := recipe.ExpandStrategy(action.Strategy)
+		if strings.TrimSpace(action.RestartFrom) != "" && len(expanded) == 0 {
+			// WHY: restart_from-only policy should jump immediately on each failure
+			// instead of burning local same-step retries first.
+			if canRetry {
+				return &ErrRestartFrom{TargetName: strings.TrimSpace(action.RestartFrom), CurrentPath: scopePath}
 			}
-		} else {
-			idx = 0
 		}
-		var strategy recipe.StrategyEntry
-		if len(expanded) > 0 {
-			strategy = expanded[idx]
-		} else {
-			strategy = recipe.StrategyEntry{Type: "same", Count: 1}
+		if !canRetry {
+			if strings.TrimSpace(action.RestartFrom) != "" {
+				if len(expanded) == 0 {
+					// WHY: restart_from-only reached its attempt ceiling; stop instead of looping forever.
+					break
+				}
+				return &ErrRestartFrom{TargetName: strings.TrimSpace(action.RestartFrom), CurrentPath: scopePath}
+			}
+			break
 		}
-		attempt := retryIndex + 2
+		if len(expanded) == 0 {
+			expanded = []recipe.StrategyEntry{{Type: "same", Count: 1}}
+		}
+		idx := failCountsBySource[source] - 1
+		if idx >= len(expanded) {
+			idx = len(expanded) - 1
+		}
+		strategy := expanded[idx]
+		attempt++
 		strategyLabel := strategy.Type
 		if strategy.Agent != "" {
 			strategyLabel = strategy.Type + ": " + strategy.Agent
@@ -77,7 +101,14 @@ func (e *Engine) RunWithRetry(step recipe.Step, scopePath string, taskContext *p
 			e.retryTriggeredCount++
 			e.StateBag.IncrementRunRetries()
 		}
-		RetryTriggerLine(fmt.Sprintf("retry attempt %d/%d (%s)", attempt, maxAttempts, strategyLabel))
+		displayMax := attemptLimit
+		if isConditional {
+			displayMax = attemptLimit + 1
+		}
+		if displayMax <= 0 {
+			displayMax = 1
+		}
+		RetryTriggerLine(fmt.Sprintf("retry attempt %d/%d (%s)", attempt, displayMax, strategyLabel))
 
 		if strategy.Type == "replan" {
 			if err := e.Cook.ResetTo(preCommit); err != nil {
@@ -123,18 +154,14 @@ func (e *Engine) RunWithRetry(step recipe.Step, scopePath string, taskContext *p
 		}
 	}
 
-	if step.OnFailure != nil && strings.TrimSpace(step.OnFailure.RestartFrom) != "" {
-		return &ErrRestartFrom{TargetName: strings.TrimSpace(step.OnFailure.RestartFrom), CurrentPath: scopePath}
-	}
-
 	if e.Cook.Ledger != nil {
 		_ = e.Cook.Ledger.Emit(ledger.CircuitBreaker{
-			Step: scopePath, Scope: "step", Reason: "all attempts exhausted", TotalAttempts: maxAttempts,
+			Step: scopePath, Scope: "step", Reason: "all attempts exhausted", TotalAttempts: attempt,
 		})
 	}
 	e.emitStepCompletedFromLast()
-	fmt.Fprintf(os.Stderr, "        ✗ FATAL: all %d attempts exhausted\n", maxAttempts)
-	return fmt.Errorf("step %s: all %d attempts exhausted", step.Name, maxAttempts)
+	fmt.Fprintf(os.Stderr, "        ✗ FATAL: all attempts exhausted (%d attempts)\n", attempt)
+	return fmt.Errorf("step %s: all attempts exhausted (%d attempts)", step.Name, attempt)
 }
 
 func (e *Engine) lastValidationErrorContext() *ErrorContext {

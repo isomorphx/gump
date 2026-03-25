@@ -1172,3 +1172,97 @@ steps:
 	}
 	assertRunPass(t, dir)
 }
+
+// TestSmokeResumeLive runs a deterministic fatal + resume path (stub) so CI does not require API keys.
+func TestSmokeResumeLive(t *testing.T) {
+	dir := setupSmokeRepo(t)
+	writeSpec(t, dir, "resume smoke")
+	writeRecipe(t, dir, "smoke-resume", `name: smoke-resume
+steps:
+  - name: one
+    agent: stub
+    gate: [compile]
+  - name: two
+    agent: stub
+    gate: [compile]
+`)
+	writeFile(t, dir, ".pudding-test-scenario.json", `{
+  "files": {"main.go": "package main\n\nfunc main() {}\n"},
+  "by_attempt": {
+    "2": {"files": {"z.go": "package main\n\nfunc Z() { !!! }\n"}},
+    "3": {"files": {"z.go": "package main\n\nfunc Z() {}\n"}}
+  }
+}`)
+	_, _, c1 := runGump(t, dir, "run", "spec.md", "--workflow", "smoke-resume", "--agent-stub")
+	if c1 == 0 {
+		t.Fatal("expected first run to fail at gate")
+	}
+	_, _, c2 := runGump(t, dir, "run", "--resume", "--agent-stub")
+	if c2 != 0 {
+		t.Fatalf("resume failed with code %d", c2)
+	}
+	assertRunPass(t, dir)
+}
+
+// TestSmokeOnFailureConditionalLive exercises conditional on_failure with the stub agent.
+func TestSmokeOnFailureConditionalLive(t *testing.T) {
+	dir := setupSmokeRepo(t)
+	writeSpec(t, dir, "conditional smoke")
+	writeRecipe(t, dir, "smoke-cond", `name: smoke-cond
+steps:
+  - name: code
+    agent: stub
+    gate: [compile]
+    on_failure:
+      gate_fail:
+        retry: 2
+        strategy: [same]
+      guard_fail:
+        retry: 1
+        strategy: [same]
+`)
+	writeFile(t, dir, ".pudding-test-scenario.json", `{
+  "files": {"main.go": "package main\n\nfunc main() {}\n"},
+  "by_attempt": {
+    "1": {"files": {"b.go": "package main\n\nfunc B() { !!! }\n"}},
+    "2": {"files": {"b.go": "package main\n\nfunc B() {}\n"}}
+  }
+}`)
+	_, stderr, code := runGump(t, dir, "run", "spec.md", "--workflow", "smoke-cond", "--agent-stub")
+	if code != 0 {
+		t.Fatalf("run failed %d: %s", code, stderr)
+	}
+}
+
+// TestSmokeReportDetailLive checks report --detail after a stub run with retries.
+func TestSmokeReportDetailLive(t *testing.T) {
+	dir := setupSmokeRepo(t)
+	writeSpec(t, dir, "detail smoke")
+	writeRecipe(t, dir, "smoke-det", `name: smoke-det
+steps:
+  - name: impl
+    agent: stub
+    gate: [compile]
+    on_failure:
+      retry: 2
+      strategy: [same]
+`)
+	writeFile(t, dir, ".pudding-test-scenario.json", `{
+  "files": {"main.go": "package main\n\nfunc main() {}\n"},
+  "by_attempt": {
+    "1": {"files": {"q.go": "package main\n\nfunc Q() { !!! }\n"}},
+    "2": {"files": {"q.go": "package main\n\nfunc Q() {}\n"}}
+  }
+}`)
+	_, _, c1 := runGump(t, dir, "run", "spec.md", "--workflow", "smoke-det", "--agent-stub")
+	if c1 != 0 {
+		t.Fatalf("run exit %d", c1)
+	}
+	stdout, _, c2 := runGump(t, dir, "report", "--detail", "impl")
+	if c2 != 0 {
+		t.Fatalf("report exit %d", c2)
+	}
+	if !strings.Contains(stdout, "Attempts:") || !strings.Contains(stdout, "State Bag:") {
+		t.Fatalf("unexpected report --detail output: %s", stdout)
+	}
+}

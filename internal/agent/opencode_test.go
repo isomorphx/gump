@@ -11,10 +11,11 @@ func TestOpenCodeModelFlag(t *testing.T) {
 		want  string
 	}{
 		{"opencode", ""},
-		{"opencode-sonnet", "anthropic/claude-sonnet-4-5"},
-		{"opencode-opus", "anthropic/claude-opus-4-5"},
-		{"opencode-gpt5", "openai/gpt-5.3"},
-		{"opencode-gemini", "google/gemini-2.5-pro"},
+		{"opencode-sonnet", "anthropic/claude-sonnet-4-6"},
+		{"opencode-opus", "anthropic/claude-opus-4-6"},
+		{"opencode-gpt54", "openai/gpt-5.4"},
+		{"opencode-gpt53", "openai/gpt-5.3"},
+		{"opencode-gemini", "google/gemini-3.1-pro"},
 	}
 	for _, tt := range tests {
 		got := opencodeModelFlag(tt.agent)
@@ -57,7 +58,7 @@ func TestOpenCodeBuildArgs_Resume(t *testing.T) {
 	if !strings.Contains(full, "ses_34fdce821ffesYYSMB00M8ifRb") {
 		t.Error("session ID should be in args")
 	}
-	if !strings.Contains(full, "--model anthropic/claude-sonnet-4-5") {
+	if !strings.Contains(full, "--model anthropic/claude-sonnet-4-6") {
 		t.Error("expected --model for opencode-sonnet")
 	}
 }

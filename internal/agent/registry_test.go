@@ -12,8 +12,9 @@ func TestRegistry_AdapterFor(t *testing.T) {
 		Gemini:   NewGeminiAdapter(),
 		Qwen:     NewQwenAdapter(),
 		OpenCode: NewOpenCodeAdapter(),
+		Cursor:   NewCursorAdapter(),
 	}
-	for _, agentName := range []string{"claude", "claude-opus", "codex", "codex-gpt5", "gemini", "gemini-flash", "qwen", "qwen-coder-plus", "opencode", "opencode-sonnet"} {
+	for _, agentName := range []string{"claude", "claude-opus", "codex", "codex-gpt5", "gemini", "gemini-flash", "qwen", "qwen-coder-plus", "opencode", "opencode-sonnet", "cursor", "cursor-opus"} {
 		adapter, err := r.AdapterFor(agentName)
 		if err != nil {
 			t.Errorf("AdapterFor(%q): %v", agentName, err)

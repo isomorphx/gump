@@ -10,15 +10,15 @@ import (
 func normalizeToolType(tool string) string {
 	t := strings.ToLower(strings.TrimSpace(tool))
 	switch t {
-	case "read", "read_file":
+	case "read", "read_file", "readtoolcall":
 		return "read"
-	case "write", "write_file":
+	case "write", "write_file", "writetoolcall":
 		return "write"
-	case "edit", "edit_file":
+	case "edit", "edit_file", "edittoolcall", "multiedittoolcall":
 		return "edit"
-	case "apply_patch":
+	case "apply_patch", "patchtoolcall":
 		return "patch"
-	case "bash", "shell", "command_execution", "run_shell_command":
+	case "bash", "shell", "command_execution", "run_shell_command", "shelltoolcall":
 		return "bash"
 	case "grep", "grep_search", "search":
 		return "search"

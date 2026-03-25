@@ -107,6 +107,36 @@ var (
 	testPlanFile     = ".pud" + "ding-test-plan.json"
 )
 
+// stubSyntheticLaunchCLI mirrors real adapter CLIs for ledger assertions when using StubAdapter.
+func stubSyntheticLaunchCLI(worktree, agentName, sessionID string) string {
+	lower := strings.ToLower(strings.TrimSpace(agentName))
+	switch {
+	case lower == "cursor" || strings.HasPrefix(lower, "cursor-"):
+		cli := "cursor-agent -p --output-format stream-json --yolo --trust --workspace " + worktree
+		if sessionID != "" {
+			cli += " --resume " + sessionID
+		}
+		return cli
+	case strings.HasPrefix(lower, "claude"):
+		args := buildArgs("x", agentName, maxTurns(0), sessionID)
+		return claudeBin + " " + strings.Join(args, " ")
+	case strings.HasPrefix(lower, "codex"):
+		args := codexBuildArgs("x", agentName, sessionID != "", sessionID)
+		for i := 0; i < len(args)-1; i++ {
+			if args[i] == "-C" {
+				args[i+1] = worktree
+				break
+			}
+		}
+		return codexBin + " " + strings.Join(args, " ")
+	case strings.HasPrefix(lower, "gemini"):
+		args := geminiBuildArgs("x", agentName, sessionID != "")
+		return geminiBin + " " + strings.Join(args, " ")
+	default:
+		return ""
+	}
+}
+
 // StubAdapter simulates an agent for e2e tests: writes plan-output.json or <step>.stub and emits NDJSON so the engine sees a real stream/result flow.
 type StubAdapter struct {
 	mu               sync.Mutex
@@ -158,9 +188,13 @@ func (s *StubAdapter) run(ctx context.Context, worktree, prompt, agentName strin
 		cmdArgs = []string{"3600"}
 	}
 	s.mu.Lock()
-	s.lastLaunchCLI = cmdExe + " " + strings.Join(cmdArgs, " ")
-	if sessionID != "" {
-		s.lastLaunchCLI += " --resume " + sessionID
+	if cli := stubSyntheticLaunchCLI(worktree, agentName, sessionID); cli != "" {
+		s.lastLaunchCLI = cli
+	} else {
+		s.lastLaunchCLI = cmdExe + " " + strings.Join(cmdArgs, " ")
+		if sessionID != "" {
+			s.lastLaunchCLI += " --resume " + sessionID
+		}
 	}
 	s.mu.Unlock()
 	cmd := exec.CommandContext(ctx, cmdExe, cmdArgs...)
@@ -223,8 +257,22 @@ func (s *StubAdapter) run(ctx context.Context, worktree, prompt, agentName strin
 			// include the `[STEP:...]` marker, so `stepName` may be empty.
 			seqKey := worktree
 			s.mu.Lock()
+			if s.attemptSeq == nil {
+				s.attemptSeq = make(map[string]int)
+			}
+			if s.attemptSeq[seqKey] == 0 {
+				seqPath := filepath.Join(worktree, brand.StateDir(), "stub-launch-seq")
+				if b, err := os.ReadFile(seqPath); err == nil {
+					var base int
+					if _, err := fmt.Sscanf(strings.TrimSpace(string(b)), "%d", &base); err == nil && base > 0 {
+						s.attemptSeq[seqKey] = base
+					}
+				}
+			}
 			s.attemptSeq[seqKey]++
 			attemptFromPrompt = s.attemptSeq[seqKey]
+			_ = os.MkdirAll(filepath.Join(worktree, brand.StateDir()), 0755)
+			_ = os.WriteFile(filepath.Join(worktree, brand.StateDir(), "stub-launch-seq"), []byte(strconv.Itoa(attemptFromPrompt)), 0644)
 			s.mu.Unlock()
 		}
 		if isPlan {
@@ -252,7 +300,7 @@ func (s *StubAdapter) run(ctx context.Context, worktree, prompt, agentName strin
 			_ = os.WriteFile(filepath.Join(worktree, filename), []byte("stub output"), 0644)
 		} else if isReview {
 			reviewPath := filepath.Join(outDir, "review.json")
-			if body := reviewJSONFromScenario(worktree, stepName); body != "" {
+			if body := reviewJSONFromScenario(worktree, stepName, attemptFromPrompt); body != "" {
 				_ = os.WriteFile(reviewPath, []byte(body), 0644)
 			} else {
 				_ = os.WriteFile(reviewPath, []byte(`{"pass":true,"comment":"stub review ok"}`), 0644)
@@ -343,18 +391,24 @@ func restartCycleFromWorktree(worktree string) int {
 	return n
 }
 
-// reviewJSONFromScenario returns custom review.json body when scenario sets review_by_cycle or review_by_step.
-func reviewJSONFromScenario(worktree, stepName string) string {
+// reviewJSONFromScenario returns custom review.json body when scenario sets review_by_attempt, review_by_cycle, or review_by_step.
+func reviewJSONFromScenario(worktree, stepName string, attempt int) string {
 	data, err := os.ReadFile(filepath.Join(worktree, testScenarioFile))
 	if err != nil {
 		return ""
 	}
 	var scenario struct {
-		ReviewByCycle map[string]string `json:"review_by_cycle"`
-		ReviewByStep  map[string]string `json:"review_by_step"`
+		ReviewByAttempt map[string]string `json:"review_by_attempt"`
+		ReviewByCycle   map[string]string `json:"review_by_cycle"`
+		ReviewByStep    map[string]string `json:"review_by_step"`
 	}
 	if json.Unmarshal(data, &scenario) != nil {
 		return ""
+	}
+	if scenario.ReviewByAttempt != nil {
+		if body, ok := scenario.ReviewByAttempt[strconv.Itoa(attempt)]; ok && body != "" {
+			return body
+		}
 	}
 	cycle := restartCycleFromWorktree(worktree)
 	if scenario.ReviewByCycle != nil {
