@@ -56,3 +56,4 @@ __debug_bin*
 # Spec
 spec*.md
 .gump
+docs/

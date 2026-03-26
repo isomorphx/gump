@@ -1,11 +1,11 @@
 version: 2
 
-project_name: pudding
+project_name: gump
 
 builds:
-  - id: pudding
+  - id: gump
     main: .
-    binary: pudding
+    binary: gump
     env:
       - CGO_ENABLED=0
     goos:
@@ -23,7 +23,7 @@ builds:
 archives:
   - id: default
     format: tar.gz
-    name_template: "pudding_{{ .Os }}_{{ .Arch }}"
+    name_template: "gump_{{ .Os }}_{{ .Arch }}"
 
 checksum:
   name_template: "checksums.txt"
@@ -31,24 +31,24 @@ checksum:
 release:
   github:
     owner: isomorphx
-    name: pudding
+    name: gump
   draft: false
   prerelease: auto
   extra_files:
     - glob: ./install.sh
 
 brews:
-  - name: pudding
+  - name: gump
     repository:
       owner: isomorphx
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Formula
-    homepage: "https://pudding.build"
+    homepage: "https://gump.build"
     description: "Orchestrate AI coding agents with declarative recipes"
     license: "MIT"
     install: |
-      bin.install "pudding"
+      bin.install "gump"
     test: |
-      system "#{bin}/pudding", "--version"
+      system "#{bin}/gump", "--version"
 
