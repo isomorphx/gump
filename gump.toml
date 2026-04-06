@@ -1,0 +1,2 @@
+[validation]
+test_cmd = "go test -timeout 5m -count=1 $(go list ./... | grep -v /e2e | grep -v /smoke)"
