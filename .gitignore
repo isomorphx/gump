@@ -54,6 +54,9 @@ __debug_bin
 __debug_bin*
 
 # Spec
+specs/
 spec*.md
-.gump
 docs/
+
+# Project config for dogfooding
+.gump/
