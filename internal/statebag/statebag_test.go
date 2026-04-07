@@ -56,6 +56,31 @@ func TestStateBag_ResetGroup(t *testing.T) {
 	}
 }
 
+func TestStateBag_AmbiguousReference(t *testing.T) {
+	sb := New()
+	sb.Set("group1/arbiter", "value1", "", nil, "")
+	sb.Set("group2/arbiter", "value2", "", nil, "")
+	// From root scope, both group1/arbiter and group2/arbiter are candidates but
+	// neither resolves at any scope level (both have slashes), falling through to
+	// the ambiguous case which logs a warning and returns "" instead of panicking.
+	got := sb.Get("arbiter", "", "output")
+	if got != "" {
+		t.Errorf("expected empty string for ambiguous reference, got %q", got)
+	}
+}
+
+func TestStateBag_AmbiguousReference_FullyQualifiedWorks(t *testing.T) {
+	sb := New()
+	sb.Set("group1/arbiter", "value1", "", nil, "")
+	sb.Set("group2/arbiter", "value2", "", nil, "")
+	// With scope "group1", only group1/arbiter is in scope at the group1 level,
+	// so the fully-qualified path resolves unambiguously to the correct entry.
+	got := sb.Get("group1/arbiter", "group1", "output")
+	if got != "value1" {
+		t.Errorf("expected %q for fully-qualified reference, got %q", "value1", got)
+	}
+}
+
 func TestStateBag_Graft(t *testing.T) {
 	parent := New()
 	parent.SetRunMetric("cost", "1.00")
