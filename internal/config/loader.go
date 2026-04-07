@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/isomorphx/gump/internal/brand"
@@ -20,11 +21,12 @@ func envPrefix() string         { return brand.Upper() }
 // We do not fail when config files are missing so a fresh install works without setup.
 func Load() (*Config, *Source, error) {
 	cfg := &Config{
-		DefaultAgent: "claude-sonnet",
-		LogLevel:     "info",
-		Verbose:      false,
-		Analytics:    true,
-		UpdateCheck:  true,
+		DefaultAgent:      "claude-sonnet",
+		LogLevel:          "info",
+		Verbose:           false,
+		Analytics:         true,
+		UpdateCheck:       true,
+		ValidationTimeout: 10 * time.Minute,
 	}
 	src := &Source{
 		DefaultAgent: "default",
@@ -88,6 +90,7 @@ type fileConfig struct {
 		Check *bool `toml:"check"`
 	} `toml:"update"`
 	Validation struct {
+		Timeout     string `toml:"timeout"`
 		CompileCmd  string `toml:"compile_cmd"`
 		TestCmd     string `toml:"test_cmd"`
 		LintCmd     string `toml:"lint_cmd"`
@@ -128,6 +131,12 @@ func applyFile(cfg *Config, src *Source, path, label string) {
 	// This is NOT a priority/cascade; it is an OR on "false means disabled".
 	if f.Update.Check != nil && !*f.Update.Check {
 		cfg.UpdateCheck = false
+	}
+	if f.Validation.Timeout != "" {
+		if d, err := time.ParseDuration(f.Validation.Timeout); err == nil && d > 0 {
+			cfg.ValidationTimeout = d
+			src.ValidationTimeout = label
+		}
 	}
 	if f.Validation.CompileCmd != "" {
 		cfg.CompileCmd = f.Validation.CompileCmd

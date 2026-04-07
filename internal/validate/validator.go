@@ -21,7 +21,7 @@ func RunValidators(validators []recipe.Validator, cfg *config.Config, worktreeDi
 		case "lint":
 			r = RunLintValidator(cfg, worktreeDir)
 		case "bash":
-			r = RunBashValidator(v, worktreeDir)
+			r = RunBashValidator(v, worktreeDir, cfg)
 		case "schema":
 			r = RunSchemaValidatorWithArg(stepPath, stateBag, v.Arg)
 		case "touched":

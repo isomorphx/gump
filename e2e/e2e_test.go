@@ -3396,6 +3396,32 @@ steps:
 	}
 }
 
+// TestSpecF0_ValidationTimeoutConfigurable (spec F0): [validation] timeout in gump.toml caps shell validators.
+func TestSpecF0_ValidationTimeoutConfigurable(t *testing.T) {
+	dir := setupGoRepo(t)
+	writeFile(t, dir, "gump.toml", "[validation]\ntimeout = \"5s\"\n")
+	os.MkdirAll(filepath.Join(dir, ".gump", "workflows"), 0755)
+	writeFile(t, dir, ".gump/workflows/custom.yaml", `name: custom
+description: Gate timeout
+steps:
+  - name: code
+    agent: claude-sonnet
+    prompt: "{spec}"
+    gate:
+      - bash: "sleep 10"
+`)
+	writeFile(t, dir, "spec.md", "noop")
+	writeFile(t, dir, ".pudding-test-scenario.json", `{"files": {}}`)
+	gitCommitAll(t, dir, "add workflow")
+	_, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "custom", "--agent-stub"}, nil, dir)
+	if code == 0 {
+		t.Fatal("expected non-zero exit")
+	}
+	if !strings.Contains(stderr, "timed out after 5s") {
+		t.Errorf("expected timeout message in stderr: %s", stderr)
+	}
+}
+
 // TestStep5V13_NoShortCircuit (spec step-5 V13): all validators are run (no short-circuit).
 func TestStep5V13_NoShortCircuit(t *testing.T) {
 	dir := setupGoRepo(t)

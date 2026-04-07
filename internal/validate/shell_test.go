@@ -49,12 +49,12 @@ func TestRunCompileValidator_ResolveFails(t *testing.T) {
 
 func TestRunBashValidator_CustomCommand(t *testing.T) {
 	dir := t.TempDir()
-	r := RunBashValidator(recipe.Validator{Type: "bash", Arg: "test -f " + filepath.Join(dir, "x")}, dir)
+	r := RunBashValidator(recipe.Validator{Type: "bash", Arg: "test -f " + filepath.Join(dir, "x")}, dir, nil)
 	if r.Pass {
 		t.Error("expected fail when file missing")
 	}
 	writeFile(t, dir, "x", "ok")
-	r2 := RunBashValidator(recipe.Validator{Type: "bash", Arg: "test -f x"}, dir)
+	r2 := RunBashValidator(recipe.Validator{Type: "bash", Arg: "test -f x"}, dir, nil)
 	if !r2.Pass {
 		t.Error("expected pass when file exists")
 	}

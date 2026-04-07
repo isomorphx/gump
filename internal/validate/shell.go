@@ -12,7 +12,18 @@ import (
 	"github.com/isomorphx/gump/internal/recipe"
 )
 
-const defaultShellTimeout = 2 * time.Minute
+const defaultShellTimeout = 10 * time.Minute
+
+// validationTimeout returns the shell validator budget from cfg when set; otherwise the default.
+func validationTimeout(cfg *config.Config) time.Duration {
+	if cfg == nil {
+		return defaultShellTimeout
+	}
+	if cfg.ValidationTimeout > 0 {
+		return cfg.ValidationTimeout
+	}
+	return defaultShellTimeout
+}
 
 // RunShellValidator runs a shell command in the worktree and returns a SingleResult.
 // We capture stdout and stderr separately so failed validators can feed {error} and logs without mixing streams.
@@ -81,7 +92,7 @@ func validatorConfigKey(alias string) string {
 
 // runShellValidatorWithAvailabilityCheck resolves the command, checks if the binary is available,
 // and returns a skip (optional) or fail (essential) result if not; otherwise runs the command.
-func runShellValidatorWithAvailabilityCheck(alias, command string, worktreeDir string) *SingleResult {
+func runShellValidatorWithAvailabilityCheck(cfg *config.Config, alias, command string, worktreeDir string) *SingleResult {
 	binaryName, available := CheckCommandAvailable(command)
 	if !available {
 		if IsOptionalValidator(alias) {
@@ -100,7 +111,7 @@ func runShellValidatorWithAvailabilityCheck(alias, command string, worktreeDir s
 			alias, binaryName, binaryName, alias, validatorConfigKey(alias))
 		return &SingleResult{Validator: alias, Pass: false, Stderr: msg}
 	}
-	r := RunShellValidator(command, worktreeDir, 0)
+	r := RunShellValidator(command, worktreeDir, validationTimeout(cfg))
 	r.Validator = alias
 	return r
 }
@@ -111,7 +122,7 @@ func RunCompileValidator(cfg *config.Config, worktreeDir string) *SingleResult {
 	if err != nil {
 		return &SingleResult{Validator: "compile", Pass: false, Stderr: err.Error()}
 	}
-	return runShellValidatorWithAvailabilityCheck("compile", cmd, worktreeDir)
+	return runShellValidatorWithAvailabilityCheck(cfg, "compile", cmd, worktreeDir)
 }
 
 // RunTestValidator resolves test command and runs it.
@@ -120,7 +131,7 @@ func RunTestValidator(cfg *config.Config, worktreeDir string) *SingleResult {
 	if err != nil {
 		return &SingleResult{Validator: "test", Pass: false, Stderr: err.Error()}
 	}
-	r := runShellValidatorWithAvailabilityCheck("test", cmd, worktreeDir)
+	r := runShellValidatorWithAvailabilityCheck(cfg, "test", cmd, worktreeDir)
 	// go test ./... with no Go packages exits 1 and prints "no packages to test" or "no test files"; treat as pass so we don't retry forever.
 	if !r.Pass && r.ExitCode == 1 && strings.HasPrefix(strings.TrimSpace(cmd), "go test") {
 		stderr := r.Stderr
@@ -138,12 +149,12 @@ func RunLintValidator(cfg *config.Config, worktreeDir string) *SingleResult {
 	if err != nil {
 		return &SingleResult{Validator: "lint (skipped)", Pass: true, Skipped: true, Stdout: "lint: no known linter detected for this project — skipping. Configure lint_cmd in gump.toml."}
 	}
-	return runShellValidatorWithAvailabilityCheck("lint", cmd, worktreeDir)
+	return runShellValidatorWithAvailabilityCheck(cfg, "lint", cmd, worktreeDir)
 }
 
 // RunBashValidator runs the validator's Arg as the shell command for fully custom checks.
-func RunBashValidator(v recipe.Validator, worktreeDir string) *SingleResult {
-	r := RunShellValidator(v.Arg, worktreeDir, 0)
+func RunBashValidator(v recipe.Validator, worktreeDir string, cfg *config.Config) *SingleResult {
+	r := RunShellValidator(v.Arg, worktreeDir, validationTimeout(cfg))
 	r.Validator = "bash: " + v.Arg
 	return r
 }
@@ -169,7 +180,7 @@ func RunCoverageValidator(threshold string, cfg *config.Config, worktreeDir stri
 		msg := fmt.Sprintf("coverage: '%s' is not installed — skipping. Install %s or configure coverage_cmd in gump.toml.", binaryName, binaryName)
 		return &SingleResult{Validator: "coverage (skipped)", Pass: true, Skipped: true, ExitCode: 0, Stdout: msg}
 	}
-	r := RunShellValidator(cmd, worktreeDir, 0)
+	r := RunShellValidator(cmd, worktreeDir, validationTimeout(cfg))
 	r.Validator = "coverage: " + threshold
 	if !r.Pass {
 		r.Stderr = "coverage: command failed: " + r.Stderr

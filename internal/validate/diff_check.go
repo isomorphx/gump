@@ -24,8 +24,8 @@ func RunTouchedValidator(glob string, dc *diff.DiffContract) *SingleResult {
 	}
 	return &SingleResult{
 		Validator: name,
-		Pass:     false,
-		Stderr:   fmt.Sprintf("touched: no files matching %q were modified. Changed files: %s", glob, strings.Join(dc.FilesChanged, ", ")),
+		Pass:      false,
+		Stderr:    fmt.Sprintf("touched: no files matching %q were modified. Changed files: %s", glob, strings.Join(dc.FilesChanged, ", ")),
 	}
 }
 
@@ -48,8 +48,8 @@ func RunUntouchedValidator(glob string, dc *diff.DiffContract) *SingleResult {
 	}
 	return &SingleResult{
 		Validator: name,
-		Pass:     false,
-		Stderr:   fmt.Sprintf("untouched: files matching %q were modified: %s", glob, strings.Join(matched, ", ")),
+		Pass:      false,
+		Stderr:    fmt.Sprintf("untouched: files matching %q were modified: %s", glob, strings.Join(matched, ", ")),
 	}
 }
 
@@ -62,7 +62,7 @@ func RunTestsFoundValidator(cfg *config.Config, worktreeDir string) *SingleResul
 	if strings.HasPrefix(cmd, "go test") {
 		cmd = "go test -v -count=0 -run . " + strings.TrimSpace(strings.TrimPrefix(cmd, "go test"))
 	}
-	r := RunShellValidator(cmd, worktreeDir, 0)
+	r := RunShellValidator(cmd, worktreeDir, validationTimeout(cfg))
 	r.Validator = "tests_found"
 	out := r.Stdout + r.Stderr
 	hasTestOutput := strings.Contains(out, "=== RUN") || strings.Contains(out, "--- PASS") || strings.Contains(out, "--- FAIL")

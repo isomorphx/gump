@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLoad_Defaults(t *testing.T) {
@@ -16,6 +17,9 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 	if !cfg.UpdateCheck {
 		t.Errorf("defaults: expected UpdateCheck=true")
+	}
+	if cfg.ValidationTimeout != 10*time.Minute {
+		t.Errorf("defaults: expected ValidationTimeout=10m, got %v", cfg.ValidationTimeout)
 	}
 	if src.DefaultAgent != "default" || src.LogLevel != "default" {
 		t.Errorf("sources: got %q %q", src.DefaultAgent, src.LogLevel)
@@ -90,6 +94,27 @@ check = false
 	}
 	if cfg.UpdateCheck {
 		t.Errorf("expected UpdateCheck=false from project config")
+	}
+}
+
+func TestLoad_ValidationTimeout_Project(t *testing.T) {
+	dir := t.TempDir()
+	orig, _ := os.Getwd()
+	_ = os.Chdir(dir)
+	defer os.Chdir(orig)
+	path := filepath.Join(dir, "pudding.toml")
+	_ = os.WriteFile(path, []byte(`[validation]
+timeout = "5s"
+`), 0644)
+	cfg, src, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ValidationTimeout != 5*time.Second {
+		t.Errorf("got ValidationTimeout=%v", cfg.ValidationTimeout)
+	}
+	if src.ValidationTimeout != "pudding.toml" {
+		t.Errorf("got src.ValidationTimeout=%q", src.ValidationTimeout)
 	}
 }
 
