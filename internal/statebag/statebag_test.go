@@ -97,3 +97,42 @@ func TestStateBag_Graft(t *testing.T) {
 		t.Fatalf("run cost not propagated, got %q", got)
 	}
 }
+
+func TestStateBag_ClearSessionIDsForGroup(t *testing.T) {
+	sb := New()
+	sb.Set("build/impl", "out", "", nil, "sess-1")
+	sb.Set("build/reviews/arch-review", "out", "", nil, "sess-2")
+	sb.Set("other/code", "out", "", nil, "sess-3")
+
+	cleared := sb.ClearSessionIDsForGroup("build")
+	if len(cleared) != 2 {
+		t.Fatalf("expected 2 cleared entries, got %d", len(cleared))
+	}
+	if got := sb.Get("build/impl", "build/impl", "session_id"); got != "" {
+		t.Fatalf("expected build/impl session cleared, got %q", got)
+	}
+	if got := sb.Get("build/reviews/arch-review", "build/reviews/arch-review", "session_id"); got != "" {
+		t.Fatalf("expected build/reviews/arch-review session cleared, got %q", got)
+	}
+	if got := sb.Get("other/code", "other/code", "session_id"); got != "sess-3" {
+		t.Fatalf("expected other/code session unchanged, got %q", got)
+	}
+}
+
+func TestStateBag_ResetThenClearSessionsForGroup(t *testing.T) {
+	sb := New()
+	sb.Set("build/impl", "out", "", nil, "sess-1")
+	sb.Set("build/reviews/arch-review", "out", "", nil, "sess-2")
+
+	sb.ResetGroup("build")
+	cleared := sb.ClearSessionIDsForGroup("build")
+	if len(cleared) != 2 {
+		t.Fatalf("expected 2 cleared entries after reset->clear, got %d", len(cleared))
+	}
+	if got := sb.PrevSessionID("build/impl"); got != "" {
+		t.Fatalf("expected prev session cleared for build/impl, got %q", got)
+	}
+	if got := sb.PrevSessionID("build/reviews/arch-review"); got != "" {
+		t.Fatalf("expected prev session cleared for build/reviews/arch-review, got %q", got)
+	}
+}

@@ -145,7 +145,12 @@ func buildEnvForSubprocess(env map[string]string) []string {
 
 func runPudding(t *testing.T, args []string, env map[string]string, dir string) (stdout, stderr string, exitCode int) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	timeout := 120 * time.Second
+	if len(args) > 0 && args[0] == "doctor" {
+		// doctor enchaîne plusieurs checks CLI (jusqu'à ~60s+ en CI/laptop), on donne plus de marge.
+		timeout = 180 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, binaryPath, args...)
@@ -1546,7 +1551,7 @@ steps:
 `)
 	writeFile(t, dir, "spec.md", "Add function")
 	writeFile(t, dir, "add_test.go", "package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) {\n\tif Add(1, 2) != 3 { t.Fatal() }\n}\n")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"1":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return 0 }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}},"files":{"add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) {\n\tif Add(1, 2) != 3 { t.Fatal() }\n}\n"}}`)
+	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"1":{"files":{"scratch.go":"package main\n\nfunc Scratch() int { return 1 }\n","add.go":"package main\n\nfunc Add(a, b int) int { return 0 }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}},"files":{"add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) {\n\tif Add(1, 2) != 3 { t.Fatal() }\n}\n"}}`)
 	gitCommitAll(t, dir, "setup")
 	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "retry-same", "--agent-stub"}, nil, dir)
 	combined := stdout + stderr
@@ -1589,7 +1594,7 @@ steps:
 `)
 	writeFile(t, dir, "spec.md", "Add function")
 	writeFile(t, dir, "add_test.go", "package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { if Add(1, 2) != 3 { t.Fatal() } }\n")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"1":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return 0 }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}},"files":{"add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { if Add(1, 2) != 3 { t.Fatal() } }\n"}}`)
+	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"1":{"files":{"helper.go":"package main\n\nfunc helper() int { return 1 }\n","add.go":"package main\n\nfunc Add(a, b int) int { return 0 }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}},"files":{"add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { if Add(1, 2) != 3 { t.Fatal() } }\n"}}`)
 	gitCommitAll(t, dir, "setup")
 	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "reuse-on-retry", "--agent-stub"}, nil, dir)
 	combined := stdout + stderr
@@ -1636,6 +1641,14 @@ steps:
 	}
 	if len(completedSessionIDs) < 1 {
 		t.Error("ledger should contain agent_completed with session_id")
+	}
+	uuid := extractCookID(stdout)
+	if uuid == "" {
+		t.Fatalf("no run id in output: %s", stdout)
+	}
+	wt := filepath.Join(dir, ".gump", "worktrees", "run-"+uuid)
+	if _, err := os.Stat(filepath.Join(wt, "helper.go")); err != nil {
+		t.Fatalf("reuse-on-retry same should preserve worktree files from attempt 1: %v", err)
 	}
 }
 
@@ -2035,6 +2048,122 @@ steps:
 	}
 }
 
+func TestE2EBlastRadiusWarn(t *testing.T) {
+	dir := setupGoRepo(t)
+	writeFile(t, dir, ".pudding/recipes/foreach-blast.yaml", `name: foreach-blast
+blast_radius: warn
+steps:
+  - name: plan
+    agent: codex
+    output: plan
+    prompt: "Plan"
+  - name: impl
+    foreach: plan
+    steps:
+      - name: code
+        agent: codex
+        output: diff
+        prompt: "Implement"
+`)
+	writeFile(t, dir, "spec.md", "Spec")
+	writeFile(t, dir, ".pudding-test-plan.json", `[{"name": "task-1", "description": "One task", "files": ["hello.go"]}]`)
+	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_step":{"code":{"files":{"hello.go":"package main\n\nfunc Hello() {}\n","extra.go":"package main\n\nfunc Extra() {}\n"}}}}`)
+	gitCommitAll(t, dir, "setup")
+	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "foreach-blast", "--agent-stub"}, nil, dir)
+	if code != 0 {
+		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "blast radius warning") {
+		t.Fatalf("expected blast radius warning in stderr, got: %s", stderr)
+	}
+	uuid := extractCookID(stdout)
+	manifest := readFile(t, filepath.Join(dir, ".gump", "runs", uuid, "manifest.ndjson"))
+	if !strings.Contains(manifest, "blast_radius_warning") {
+		t.Fatalf("manifest should contain blast_radius_warning event, got: %s", manifest)
+	}
+}
+
+func TestE2EBlastRadiusOff(t *testing.T) {
+	dir := setupGoRepo(t)
+	writeFile(t, dir, ".pudding/recipes/foreach-blast.yaml", `name: foreach-blast
+blast_radius: off
+steps:
+  - name: plan
+    agent: codex
+    output: plan
+    prompt: "Plan"
+  - name: impl
+    foreach: plan
+    steps:
+      - name: code
+        agent: codex
+        output: diff
+        prompt: "Implement"
+`)
+	writeFile(t, dir, "spec.md", "Spec")
+	writeFile(t, dir, ".pudding-test-plan.json", `[{"name": "task-1", "description": "One task", "files": ["hello.go"]}]`)
+	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_step":{"code":{"files":{"hello.go":"package main\n\nfunc Hello() {}\n","extra.go":"package main\n\nfunc Extra() {}\n"}}}}`)
+	gitCommitAll(t, dir, "setup")
+	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "foreach-blast", "--agent-stub"}, nil, dir)
+	if code != 0 {
+		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
+	}
+	if strings.Contains(stderr, "blast radius") {
+		t.Fatalf("did not expect blast radius message in stderr: %s", stderr)
+	}
+	uuid := extractCookID(stdout)
+	manifest := readFile(t, filepath.Join(dir, ".gump", "runs", uuid, "manifest.ndjson"))
+	if strings.Contains(manifest, "blast_radius_warning") {
+		t.Fatalf("manifest should not contain blast_radius_warning event, got: %s", manifest)
+	}
+}
+
+func TestE2EBlastRadiusEmptyFilesEnforce(t *testing.T) {
+	dir := setupGoRepo(t)
+	writeFile(t, dir, ".pudding/recipes/foreach-blast.yaml", `name: foreach-blast
+blast_radius: enforce
+steps:
+  - name: plan
+    agent: codex
+    output: plan
+    prompt: "Plan"
+  - name: impl
+    foreach: plan
+    steps:
+      - name: code
+        agent: codex
+        output: diff
+        prompt: "Implement"
+`)
+	writeFile(t, dir, "spec.md", "Spec")
+	writeFile(t, dir, ".pudding-test-plan.json", `[{"name":"task-1","description":"One task","files":[]}]`)
+	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_step":{"code":{"files":{"hello.go":"package main\n\nfunc Hello() {}\n","extra.go":"package main\n\nfunc Extra() {}\n"}}}}`)
+	gitCommitAll(t, dir, "setup")
+	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "foreach-blast", "--agent-stub"}, nil, dir)
+	if code != 0 {
+		t.Fatalf("empty task.files should bypass blast radius check: exit=%d out=%s err=%s", code, stdout, stderr)
+	}
+}
+
+func TestE2EDryRunShowsBlastRadius(t *testing.T) {
+	dir := setupRepo(t)
+	writeFile(t, dir, ".pudding/recipes/custom.yaml", `name: custom
+blast_radius: warn
+steps:
+  - name: impl
+    agent: codex
+    prompt: "Do"
+`)
+	writeFile(t, dir, "spec.md", "Spec")
+	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "custom", "--dry-run"}, nil, dir)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, stdout)
+	}
+	if !strings.Contains(stdout, "blast_radius: warn") {
+		t.Fatalf("dry-run should contain blast_radius: warn, got: %s", stdout)
+	}
+}
+
 // TestE2E4CircuitBreaker (spec E2E 4 / R3): all retries exhausted.
 func TestE2E4CircuitBreaker(t *testing.T) {
 	dir := setupGoRepo(t)
@@ -2086,7 +2215,7 @@ steps:
 `)
 	writeFile(t, dir, "spec.md", "Add")
 	writeFile(t, dir, "add_test.go", "package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) {\n\tif Add(1, 2) != 3 { t.Fatal() }\n}\n")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"1":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return 0 }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}},"files":{"add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) {\n\tif Add(1, 2) != 3 { t.Fatal() }\n}\n"}}`)
+	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"1":{"files":{"scratch.go":"package main\n\nfunc Scratch() int { return 1 }\n","add.go":"package main\n\nfunc Add(a, b int) int { return 0 }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}},"files":{"add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) {\n\tif Add(1, 2) != 3 { t.Fatal() }\n}\n"}}`)
 	gitCommitAll(t, dir, "setup")
 	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "retry-escalate", "--agent-stub"}, nil, dir)
 	combined := stdout + stderr
@@ -2098,6 +2227,27 @@ steps:
 	}
 	if !strings.Contains(combined, "pass") {
 		t.Errorf("output should contain pass: %s", combined)
+	}
+	uuid := extractCookID(stdout)
+	if uuid == "" {
+		t.Fatalf("no run id in output: %s", stdout)
+	}
+	wt := filepath.Join(dir, ".gump", "worktrees", "run-"+uuid)
+	if _, err := os.Stat(filepath.Join(wt, "scratch.go")); err == nil {
+		t.Fatal("scratch.go from attempt 1 should not exist after escalate reset")
+	}
+	launched := parseLedgerLaunchedByStep(t, filepath.Join(dir, ".gump", "runs", uuid))
+	var codeLaunches []map[string]interface{}
+	for _, ev := range launched {
+		if step, _ := ev["step"].(string); step == "code" {
+			codeLaunches = append(codeLaunches, ev)
+		}
+	}
+	if len(codeLaunches) < 2 {
+		t.Fatalf("expected at least 2 agent_launched for code, got %d", len(codeLaunches))
+	}
+	if sid2, _ := codeLaunches[1]["session_id"].(string); sid2 != "" {
+		t.Fatalf("escalate retry should launch with fresh session_id=\"\", got %q", sid2)
 	}
 }
 
@@ -2149,8 +2299,8 @@ steps:
 	}
 }
 
-// TestE2EStep6R5WorktreeResetBetweenAttempts (spec R5): bad.go from attempt 1 is gone after reset, add.go from attempt 2 exists.
-func TestE2EStep6R5WorktreeResetBetweenAttempts(t *testing.T) {
+// TestE2EStep6R5WorktreePreservedOnSameRetry: same retry keeps worktree state.
+func TestE2EStep6R5WorktreePreservedOnSameRetry(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, ".pudding/recipes/retry-same.yaml", `name: retry-same
 description: Single step with same retry
@@ -2167,7 +2317,7 @@ steps:
 `)
 	writeFile(t, dir, "spec.md", "Add")
 	writeFile(t, dir, "add_test.go", "package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) {\n\tif Add(1, 2) != 3 { t.Fatal() }\n}\n")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"1":{"files":{"bad.go":"invalid"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}},"files":{"add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { if Add(1, 2) != 3 { t.Fatal() } }\n"}}`)
+	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"1":{"files":{"helper.go":"package main\n\nfunc helper() int { return 1 }\n","add.go":"package main\n\nfunc Add(a, b int) int { return 0 }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}},"files":{"add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { if Add(1, 2) != 3 { t.Fatal() } }\n"}}`)
 	gitCommitAll(t, dir, "setup")
 	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "retry-same", "--agent-stub"}, nil, dir)
 	if code != 0 {
@@ -2175,8 +2325,8 @@ steps:
 	}
 	uuid := extractCookID(stdout)
 	wt := filepath.Join(dir, ".gump", "worktrees", "run-"+uuid)
-	if _, err := os.Stat(filepath.Join(wt, "bad.go")); err == nil {
-		t.Error("bad.go should not exist after worktree reset before attempt 2")
+	if _, err := os.Stat(filepath.Join(wt, "helper.go")); err != nil {
+		t.Error("helper.go should still exist when retry strategy is same")
 	}
 	if _, err := os.Stat(filepath.Join(wt, "add.go")); err != nil {
 		t.Error("add.go should exist in final worktree")
@@ -2229,7 +2379,7 @@ steps:
   - name: work
     on_failure:
       retry: 2
-      strategy: [same]
+      strategy: [escalate: claude-sonnet]
     steps:
       - name: code
         agent: claude-haiku
@@ -2254,6 +2404,89 @@ steps:
 	if !strings.Contains(combined, "[work/check]") || !strings.Contains(combined, "pass") {
 		t.Errorf("output should contain [work/check] and pass: %s", combined)
 	}
+	uuid := extractCookID(stdout)
+	if uuid == "" {
+		t.Fatalf("no run id in output: %s", stdout)
+	}
+	cookDir := filepath.Join(dir, ".gump", "runs", uuid)
+	manifest := readFile(t, filepath.Join(cookDir, "manifest.ndjson"))
+	if !strings.Contains(manifest, `"type":"group_retry_sessions_reset"`) {
+		t.Fatal("expected group_retry_sessions_reset event for group retry escalate")
+	}
+	launched := parseLedgerLaunchedByStep(t, cookDir)
+	var codeLaunches []map[string]interface{}
+	for _, ev := range launched {
+		if step, _ := ev["step"].(string); step == "work/code" {
+			codeLaunches = append(codeLaunches, ev)
+		}
+	}
+	if len(codeLaunches) < 2 {
+		t.Fatalf("expected at least 2 launches for work/code, got %d", len(codeLaunches))
+	}
+	if sid2, _ := codeLaunches[1]["session_id"].(string); sid2 != "" {
+		t.Fatalf("group retry escalate should launch attempt 2 with fresh session_id=\"\", got %q", sid2)
+	}
+}
+
+func TestE2EGroupRetrySameReuseSessionAndWorktree(t *testing.T) {
+	dir := setupGoRepo(t)
+	writeFile(t, dir, ".pudding/recipes/group-retry-same.yaml", `name: group-retry-same
+steps:
+  - name: work
+    on_failure:
+      retry: 2
+      strategy: [same]
+    steps:
+      - name: code
+        agent: claude-haiku
+        prompt: "Implement: {spec}"
+      - name: check
+        gate:
+          - compile
+          - test
+`)
+	writeFile(t, dir, "spec.md", "Add")
+	writeFile(t, dir, "add_test.go", "package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { if Add(1, 2) != 3 { t.Fatal() } }\n")
+	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"1":{"files":{"helper.go":"package main\n\nfunc helper() int { return 1 }\n","add.go":"package main\n\nfunc Add(a, b int) int { return 0 }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}}}`)
+	gitCommitAll(t, dir, "setup")
+	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "group-retry-same", "--agent-stub"}, nil, dir)
+	if code != 0 {
+		t.Fatalf("exit %d: %s%s", code, stdout, stderr)
+	}
+	uuid := extractCookID(stdout)
+	if uuid == "" {
+		t.Fatalf("no run id in output: %s", stdout)
+	}
+	wt := filepath.Join(dir, ".gump", "worktrees", "run-"+uuid)
+	if _, err := os.Stat(filepath.Join(wt, "helper.go")); err != nil {
+		t.Fatalf("group retry same should preserve worktree: %v", err)
+	}
+	cookDir := filepath.Join(dir, ".gump", "runs", uuid)
+	manifest := readFile(t, filepath.Join(cookDir, "manifest.ndjson"))
+	if strings.Contains(manifest, `"type":"group_retry_sessions_reset"`) {
+		t.Fatal("group retry same must not emit group_retry_sessions_reset")
+	}
+	launched := parseLedgerLaunchedByStep(t, cookDir)
+	var codeLaunches []map[string]interface{}
+	for _, ev := range launched {
+		if step, _ := ev["step"].(string); step == "work/code" {
+			codeLaunches = append(codeLaunches, ev)
+		}
+	}
+	if len(codeLaunches) < 2 {
+		t.Fatalf("expected at least 2 launches for work/code, got %d", len(codeLaunches))
+	}
+	sid2, _ := codeLaunches[1]["session_id"].(string)
+	if sid2 == "" {
+		t.Fatalf("group retry same attempt 2 should reuse a non-empty session_id, got %q", sid2)
+	}
+	_, completedSessionIDs, _ := parseLedger(t, cookDir)
+	if len(completedSessionIDs) == 0 {
+		t.Fatal("expected agent_completed with session_id for first attempt")
+	}
+	if sid2 != completedSessionIDs[0] {
+		t.Fatalf("group retry same attempt 2 should reuse first completed session_id: got %q want %q", sid2, completedSessionIDs[0])
+	}
 }
 
 // TestE2EStateBagScopeReset (spec step-8 Feature 5): group retry emits state_bag_scope_reset and state-bag has no .prev.
@@ -2265,7 +2498,7 @@ steps:
   - name: work
     on_failure:
       retry: 2
-      strategy: [same]
+      strategy: [escalate: claude-sonnet]
     steps:
       - name: code
         agent: claude-haiku

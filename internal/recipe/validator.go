@@ -25,6 +25,7 @@ var ValidateWarn func(path, message string)
 
 var validOutputValues = map[string]bool{"diff": true, "plan": true, "artifact": true, "review": true}
 var validStrategyTypes = map[string]bool{"same": true, "escalate": true, "replan": true}
+var validBlastRadiusValues = map[string]bool{"enforce": true, "warn": true, "off": true}
 
 // validSessionModes allows reuse-on-retry so recipes can express "fresh first run, resume on retry" without storing session in State Bag.
 var validSessionModes = map[string]bool{"reuse": true, "fresh": true, "reuse-targeted": true, "reuse-on-retry": true}
@@ -44,6 +45,9 @@ func Validate(r *Recipe) []ValidationError {
 	}
 	if len(r.Steps) == 0 {
 		errs = append(errs, ValidationError{Path: "recipe", Message: "at least one step is required"})
+	}
+	if strings.TrimSpace(r.BlastRadius) != "" && !validBlastRadiusValues[strings.TrimSpace(r.BlastRadius)] {
+		errs = append(errs, ValidationError{Path: "recipe.blast_radius", Message: `blast_radius must be "enforce", "warn", or "off"`})
 	}
 
 	// max_budget on recipe.

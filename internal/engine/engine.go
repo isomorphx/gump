@@ -81,6 +81,9 @@ type Engine struct {
 	lastFailureSource  string
 	// PauseAfterStep is set by CLI --pause-after to force HITL on that step name (in-memory only).
 	PauseAfterStep string
+	// forceSessionReuse is enabled for retry same policies (step/group) so retries
+	// resume the previous session even when step session mode is fresh.
+	forceSessionReuse bool
 }
 
 // New builds an engine with an empty State Bag and counters for ledger/index.
@@ -268,7 +271,9 @@ func (e *Engine) executeSteps(steps []recipe.Step, taskContext *plan.Task, pathP
 							strategyLabel = strategy.Type + ": " + strategy.Agent
 							agentOverride = strategy.Agent
 						}
-						_ = e.Cook.ResetTo(preGroupCommit)
+						if strategy.Type == "escalate" || strategy.Type == "replan" {
+							_ = e.Cook.ResetTo(preGroupCommit)
+						}
 						// WHY: group retry re-runs the subtree; global step attempt counters must not block this fresh pass (unlike restart_from, which preserves the target budget).
 						prefix := stepPath + "/"
 						for k := range e.globalStepAttempts {
@@ -276,18 +281,41 @@ func (e *Engine) executeSteps(steps []recipe.Step, taskContext *plan.Task, pathP
 								e.globalStepAttempts[k] = 0
 							}
 						}
-						keys := e.StateBag.ResetGroup(stepPath)
+						invalidated := []string{}
+						if strategy.Type == "escalate" || strategy.Type == "replan" {
+							invalidated = e.StateBag.ClearSessionIDsForGroup(stepPath)
+							e.clearStepSessionsForGroup(stepPath)
+						}
+						keys := []string{}
+						if strategy.Type == "escalate" || strategy.Type == "replan" {
+							keys = e.StateBag.ResetGroup(stepPath)
+						}
 						if e.Cook.Ledger != nil {
-							_ = e.Cook.Ledger.Emit(ledger.StateBagScopeReset{Group: stepPath, Keys: keys})
+							if len(keys) > 0 {
+								_ = e.Cook.Ledger.Emit(ledger.StateBagScopeReset{Group: stepPath, Keys: keys})
+							}
 							_ = e.Cook.Ledger.Emit(ledger.GroupRetry{Step: stepPath, Attempt: groupAttempt, Strategy: strategyLabel})
+							if len(invalidated) > 0 {
+								_ = e.Cook.Ledger.Emit(ledger.GroupRetrySessionsReset{
+									Group:               stepPath,
+									Attempt:             groupAttempt,
+									Strategy:            strategy.Type,
+									InvalidatedSessions: invalidated,
+								})
+							}
 						}
 						fmt.Fprintf(os.Stderr, "[%s]\tgroup-retry\tattempt %d/%d (%s)\n", stepPath, groupAttempt, maxAttempts, strategyLabel)
-						sessionMap = make(map[string]string)
+						if strategy.Type == "escalate" || strategy.Type == "replan" {
+							sessionMap = make(map[string]string)
+						}
 						groupAttemptPath := filepath.Join(e.Cook.WorktreeDir, brand.StateDir(), "group-attempt")
 						_ = os.MkdirAll(filepath.Dir(groupAttemptPath), 0755)
 						_ = os.WriteFile(groupAttemptPath, []byte(fmt.Sprintf("%d", groupAttempt)), 0644)
 					}
+					prevForce := e.forceSessionReuse
+					e.forceSessionReuse = strategyLabel == "same"
 					err := runGroupOnce(agentOverride, sessionMap)
+					e.forceSessionReuse = prevForce
 					if err == nil {
 						if e.Cook.Ledger != nil {
 							iterations := taskCount
@@ -640,6 +668,22 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 	}
 
 	sessionID := ""
+	if e.forceSessionReuse {
+		if sid := e.lastSessionIDForStep(stepPath); sid != "" {
+			sessionID = sid
+		}
+		if sessionID == "" && lastSessionByAgent != nil {
+			if sid, ok := lastSessionByAgent[agent.AgentPrefix(agentToUse)]; ok {
+				sessionID = sid
+			}
+		}
+		if sessionID == "" {
+			sessionID = e.StateBag.Get(stepPath, stepPath, "session_id")
+		}
+	}
+	if e.forceSessionReuse && sessionID != "" {
+		// retry same policy: force session reuse for this step/group attempt.
+	} else {
 	switch effectiveSession.Mode {
 	case "fresh":
 		sessionID = ""
@@ -667,6 +711,7 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 				fmt.Fprintf(os.Stderr, "[%s] session: reuse: %s — target step not found or different agent, using fresh session\n", brand.Lower(), effectiveSession.Target)
 			}
 		}
+	}
 	}
 
 	promptForAgent := resolvedPrompt
@@ -1099,28 +1144,40 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 		_ = e.Cook.Ledger.Emit(ledger.StateBagUpdated{Key: stepPath + ".session_id", Artifact: ""})
 	}
 
-	// Enforce task.files blast radius so agents don't modify files outside the planned scope (retry gets {error} injected).
+	// Apply task.files blast radius policy (enforce|warn|off), default enforce.
 	if taskContext != nil && len(taskContext.Files) > 0 {
 		repoFiles := filterRepoFilesOnly(e.Cook.WorktreeDir, dc.FilesChanged)
 		violators, errMsg := checkBlastRadius(repoFiles, taskContext.Files)
 		if len(violators) > 0 {
-			if e.Cook.Ledger != nil {
-				_ = e.Cook.Ledger.Emit(ledger.GateFailed{Step: stepPath, Reason: errMsg, Artifact: ""})
-				e.emitStepCompleted(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), dc, outputMode, outputValue, true)
-				e.stepCompletedCount++
-				e.printCookTotal()
+			blastMode := strings.TrimSpace(e.Recipe.BlastRadius)
+			if blastMode == "" {
+				blastMode = "enforce"
 			}
-			exec.ValidateError = errMsg
-			exec.ValidateDiff = dc.Patch
-			exec.Status = StepFatal
-			exec.FinishedAt = time.Now()
-			e.Steps = append(e.Steps, exec)
-			e.StateBag.SetStepCheckResult(stepPath, "fail")
-			e.StateBag.SetRunMetric("status", "fail")
-			e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), dc, outputMode, outputValue, true)
-			e.lastFailureSource = "gate_fail"
-			fmt.Fprintf(os.Stderr, "[%s]\tFAIL\t%s\n", stepPath, errMsg)
-			return fmt.Errorf("step %s: %s", step.Name, errMsg), preStepCommit
+			if blastMode == "warn" {
+				warnMsg := blastRadiusWarningMessage(violators, taskContext.Files)
+				if e.Cook.Ledger != nil {
+					_ = e.Cook.Ledger.Emit(ledger.BlastRadiusWarning{Step: stepPath, Violators: violators, Allowed: taskContext.Files})
+				}
+				fmt.Fprintln(os.Stderr, warnMsg)
+			} else if blastMode == "enforce" {
+				if e.Cook.Ledger != nil {
+					_ = e.Cook.Ledger.Emit(ledger.GateFailed{Step: stepPath, Reason: errMsg, Artifact: ""})
+					e.emitStepCompleted(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), dc, outputMode, outputValue, true)
+					e.stepCompletedCount++
+					e.printCookTotal()
+				}
+				exec.ValidateError = errMsg
+				exec.ValidateDiff = dc.Patch
+				exec.Status = StepFatal
+				exec.FinishedAt = time.Now()
+				e.Steps = append(e.Steps, exec)
+				e.StateBag.SetStepCheckResult(stepPath, "fail")
+				e.StateBag.SetRunMetric("status", "fail")
+				e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), dc, outputMode, outputValue, true)
+				e.lastFailureSource = "gate_fail"
+				fmt.Fprintf(os.Stderr, "[%s]\tFAIL\t%s\n", stepPath, errMsg)
+				return fmt.Errorf("step %s: %s", step.Name, errMsg), preStepCommit
+			}
 		}
 	}
 
@@ -1522,6 +1579,10 @@ func formatValidationDetails(w io.Writer, stepPath string, vr *validate.Validati
 
 // resolveTargetedSession returns the session ID of the last executed step named target, only if its agent matches currentAgent (cross-provider resume would be invalid).
 func (e *Engine) resolveTargetedSession(target string, currentAgent string) string {
+	// Prefer current state bag (already cleared on reset paths) before historical e.Steps.
+	if sid := e.StateBag.Get(target, target, "session_id"); sid != "" {
+		return sid
+	}
 	for i := len(e.Steps) - 1; i >= 0; i-- {
 		if e.Steps[i].StepName == target && e.Steps[i].SessionID != "" {
 			if e.Steps[i].Agent != currentAgent {
@@ -1529,10 +1590,6 @@ func (e *Engine) resolveTargetedSession(target string, currentAgent string) stri
 			}
 			return e.Steps[i].SessionID
 		}
-	}
-	// WHY: `gump run --resume` starts with an empty e.Steps; the state bag still holds the target step's session_id.
-	if sid := e.StateBag.Get(target, target, "session_id"); sid != "" {
-		return sid
 	}
 	return ""
 }
@@ -1545,6 +1602,16 @@ func (e *Engine) lastSessionIDForStep(stepPath string) string {
 		}
 	}
 	return ""
+}
+
+func (e *Engine) clearStepSessionsForGroup(groupPath string) {
+	prefix := strings.TrimSuffix(groupPath, "/") + "/"
+	for i := range e.Steps {
+		sp := e.Steps[i].StepPath
+		if sp == groupPath || strings.HasPrefix(sp, prefix) {
+			e.Steps[i].SessionID = ""
+		}
+	}
 }
 
 // goModuleRootBinaryName returns the default `go build` / `go test` binary basename at module root
@@ -1636,6 +1703,16 @@ func checkBlastRadius(filesChanged, allowedPatterns []string) (violators []strin
 	}
 	b.WriteString("Allowed: " + strings.Join(allowedPatterns, ", "))
 	return violators, b.String()
+}
+
+func blastRadiusWarningMessage(violators, allowedPatterns []string) string {
+	var b strings.Builder
+	b.WriteString("⚠ blast radius warning: files modified outside task.files scope:\n")
+	for _, v := range violators {
+		b.WriteString(fmt.Sprintf("  - %s (not in allowed list)\n", v))
+	}
+	b.WriteString("Allowed: " + strings.Join(allowedPatterns, ", "))
+	return b.String()
 }
 
 func (e *Engine) writeRestartCycleMarker() error {

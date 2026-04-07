@@ -19,6 +19,7 @@ func Parse(yamlBytes []byte, recipeDir string) (*Recipe, error) {
 	raw := struct {
 		Name        string              `yaml:"name"`
 		Description string              `yaml:"description"`
+		BlastRadius string              `yaml:"blast_radius"`
 		MaxBudget   float64             `yaml:"max_budget"`
 		Inputs      map[string]InputDef `yaml:"inputs"`
 		Steps       []rawStep           `yaml:"steps"`
@@ -36,9 +37,13 @@ func Parse(yamlBytes []byte, recipeDir string) (*Recipe, error) {
 	r := &Recipe{
 		Name:        raw.Name,
 		Description: raw.Description,
+		BlastRadius: strings.TrimSpace(raw.BlastRadius),
 		MaxBudget:   raw.MaxBudget,
 		Inputs:      raw.Inputs,
 		Steps:       make([]Step, 0, len(raw.Steps)),
+	}
+	if r.BlastRadius == "" {
+		r.BlastRadius = "enforce"
 	}
 	for i := range raw.Steps {
 		step, err := parseStep(&raw.Steps[i], fmt.Sprintf("steps[%d]", i), recipeDir)

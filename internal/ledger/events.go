@@ -223,6 +223,23 @@ type GroupRetry struct {
 
 func (GroupRetry) EventType() string { return "group_retry" }
 
+type GroupRetrySessionsReset struct {
+	Group               string   `json:"group"`
+	Attempt             int      `json:"attempt"`
+	Strategy            string   `json:"strategy"`
+	InvalidatedSessions []string `json:"invalidated_sessions"`
+}
+
+func (GroupRetrySessionsReset) EventType() string { return "group_retry_sessions_reset" }
+
+type BlastRadiusWarning struct {
+	Step      string   `json:"step"`
+	Violators []string `json:"violators"`
+	Allowed   []string `json:"allowed"`
+}
+
+func (BlastRadiusWarning) EventType() string { return "blast_radius_warning" }
+
 // CircuitBreaker is emitted when all retries are exhausted and the step is marked fatal.
 type CircuitBreaker struct {
 	Step          string `json:"step"`

@@ -225,6 +225,20 @@ func TestValidate_GuardMaxBudgetZeroRejected(t *testing.T) {
 	}
 }
 
+func TestValidate_BlastRadiusInvalid(t *testing.T) {
+	r := &Recipe{
+		Name:        "x",
+		BlastRadius: "strict",
+		Steps: []Step{
+			{Name: "a", Agent: "codex", Prompt: "p"},
+		},
+	}
+	errs := Validate(r)
+	if len(errs) == 0 {
+		t.Fatal("expected blast_radius validation error")
+	}
+}
+
 func TestValidate_RestartFromMustStayInSameGroup(t *testing.T) {
 	r := &Recipe{
 		Name: "x",

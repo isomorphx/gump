@@ -132,15 +132,20 @@ func (e *Engine) RunWithRetry(step recipe.Step, scopePath string, taskContext *p
 			return nil
 		}
 
-		if err := e.Cook.ResetTo(preCommit); err != nil {
-			return fmt.Errorf("worktree reset before retry: %w", err)
+		if strategy.Type == "escalate" {
+			if err := e.Cook.ResetTo(preCommit); err != nil {
+				return fmt.Errorf("worktree reset before retry: %w", err)
+			}
 		}
 		if errorContext != nil {
 			errorContext.Attempt = attempt
 			errorContext.Strategy = strategyLabel
 		}
 
+		prevForce := e.forceSessionReuse
+		e.forceSessionReuse = strategy.Type == "same"
 		err, preCommit = runOnce(attempt, strategy.Agent, errorContext)
+		e.forceSessionReuse = prevForce
 		if err == nil {
 			e.emitStepCompletedFromLast()
 			return nil

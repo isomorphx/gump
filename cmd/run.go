@@ -324,6 +324,7 @@ func runCook(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Printf("Spec:      %s (%d bytes)\n", specPath, specSize)
 		fmt.Printf("Config:    %s\n", configSource)
+		fmt.Printf("blast_radius: %s\n", rec.BlastRadius)
 		if rec.MaxBudget > 0 {
 			fmt.Printf("Budget:    $%.2f\n", rec.MaxBudget)
 		} else {

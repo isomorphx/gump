@@ -15,6 +15,7 @@ func maxInt(a, b int) int {
 type Recipe struct {
 	Name        string              `yaml:"name"`
 	Description string              `yaml:"description"`
+	BlastRadius string              `yaml:"blast_radius"`
 	Steps       []Step              `yaml:"steps"`
 	MaxBudget   float64             `yaml:"max_budget"`
 	Inputs      map[string]InputDef `yaml:"inputs"`

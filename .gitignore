@@ -60,3 +60,4 @@ docs/
 
 # Project config for dogfooding
 .gump/
+running-logs.txt

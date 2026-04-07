@@ -295,6 +295,34 @@ func (sb *StateBag) PrevSessionID(fullPath string) string {
 	return sb.prev[fullPath].SessionID
 }
 
+// ClearSessionIDsForGroup invalidates session ids for all entries under groupPath.
+// Returns the list of affected step paths.
+func (sb *StateBag) ClearSessionIDsForGroup(groupPath string) []string {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	prefix := strings.TrimSuffix(groupPath, "/") + "/"
+	var cleared []string
+	for k, e := range sb.entries {
+		if k == groupPath || strings.HasPrefix(k, prefix) {
+			if e.SessionID != "" {
+				e.SessionID = ""
+				sb.entries[k] = e
+				cleared = append(cleared, k)
+			}
+		}
+	}
+	for k, e := range sb.prev {
+		if k == groupPath || strings.HasPrefix(k, prefix) {
+			if e.SessionID != "" {
+				e.SessionID = ""
+				sb.prev[k] = e
+				cleared = append(cleared, k)
+			}
+		}
+	}
+	return cleared
+}
+
 func formatCostUSDString(usd float64) string {
 	// WHY: keep JSON-stored cost stable for tests/templates by using rounded decimals.
 	if usd < 0.01 && usd > 0 {

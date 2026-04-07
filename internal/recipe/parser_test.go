@@ -203,3 +203,38 @@ steps:
 		t.Fatalf("guard not parsed")
 	}
 }
+
+func TestParse_BlastRadiusDefaultEnforce(t *testing.T) {
+	yaml := []byte(`
+name: test
+steps:
+  - name: do
+    agent: claude
+    prompt: p
+`)
+	r, err := Parse(yaml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.BlastRadius != "enforce" {
+		t.Fatalf("blast_radius default: got %q, want enforce", r.BlastRadius)
+	}
+}
+
+func TestParse_BlastRadiusExplicit(t *testing.T) {
+	yaml := []byte(`
+name: test
+blast_radius: warn
+steps:
+  - name: do
+    agent: claude
+    prompt: p
+`)
+	r, err := Parse(yaml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.BlastRadius != "warn" {
+		t.Fatalf("blast_radius: got %q, want warn", r.BlastRadius)
+	}
+}
