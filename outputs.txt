@@ -1,0 +1,276 @@
+
+natsuki17@mac ~ % alias gump-dev='go run /Users/natsuki17/dev/gump'
+natsuki17@mac ~ % cd dev/gump
+natsuki17@mac gump % gump-dev run spec-f1-to-f4.md --workflow implement-f1-to-f4
+Worktree: /Users/natsuki17/dev/gump/.gump/worktrees/run-56e66eed-7296-41c0-baad-d877be4d024e
+╭─ implement-f1-to-f4 (run 56e66eed…) ────────────────────╮
+│ Spec: spec-f1-to-f4.md                                   │
+╰──────────────────────────────────────────────────────────╯
+────────────────────────────────────────────────────────────
+Run FATAL at step:
+Error: quality.on_failure.restart_from: restart_from target "impl": step not found in same group
+Total: $0.00 | 0 steps | 0 retries | 0s
+Worktree preserved: /Users/natsuki17/dev/gump/.gump/worktrees/run-56e66eed-7296-41c0-baad-d877be4d024e
+
+Next steps:
+  gump report
+  gump run --replay --from-step impl
+  gump gc --keep-last 1
+────────────────────────────────────────────────────────────
+Error: quality.on_failure.restart_from: restart_from target "impl": step not found in same group
+Usage:
+  gump run [spec-file] [flags]
+
+Flags:
+      --agent string         Override agent for all steps (e.g. claude-sonnet, gemini)
+      --agent-stub           Use stub agent for testing (writes files, no real agent)
+      --dry-run              Only show plan, do not execute
+      --from-step string     Step path or short name to start from (required for --replay)
+  -h, --help                 help for run
+      --pause-after string   Inject HITL pause after the given step name; the step must exist in the recipe
+      --recipe string        Deprecated alias for --workflow (e.g. tdd, freeform). Omitted for --replay.
+      --replay               Replay from a step of the last fatal run (use with --from-step)
+      --resume               Resume the last fatal/aborted run in place
+      --run string           Run UUID to replay (default: last fatal run)
+  -v, --verbose              Full streaming output (no truncation)
+      --workflow string      Workflow name (e.g. tdd, freeform). Omitted for --replay (uses last run's workflow).
+
+Global Flags:
+      --log-level string   Override config log level (debug, info, warn, error) (default "info")
+
+exit status 1
+natsuki17@mac gump % gump-dev run spec-f1-to-f4.md --workflow implement-f1-to-f4
+Worktree: /Users/natsuki17/dev/gump/.gump/worktrees/run-65076daa-3000-4ac3-899e-7e7427c199c0
+╭─ implement-f1-to-f4 (run 65076daa…) ────────────────────╮
+│ Spec: spec-f1-to-f4.md                                   │
+╰──────────────────────────────────────────────────────────╯
+[1] decompose (claude-opus) ...
+     T2  ⠿  planning  0 actions  2 tok  0s                    T1  ✓  mixed  12 read, 13 bash, 1 agent  486 tok  1m02s
+     T3  ⠿  writing  1 write  60 tok  0s                      T2  ✓  execution  1 bash  4 tok  38s
+     T4  ⠿  planning  0 actions  2 tok  0s                    T3  ✓  writing  1 write  60 tok  9s
+     T4  ⠿  planning  0 actions  2 tok  0s                       Plan written to `.gump/out/plan.json` with 13 items ordered by dependency:
+
+        1. **f1-d-cobra-silence-usage** — Trivial fix, no deps
+        2. **f1-f-alias-wf** — Trivial flag alias, no deps
+        3. **f1-a-error-digest-impl** — New module + config + integration into builder.go
+        4. **f1-b-doctor-hardening** — Timeout, provider flags, uniform display
+        5. **f1-c-init-implicit** — New init command + implicit init in run
+        6. **f1-g-rebranding-final** — Large sweep across all files (depends on earlier items to stabilize touched files)
+        7. **f1-i-crash-robustness-sighandler** — Signal handler in engine + state-bag error handling
+        8. **f4-h-tests-g4-missing** — 13 missing G4 e2e tests (tests existing code)
+        9. **f1-e2e-tests-error-digest** — F1-E2E-1/2/3 (tests error digest from item 3)
+        10. **f1-e2e-tests-doctor-init-cobra-wf** — F1-E2E-4/5/6/7/8 (tests items 1,2,4,5)
+        11. **f1-e2e-tests-crash-robustness** — F1-E2E-9/10/11/12 (tests item 7)
+        12. **f1-e2e-tests-rebranding-nonregression** — F1-E2E-13/14 (tests item 6 + full suite)
+        13. **f1-smoke-tests** — Live smoke tests (last, depends on all impl items)
+     T4  ✓  planning  0 actions  2 tok  0s
+        ✓ done 1m50s | $0.35 | 3k/200k ctx (2%) | 4 turns
+[decompose]	pass	13 tasks planned, 1 validator passed
+[gump] run total: $0.35 | 1 steps
+[2/27] build/f1-d-cobra-silence-usage/impl (claude-sonnet) [task f1-d-cobra-silence-usage] ...
+     T2  ⠿  writing  1 edit  66 tok  0s         T1  ✓  exploration  1 read  22 tok  8s
+     T3  ⠿  execution  1 bash  74 tok  0s       T2  ✓  writing  1 edit  66 tok  3s
+     T4  ⠿  planning  0 actions  2 tok  0s      T3  ✓  execution  1 bash  74 tok  3s
+     T4  ⠿  planning  0 actions  2 tok  0s         Build passes. The fix adds `SilenceUsage: true` and `SilenceErrors: true` to `rootCmd` in `cmd/root.go:33-38`, preventing Cob
+ra from dumping the help/usage block on every command error.
+     T4  ✓  planning  0 actions  2 tok  0s
+        ✓ done 16s | $0.09 | 1k/200k ctx (0%) | 4 turns
+[build/f1-d-cobra-silence-usage/impl]	pass	2 files changed, 2 validators passed
+[gump] run total: $0.44 | 2/27 steps
+[1] build/f1-d-cobra-silence-usage/converge/reviews/arch-review/arch-review (claude-opus) ...
+[1] build/f1-d-cobra-silence-usage/converge/reviews/compat-review/compat-review (codex-gpt53) ...
+     T2  ⠿  planning  0 actions  0s     T1  ✓  planning  0 actions  0s
+     T2  ✓  execution  5 bash  72 tok  14s
+warning: budget tracking unavailable — provider did not report cost
+        Spec conformant
+        ✓ done 16s | $0.00 | 55k/400k ctx (14%) | 1 turn
+     T3  ⠿  writing  1 write  54 tok  0s[build/f1-d-cobra-silence-usage/converge/reviews/compat-review/compat-review]	pass	review.json recorded
+[gump] run total: $0.00 | 1 steps
+     T3  ⠿  writing  1 write  56 tok  0s        The implementation is **spec conformant**. Both `SilenceUsage: true` and `SilenceErrors: true` are correctly added to `rootCmd`
+in `cmd/root.go`, exactly as specified in Partie D of Spec F1.
+     T3  ✓  writing  1 write  56 tok  2s
+        ✓ done 17s | $0.16 | 1k/200k ctx (0%) | 3 turns
+[build/f1-d-cobra-silence-usage/converge/reviews/arch-review/arch-review]	pass	review.json recorded
+[gump] run total: $0.16 | 1 steps
+[3/4] build/f1-d-cobra-silence-usage/converge/arbiter (claude-opus) ...
+     T2  ⠿  planning  0 actions  2 tok  0s     T1  ✓  writing  1 write  10 tok  6s
+     T2  ⠿  planning  0 actions  2 tok  0s        No changes needed.
+     T2  ✓  planning  0 actions  2 tok  0s
+        ✓ done 6s | $0.05 | 0k/200k ctx (0%) | 2 turns
+        1 files changed
+[build/f1-d-cobra-silence-usage/converge/arbiter]	pass	1 file(s) changed
+[gump] run total: $0.65 | 5/4 steps
+[4/4] build/f1-d-cobra-silence-usage/converge/fix (claude-sonnet) [session: reuse] ...
+     T1  ⠿  planning  0 actions  4 tok  0s        No changes needed.
+     T1  ✓  planning  0 actions  4 tok  2s
+        ✓ done 2s | $0.06 | 0k/200k ctx (0%) | 1 turn
+[build/f1-d-cobra-silence-usage/converge/fix]	pass	1 file changed, 2 validators passed
+[gump] run total: $0.71 | 6/4 steps
+[5/4] build/f1-f-alias-wf/impl (claude-sonnet) [task f1-f-alias-wf] ...
+     T2  ⠿  exploration  1 read  70 tok  0s      T1  ✓  exploration  1 search  6 tok  7s
+     T3  ⠿  writing  1 edit  66 tok  0s          T2  ✓  exploration  1 read  70 tok  4s
+     T4  ⠿  planning  0 actions  9 tok  0s       T3  ✓  writing  1 edit  66 tok  3s
+     T5  ⠿  planning  0 actions  9 tok  0s       T4  ✓  exploration  1 read  18 tok  7s
+     T6  ⠿  planning  0 actions  2 tok  0s       T5  ✓  exploration  1 read  18 tok  1s
+     T7  ⠿  writing  1 edit  73 tok  0s          T6  ✓  writing  1 edit  4 tok  3s
+     T8  ⠿  planning  0 actions  2 tok  0s       T7  ✓  writing  1 edit  73 tok  1s
+     T9  ⠿  planning  0 actions  3 tok  0s       T8  ✓  writing  1 edit  4 tok  4s
+     T10  ⠿  execution  1 bash  61 tok  0s       T9  ✓  execution  1 bash  6 tok  3s
+     T11  ⠿  execution  1 bash  71 tok  0s       T10  ✓  execution  1 bash  61 tok  2m03s
+     T12  ⠿  execution  1 bash  61 tok  0s       T11  ✓  execution  1 bash  71 tok  1s
+     T13  ⠿  planning  0 actions  6 tok  0s      T12  ✓  execution  1 bash  61 tok  2s
+     T13  ⠿  planning  0 actions  10 tok  0s        All tests passed. The implementation is complete.
+     T13  ✓  planning  0 actions  10 tok  4m17s
+        ✓ done 2s | $0.23 | 0k/200k ctx (0%) | 1 turn
+[build/f1-f-alias-wf/impl]	pass	3 files changed, 2 validators passed
+[gump] run total: $0.93 | 7/4 steps
+[1] build/f1-f-alias-wf/converge/reviews/arch-review/arch-review (claude-opus) ...
+[1] build/f1-f-alias-wf/converge/reviews/compat-review/compat-review (codex-gpt53) ...
+     T2  ⠿  planning  0 actions  0s     T1  ✓  planning  0 actions  0s
+     T2  ✓  execution  8 bash  44 tok  17s
+warning: budget tracking unavailable — provider did not report cost
+        Spec conformant
+        ✓ done 17s | $0.00 | 85k/400k ctx (21%) | 1 turn
+[build/f1-f-alias-wf/converge/reviews/compat-review/compat-review]	pass	review.json recorded
+[gump] run total: $0.00 | 1 steps
+     T3  ✓  coding  1 write, 1 bash  82 tok  9s
+        ✓ done 26s | $0.29 | 1k/200k ctx (0%) | 3 turns
+[build/f1-f-alias-wf/converge/reviews/arch-review/arch-review]	pass	review.json recorded
+[gump] run total: $0.29 | 1 steps
+[6/7] build/f1-f-alias-wf/converge/arbiter (claude-opus) ...
+     T2  ⠿  planning  0 actions  2 tok  0s     T1  ✓  writing  1 write  10 tok  5s
+     T2  ⠿  planning  0 actions  2 tok  0s        No changes needed.
+     T2  ✓  planning  0 actions  2 tok  0s
+        ✓ done 6s | $0.05 | 0k/200k ctx (0%) | 2 turns
+        1 files changed
+[build/f1-f-alias-wf/converge/arbiter]	pass	1 file(s) changed
+[gump] run total: $1.28 | 10/7 steps
+[7/7] build/f1-f-alias-wf/converge/fix (claude-sonnet) [session: reuse] ...
+     T1  ⠿  planning  0 actions  4 tok  0s        No changes needed.
+     T1  ✓  planning  0 actions  4 tok  2s
+        ✓ done 2s | $0.06 | 0k/200k ctx (0%) | 1 turn
+[build/f1-f-alias-wf/converge/fix]	pass	1 file changed, 2 validators passed
+[gump] run total: $1.33 | 11/7 steps
+[8/7] build/f1-a-error-digest-impl/impl (claude-sonnet) [task f1-a-error-digest-impl] ...
+     T2  ⠿  planning  0 actions  9 tok  0s                       T1  ✓  exploration  3 read, 5 glob, 1 agent  62 tok  23s
+     T3  ⠿  exploration  1 read  9 tok  0s                       T2  ✓  exploration  1 read  18 tok  2s
+     T4  ⠿  exploration  1 read  9 tok  0s                       T3  ✓  exploration  1 read  9 tok  0s
+     T5  ⠿  planning  0 actions  9 tok  0s                       T4  ✓  exploration  1 read  9 tok  3s
+     T6  ⠿  planning  0 actions  9 tok  0s                       T5  ✓  exploration  1 read  18 tok  48s
+     T7  ⠿  exploration  1 search  9 tok  0s                     T6  ✓  exploration  1 search  27 tok  2s
+     T8  ⠿  planning  0 actions  9 tok  0s                       T7  ✓  exploration  1 search  9 tok  9s
+     T9  ⠿  planning  0 actions  9 tok  0s                       T8  ✓  exploration  1 read  18 tok  2s
+     T10  ⠿  exploration  1 read  66 tok  0s                     T9  ✓  exploration  1 search  18 tok  3s
+     T11  ⠿  planning  0 actions  9 tok  0s                      T10  ✓  exploration  1 read  66 tok  17s
+     T12  ⠿  planning  0 actions  11 tok  0s                     T11  ✓  exploration  1 search  18 tok  16s
+     T13  ⠿  exploration  1 search  11 tok  0s                   T12  ✓  exploration  1 read  22 tok  0s
+     T14  ⠿  planning  0 actions  9 tok  0s                      T13  ✓  exploration  1 search  11 tok  17s
+     T15  ⠿  planning  0 actions  9 tok  0s                      T14  ✓  exploration  1 read  18 tok  1m39s
+     T16  ⠿  planning  0 actions  9 tok  0s                      T15  ✓  exploration  1 read  18 tok  43s
+     T17  ⠿  planning  0 actions  3 tok  0s                      T16  ✓  writing  1 write  27 tok  34s
+     T18  ⠿  planning  0 actions  3 tok  0s                      T17  ✓  writing  1 write  6 tok  48s
+     T19  ⠿  planning  0 actions  5 tok  0s                      T18  ✓  writing  1 edit  6 tok  5s
+     T20  ⠿  writing  1 edit  74 tok  0s                         T19  ✓  writing  1 edit  10 tok  6s
+     T21  ⠿  planning  0 actions  5 tok  0s                      T20  ✓  writing  1 edit  74 tok  2s
+     T22  ⠿  writing  1 edit  74 tok  0s                         T21  ✓  writing  1 edit  10 tok  7s
+     T23  ⠿  planning  0 actions  3 tok  0s                      T22  ✓  writing  1 edit  74 tok  3s
+     T24  ⠿  planning  0 actions  9 tok  0s                      T23  ✓  writing  1 edit  6 tok  10s
+     T25  ⠿  planning  0 actions  6 tok  0s                      T24  ✓  writing  1 edit  18 tok  6s
+     T26  ⠿  execution  1 bash  71 tok  0s                       T25  ✓  execution  1 bash  12 tok  4s
+     T27  ⠿  planning  0 actions  10 tok  0s                     T26  ✓  execution  1 bash  71 tok  15s
+     T28  ⠿  execution  1 bash  66 tok  0s                       T27  ✓  writing  1 edit  30 tok  7s
+     T29  ⠿  planning  0 actions  3 tok  0s                      T28  ✓  execution  1 bash  66 tok  2s
+     T30  ⠿  planning  0 actions  10 tok  0s                     T29  ✓  execution  2 bash  14 tok  6m26s
+     T31  ⠿  planning  0 actions  10 tok  0s                     T30  ✓  execution  1 bash  30 tok  9s
+     T32  ⠿  planning  0 actions  9 tok  0s                      T31  ✓  execution  1 bash  30 tok  3s
+     T33  ⠿  planning  0 actions  2 tok  0s                      T32  ✓  execution  1 bash  27 tok  12s
+     T33  ⠿  planning  0 actions  2 tok  0s                         All changes are in place. The pre-existing e2e failures (`TestG5_E2E_6` and `TestG5_E2E_7`) were confirmed t
+o fail on the base commit before any of my changes. All new tests pass and the build is clean.
+
+        **Summary of changes:**
+
+        - **`internal/engine/error_digest.go`** — New file implementing `DigestError` with:
+          - Tech-specific key message extraction (Python → Rust → Go → Java → Node, in specificity order)
+          - Generic fallback (last 5 non-empty lines)
+          - Noise filtering: progress bars (ASCII/Unicode), `go: downloading/finding`, `npm warn`, consecutive empty lines, repeated consecutive lines
+          - Configurable `maxLines` (default 20) and `maxChars` hard cap (default 2000)
+          - Output format: `Error: <key>` + `Context (last N lines):` section
+
+        - **`internal/engine/error_digest_test.go`** — 20 tests covering all tech extractors, noise filtering, maxLines, hard cap, empty input, and output format
+
+        - **`internal/config/config.go`** — Added `ErrorContextMaxLines int` field
+
+        - **`internal/config/loader.go`** — Added `MaxLines int` to `fileConfig.ErrorContext` and reads it into `cfg.ErrorContextMaxLines`
+
+        - **`internal/context/builder.go`** — Replaced `TruncateLines(p.Error, maxE)` with `te := p.Error` in both `buildRetrySection` and `buildReplanMarkdown` (diff still use
+s `TruncateLines`)
+
+        - **`internal/engine/engine.go`** — Calls `DigestError` when constructing `RetrySection.Error`
+
+        - **`internal/engine/replan.go`** — Calls `DigestError` on `errStr` before passing to `pkgcontext.BuildReplan`
+     T33  ✓  planning  0 actions  2 tok  0s
+        ✓ done 31s | $1.29 | 1k/200k ctx (1%) | 5 turns
+[gump] run total: $2.63 | 12/7 steps
+[gump] run total: $2.63 | 13/7 steps
+[build/f1-a-error-digest-impl/impl]	FAIL	blast radius violation: files modified outside task.files scope:
+  - internal/engine/engine.go (not in: [internal/engine/error_digest.go internal/engine/error_digest_test.go internal/context/builder.go internal/config/config.go internal/conf
+ig/loader.go])
+  - internal/engine/replan.go (not in: [internal/engine/error_digest.go internal/engine/error_digest_test.go internal/context/builder.go internal/config/config.go internal/conf
+ig/loader.go])
+Allowed: internal/engine/error_digest.go, internal/engine/error_digest_test.go, internal/context/builder.go, internal/config/config.go, internal/config/loader.go
+        → retry attempt 2/6 (same)
+[9/7] build/f1-a-error-digest-impl/impl (claude-sonnet) [task f1-a-error-digest-impl] [retry 2/6 (same)] [session: reuse] ...
+     T2  ⠿  planning  0 actions  3 tok  0s      T1  ✓  execution  1 bash  33 tok  11s
+     T2  ⠿  planning  0 actions  3 tok  0s         All internal packages pass. The implementation is already in place:
+
+        - **`internal/engine/error_digest.go`** — `DigestError` with tech-specific extraction (Python, Rust, Go, Java, Node, generic fallback), noise filtering, configurable `m
+axLines`/`maxChars`
+        - **`internal/engine/error_digest_test.go`** — 20 unit tests covering all extractors and filters
+        - **`internal/config/config.go`** — `ErrorContextMaxLines int` field added
+        - **`internal/config/loader.go`** — `MaxLines` read from `[error_context]` TOML section
+        - **`internal/context/builder.go`** — `TruncateLines` replaced with `te := p.Error` for the error field (diff still uses `TruncateLines`)
+
+        The two e2e failures (`TestG5_E2E_6`, `TestG5_E2E_7`) are pre-existing and unrelated to this change (confirmed by reproducing them on the base commit before any modific
+ations).
+     T2  ✓  planning  0 actions  3 tok  0s
+        ✓ done 11s | $0.29 | 0k/200k ctx (0%) | 2 turns
+[build/f1-a-error-digest-impl/impl]	pass	1 file changed, 2 validators passed
+[gump] run total: $2.92 | 14/7 steps
+panic: statebag: ambiguous step reference arbiter — use fully-qualified path
+
+goroutine 345 [running]:
+github.com/isomorphx/gump/internal/statebag.resolveInSource(0x83d3c3a67e0, {0x83d3c3fce41, 0x7}, {0x83d3c392050, 0x45})
+	/Users/natsuki17/dev/gump/internal/statebag/statebag.go:178 +0x6e8
+github.com/isomorphx/gump/internal/statebag.(*StateBag).resolveByScope(...)
+	/Users/natsuki17/dev/gump/internal/statebag/statebag.go:189
+github.com/isomorphx/gump/internal/statebag.(*StateBag).Get(0x83d3c19d400?, {0x83d3c3fce41?, 0x16?}, {0x83d3c392050?, 0x83d3c1dc210?}, {0x83d3c3fce49, 0x6})
+	/Users/natsuki17/dev/gump/internal/statebag/statebag.go:102 +0xd4
+github.com/isomorphx/gump/internal/template.Resolve.func4({0x83d3c3fce3a, 0x16})
+	/Users/natsuki17/dev/gump/internal/template/template.go:94 +0x124
+regexp.(*Regexp).ReplaceAllStringFunc.func1({0x83d3c4a0000, 0x184c, 0x1980}, {0x83d3c322100?, 0x0?, 0x0?})
+	/opt/homebrew/Cellar/go/1.26.0/libexec/src/regexp/regexp.go:578 +0x74
+regexp.(*Regexp).replaceAll(0x83d3c19d400, {0x0, 0x0, 0x0}, {0x83d3c3fcdc0, 0x285}, 0x2, 0x83d3c0cfde8)
+	/opt/homebrew/Cellar/go/1.26.0/libexec/src/regexp/regexp.go:616 +0x2d0
+regexp.(*Regexp).ReplaceAllStringFunc(0x83d3c3fc580?, {0x83d3c3fcdc0?, 0x83d3c0cfe50?}, 0x6?)
+	/opt/homebrew/Cellar/go/1.26.0/libexec/src/regexp/regexp.go:577 +0x54
+github.com/isomorphx/gump/internal/template.Resolve({0x83d3c3fc2c0, 0x285}, 0x83d3c2b0c90, 0x83d3c3ba460, {0x83d3c392050, 0x45})
+	/Users/natsuki17/dev/gump/internal/template/template.go:82 +0x1d8
+github.com/isomorphx/gump/internal/engine.(*Engine).runAtomicStepOnce(0x83d3c226000, 0x83d3c4f88c0, {0x83d3c392050, 0x45}, 0x0, 0x83d3c23d8c0, {{0x1006fd078?, 0x5?}, {0x0?, 0x0
+?}}, ...)
+	/Users/natsuki17/dev/gump/internal/engine/engine.go:571 +0x3b8
+github.com/isomorphx/gump/internal/engine.(*Engine).runAtomicStep(0x83d3c226000, 0x83d3c4f88c0, {0x83d3c392050, 0x45}, 0x0, 0x83d3c23d8c0, {{0x1006fd078?, 0x0?}, {0x0?, 0x0?}},
+ ...)
+	/Users/natsuki17/dev/gump/internal/engine/engine.go:536 +0x13c
+github.com/isomorphx/gump/internal/engine.(*Engine).executeSteps(0x83d3c226000, {0x83d3c4f8280, 0x1, 0x1?}, 0x0, {0x83d3c39e1c0, 0x39}, 0x83d3c23d8c0, {{0x1006fd078?, 0x5?}, ..
+.}, ...)
+	/Users/natsuki17/dev/gump/internal/engine/engine.go:435 +0x414
+github.com/isomorphx/gump/internal/engine.RunParallelGroup.func1(0x0, 0x83d3c226000, 0x83d3c3e8000)
+	/Users/natsuki17/dev/gump/internal/engine/parallel.go:67 +0x190
+created by github.com/isomorphx/gump/internal/engine.RunParallelGroup in goroutine 1
+	/Users/natsuki17/dev/gump/internal/engine/parallel.go:52 +0xd4
+exit status 2
+natsuki17@mac gump % tmux set -g mouse on
+natsuki17@mac gump % tmux copy-mode
+natsuki17@mac gump %
+natsuki17@mac gump % tmux capture-pane -pS - > outputs.txt
+
