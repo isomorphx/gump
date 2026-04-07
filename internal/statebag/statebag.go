@@ -3,6 +3,7 @@ package statebag
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"path"
 	"strconv"
 	"strings"
@@ -175,13 +176,15 @@ func resolveInSource(source map[string]Entry, shortName string, scopePath string
 			return &atScope[0]
 		}
 		if len(atScope) > 1 {
-			panic("statebag: ambiguous step reference " + shortName + " — use fully-qualified path")
+			log.Printf("statebag: ambiguous reference '%s' in scope '%s', returning empty (use fully-qualified path)", shortName, scopePath)
+			return nil
 		}
 	}
 	if len(candidates) == 1 {
 		return &candidates[0]
 	}
-	panic("statebag: ambiguous step reference " + shortName + " — use fully-qualified path")
+	log.Printf("statebag: ambiguous reference '%s' in scope '%s', returning empty (use fully-qualified path)", shortName, scopePath)
+	return nil
 }
 
 // resolveByScope picks the entry for shortName closest to scopePath from current entries only. After ResetGroup, keys moved to prev are not visible so {steps.code.output} resolves to "" (retry semantics).
