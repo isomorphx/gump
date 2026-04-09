@@ -103,7 +103,7 @@ func (e *Engine) RunWithRetry(step *workflow.Step, scopePath string, taskContext
 		if e.Cook.Ledger != nil {
 			_ = e.Cook.Ledger.Emit(ledger.RetryTriggered{Step: scopePath, Attempt: attempt, Strategy: strategyLabel, Scope: "step"})
 			e.retryTriggeredCount++
-			e.StateBag.IncrementRunRetries()
+			e.State.IncrementRunRetries()
 		}
 		displayMax := attemptLimit
 		if isConditional {

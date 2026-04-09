@@ -31,8 +31,15 @@ func TestBuildStepDetailAndRender(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stateBag := `{"entries":{"build/impl":{"output":"diff --git a/a.go b/a.go","status":"pass","tokens_in":"1700","tokens_out":"350","turns":"5","retries":"1"}}}`
-	if err := os.WriteFile(filepath.Join(dir, "state-bag.json"), []byte(stateBag), 0644); err != nil {
+	stateFlat := `{
+  "build/impl.output": "diff --git a/a.go b/a.go",
+  "build/impl.status": "pass",
+  "build/impl.tokens_in": "1700",
+  "build/impl.tokens_out": "350",
+  "build/impl.turns": "5",
+  "build/impl.retries": "1"
+}`
+	if err := os.WriteFile(filepath.Join(dir, "state.json"), []byte(stateFlat), 0644); err != nil {
 		t.Fatal(err)
 	}
 

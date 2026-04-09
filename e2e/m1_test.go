@@ -1,32 +1,16 @@
 package e2e
 
 import (
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	_ "github.com/isomorphx/gump/internal/builtin"
+	"github.com/isomorphx/gump/internal/state"
 	"github.com/isomorphx/gump/internal/template"
 	"github.com/isomorphx/gump/internal/workflow"
 )
-
-func captureStderr(t *testing.T, fn func()) string {
-	t.Helper()
-	orig := os.Stderr
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	os.Stderr = w
-	fn()
-	_ = w.Close()
-	os.Stderr = orig
-	out, _ := io.ReadAll(r)
-	_ = r.Close()
-	return string(out)
-}
 
 func gateHasType(g []workflow.GateEntry, typ string) bool {
 	for _, v := range g {
@@ -194,27 +178,20 @@ steps:
 	}
 }
 
-func TestM1_7_TemplateItemDotUnderscore(t *testing.T) {
-	out := template.Resolve("Implement {item.description} in {item.files}", map[string]string{
-		"item.description": "Add auth",
-		"item.files":       "auth.go",
-	}, nil, "")
+func TestM1_7_TemplateTaskVars(t *testing.T) {
+	ctx := &state.ResolveContext{
+		Task: &state.TaskVars{Description: "Add auth", Files: "auth.go"},
+	}
+	out := template.Resolve("Implement {task.description} in {task.files}", ctx)
 	if out != "Implement Add auth in auth.go" {
 		t.Fatalf("got %q", out)
 	}
 }
 
-func TestM1_8_TemplateTaskVarsWarningDeprecated(t *testing.T) {
-	stderr := captureStderr(t, func() {
-		out := template.Resolve("Implement {task.description}", map[string]string{
-			"item.description": "Add auth",
-		}, nil, "")
-		if out != "Implement Add auth" {
-			t.Fatalf("got %q", out)
-		}
-	})
-	if !strings.Contains(stderr, "deprecated") {
-		t.Fatalf("expected deprecated warning, stderr=%q", stderr)
+func TestM1_8_TemplateItemVarsRemoved(t *testing.T) {
+	out := template.Resolve("x {item.description} y", &state.ResolveContext{})
+	if out != "x  y" {
+		t.Fatalf("got %q", out)
 	}
 }
 
@@ -245,7 +222,7 @@ steps:
   - name: next
     type: code
     agent: claude-opus
-    prompt: "Use {steps.impl.output}"
+    prompt: "Use {impl.output}"
 `)
 	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "statebag", "--dry-run"}, nil, dir)
 	if code != 0 {
@@ -254,8 +231,8 @@ steps:
 	if !strings.Contains(stdout, "State Bag Resolutions:") {
 		t.Fatalf("stdout missing State Bag resolutions: %s", stdout)
 	}
-	if !strings.Contains(stdout, "steps.impl.output") || !strings.Contains(stdout, "→") {
-		t.Fatalf("stdout missing steps.impl.output / arrow: %s", stdout)
+	if !strings.Contains(stdout, "impl.output") || !strings.Contains(stdout, "→") {
+		t.Fatalf("stdout missing impl.output / arrow: %s", stdout)
 	}
 }
 

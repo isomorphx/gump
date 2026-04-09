@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/isomorphx/gump/internal/brand"
-	"github.com/isomorphx/gump/internal/statebag"
+	"github.com/isomorphx/gump/internal/state"
 )
 
 // Known lockfiles so we can record their hashes for reproducibility and drift detection.
@@ -112,16 +112,25 @@ func WriteContextSnapshot(cookDir string, ctx *ContextSnapshot) error {
 	return os.WriteFile(filepath.Join(cookDir, "context-snapshot.json"), data, 0644)
 }
 
-// WriteStateBag serializes the State Bag to state-bag.json in the cook dir for replay.
-func WriteStateBag(cookDir string, sb *statebag.StateBag) error {
-	if sb == nil {
+// WriteState persists flat workflow state for replay (v0.0.4 path: state.json).
+func WriteState(cookDir string, st *state.State) error {
+	if st == nil {
 		return nil
 	}
-	data, err := sb.Serialize()
+	data, err := st.Serialize()
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(cookDir, "state-bag.json"), data, 0644)
+	return os.WriteFile(filepath.Join(cookDir, "state.json"), data, 0644)
+}
+
+// ReadStateFile returns state.json bytes when present, otherwise legacy state-bag.json.
+func ReadStateFile(cookDir string) ([]byte, error) {
+	p := filepath.Join(cookDir, "state.json")
+	if data, err := os.ReadFile(p); err == nil {
+		return data, nil
+	}
+	return os.ReadFile(filepath.Join(cookDir, "state-bag.json"))
 }
 
 // LockfileHashesForDir scans worktreeDir for known lockfiles and returns sha256 hashes.

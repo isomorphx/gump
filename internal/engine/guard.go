@@ -138,7 +138,8 @@ func (g *GuardRuntime) isAllowedWritePath(p string) bool {
 		return norm == filepath.ToSlash(brand.StateDir()+"/out/plan.json")
 	}
 	if g.outputMode == "review" {
-		return norm == filepath.ToSlash(brand.StateDir()+"/out/review.json")
+		return norm == filepath.ToSlash(brand.StateDir()+"/out/review.json") ||
+			norm == filepath.ToSlash(brand.StateDir()+"/out/validate.json")
 	}
 	if g.outputMode == "artifact" {
 		return norm == filepath.ToSlash(brand.StateDir()+"/out/artifact.txt")

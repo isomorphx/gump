@@ -8,7 +8,45 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/isomorphx/gump/internal/cook"
+	"github.com/isomorphx/gump/internal/state"
 )
+
+// stateBagEntryLite mirrors legacy state-bag entry fields used by reporting (session + touched files).
+type stateBagEntryLite struct {
+	SessionID string
+	Files     string
+}
+
+func loadStateBagEntriesForReport(cookDir string) map[string]stateBagEntryLite {
+	b, err := cook.ReadStateFile(cookDir)
+	if err != nil {
+		return nil
+	}
+	st, err := state.Restore(b)
+	if err != nil || st == nil {
+		return nil
+	}
+	tmp := map[string]stateBagEntryLite{}
+	for _, k := range st.Keys() {
+		i := strings.IndexByte(k, '.')
+		if i <= 0 {
+			continue
+		}
+		stepPath := k[:i]
+		field := k[i+1:]
+		e := tmp[stepPath]
+		switch field {
+		case "session_id":
+			e.SessionID = st.Get(k)
+		case "files":
+			e.Files = st.Get(k)
+		}
+		tmp[stepPath] = e
+	}
+	return tmp
+}
 
 // StepReport is the per-step analytics row (spec §3).
 type StepReport struct {
@@ -114,21 +152,7 @@ func BuildCookReport(cookDir string) (*CookReport, error) {
 	if err != nil {
 		return nil, err
 	}
-	var stateBagEntries map[string]struct {
-		SessionID string `json:"session_id"`
-		Files     string `json:"files"`
-	}
-	if sb, err := os.ReadFile(filepath.Join(cookDir, "state-bag.json")); err == nil {
-		var payload struct {
-			Entries map[string]struct {
-				SessionID string `json:"session_id"`
-				Files     string `json:"files"`
-			} `json:"entries"`
-		}
-		if json.Unmarshal(sb, &payload) == nil {
-			stateBagEntries = payload.Entries
-		}
-	}
+	stateBagEntries := loadStateBagEntriesForReport(cookDir)
 
 	lines := bytes.Split(data, []byte("\n"))
 	var cookID, recipe, cookStatus string

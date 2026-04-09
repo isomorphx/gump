@@ -13,7 +13,7 @@ import (
 	"github.com/isomorphx/gump/internal/cook"
 	"github.com/isomorphx/gump/internal/ledger"
 	"github.com/isomorphx/gump/internal/workflow"
-	"github.com/isomorphx/gump/internal/statebag"
+	"github.com/isomorphx/gump/internal/state"
 )
 
 // FindLastFatalCook returns the run dir of the most recent run with status "fatal", or the run dir for cookID if cookID != "" (status not checked).
@@ -118,14 +118,13 @@ func RunReplay(repoRoot, specPath, fromStep, cookID string, rec *workflow.Workfl
 	}
 	restoreCommit := info.RestoreCommitBeforeStep(resolvedStep, info.InitialCommit)
 	originalWorktree := filepath.Join(repoRoot, brand.StateDir(), "worktrees", brand.WorktreeDirPrefix()+info.OriginalCookID)
-	stateBagPath := filepath.Join(cookDir, "state-bag.json")
-	stateBagData, err := os.ReadFile(stateBagPath)
+	stateBagData, err := cook.ReadStateFile(cookDir)
 	if err != nil {
-		return nil, 0, fmt.Errorf("read state-bag: %w", err)
+		return nil, 0, fmt.Errorf("read state: %w", err)
 	}
-	sb, err := statebag.Restore(stateBagData)
+	sb, err := state.Restore(stateBagData)
 	if err != nil {
-		return nil, 0, fmt.Errorf("restore state-bag: %w", err)
+		return nil, 0, fmt.Errorf("restore state: %w", err)
 	}
 	specContent, err := os.ReadFile(specPath)
 	if err != nil {
@@ -138,7 +137,7 @@ func RunReplay(repoRoot, specPath, fromStep, cookID string, rec *workflow.Workfl
 	eng := New(c, rec, resolver, cfg, string(specContent))
 	eng.AgentsCLI = agentsCLI
 	eng.FromStep = resolvedStep
-	eng.StateBag = sb
+	eng.State = sb
 	eng.replayOriginalCookID = info.OriginalCookID
 	eng.replayRestoredCommit = restoreCommit
 	if err := eng.Run(); err != nil {

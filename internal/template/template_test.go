@@ -3,98 +3,94 @@ package template
 import (
 	"testing"
 
-	"github.com/isomorphx/gump/internal/statebag"
+	"github.com/isomorphx/gump/internal/state"
 )
 
 func TestResolve_Spec(t *testing.T) {
-	vars := map[string]string{"spec": "Build a REST API"}
-	out := Resolve("Do this: {spec}", vars, nil, "")
+	ctx := &state.ResolveContext{Spec: "Build a REST API"}
+	out := Resolve("Do this: {spec}", ctx)
 	if out != "Do this: Build a REST API" {
 		t.Errorf("got %q", out)
 	}
 }
 
 func TestResolve_TaskVars(t *testing.T) {
-	vars := map[string]string{
-		"task.name":        "add-auth",
-		"task.description": "Add JWT auth",
-		"task.files":       "pkg/auth.go, pkg/auth_test.go",
+	ctx := &state.ResolveContext{
+		Task: &state.TaskVars{
+			Name: "add-auth", Description: "Add JWT auth",
+			Files: "pkg/auth.go, pkg/auth_test.go",
+		},
 	}
-	out := Resolve("Task {task.name}: {task.description}. Files: {task.files}", vars, nil, "")
+	out := Resolve("Task {task.name}: {task.description}. Files: {task.files}", ctx)
 	if out != "Task add-auth: Add JWT auth. Files: pkg/auth.go, pkg/auth_test.go" {
 		t.Errorf("got %q", out)
 	}
 }
 
 func TestResolve_UnknownLeftAsIs(t *testing.T) {
-	vars := map[string]string{"spec": "x"}
-	out := Resolve("{spec} and {unknown}", vars, nil, "")
+	ctx := &state.ResolveContext{Spec: "x"}
+	out := Resolve("{spec} and {unknown}", ctx)
 	if out != "x and " {
 		t.Errorf("got %q", out)
 	}
 }
 
-func TestResolve_NilVars(t *testing.T) {
-	out := Resolve("{spec}", nil, nil, "")
+func TestResolve_NilCtx(t *testing.T) {
+	out := Resolve("{spec}", nil)
 	if out != "" {
 		t.Errorf("got %q", out)
 	}
 }
 
-func TestResolve_StepsRefWhenNilStateBag(t *testing.T) {
-	out := Resolve("Prior: {steps.analyze.output}", nil, nil, "")
-	if out != "Prior: " {
-		t.Errorf("steps ref with nil stateBag should be empty: got %q", out)
-	}
-}
-
-func TestResolve_StepsRefFromStateBag(t *testing.T) {
-	sb := statebag.New()
-	sb.Set("analyze", "stub artifact output for analyze", "", nil, "")
-	vars := map[string]string{}
-	out := Resolve("Use: {steps.analyze.output}", vars, sb, "code")
+func TestResolve_QualifiedStepOutput(t *testing.T) {
+	st := state.New()
+	st.SetStepOutput("analyze", "stub artifact output for analyze", "", nil, "")
+	ctx := &state.ResolveContext{State: st, StepPath: "code"}
+	out := Resolve("Use: {analyze.output}", ctx)
 	if out != "Use: stub artifact output for analyze" {
 		t.Errorf("got %q", out)
 	}
 }
 
-func TestResolve_RunAndStepMetricsRefs(t *testing.T) {
-	sb := statebag.New()
-	// WHY: verify that the template engine can interpolate stringified metrics.
-	sb.UpdateStepAgentMetrics("first", 123, 0.05, 2, 1000, 500, 7, 9)
-	sb.SetRunMetric("cost", "0.05")
-
-	out := Resolve("C1={steps.first.tokens_in} C2={steps.first.cost} R={run.cost}", nil, sb, "code")
-	if out != "C1=1000 C2=0.05 R=0.05" {
+func TestResolve_StepMetricsAndRunDeprecated(t *testing.T) {
+	st := state.New()
+	st.UpdateStepAgentMetrics("first", 123, 0.05, 2, 1000, 500, 7, 9)
+	st.SetRunMetric("cost", "0.05")
+	ctx := &state.ResolveContext{State: st, StepPath: "first"}
+	out := Resolve("C1={first.tokens_in} C2={first.cost} R={run.cost}", ctx)
+	if out != "C1=1000 C2=0.05 R=" {
 		t.Errorf("got %q", out)
 	}
 }
 
-func TestResolve_NestedWorkflowStateBagRef(t *testing.T) {
-	sb := statebag.New()
-	sb.Set("call-sub.steps.echo", "hello", "", nil, "")
-	out := Resolve("X={steps.call-sub.steps.echo.output}", nil, sb, "")
+func TestResolve_NestedPathInState(t *testing.T) {
+	st := state.New()
+	st.SetStepOutput("call-sub/steps/echo", "hello", "", nil, "")
+	ctx := &state.ResolveContext{State: st, StepPath: "root"}
+	out := Resolve("X={call-sub/steps/echo.output}", ctx)
 	if out != "X=hello" {
 		t.Fatalf("got %q", out)
 	}
 }
 
 func TestResolve_EscapedDoubleBracesRemainLiteral(t *testing.T) {
-	out := Resolve("json: {{example}} and {spec}", map[string]string{"spec": "ok"}, nil, "")
+	ctx := &state.ResolveContext{Spec: "ok"}
+	out := Resolve("json: {{example}} and {spec}", ctx)
 	if out != "json: {example} and ok" {
 		t.Fatalf("got %q", out)
 	}
 }
 
 func TestResolve_UnresolvedVariablesAreCleaned(t *testing.T) {
-	out := Resolve("a\n{error}\nb {missing}\n{steps.future.output}\nc", nil, nil, "")
+	out := Resolve("a\n{error}\nb {missing}\n{steps.future.output}\nc", &state.ResolveContext{})
 	if out != "a\nb \nc" {
 		t.Fatalf("got %q", out)
 	}
 }
 
 func TestResolve_RemovesOnlyPlaceholderLinesThatBecomeEmpty(t *testing.T) {
-	out := Resolve("start\n\n{empty}\nkeep\n", map[string]string{"empty": ""}, nil, "")
+	ctx := &state.ResolveContext{Extra: map[string]string{"empty": ""}}
+	out := Resolve("start\n\n{empty}\nkeep\n", ctx)
 	if out != "start\n\nkeep\n" {
 		t.Fatalf("got %q", out)
 	}

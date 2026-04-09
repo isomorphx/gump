@@ -9,6 +9,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/isomorphx/gump/internal/cook"
+	"github.com/isomorphx/gump/internal/state"
 )
 
 type StepDetail struct {
@@ -121,17 +124,13 @@ func BuildStepDetail(cookDir, stepQuery string) (*StepDetail, error) {
 		}
 	}
 
-	sbPath := filepath.Join(cookDir, "state-bag.json")
-	if b, err := os.ReadFile(sbPath); err == nil {
-		var payload struct {
-			Entries map[string]map[string]interface{} `json:"entries"`
-		}
-		if json.Unmarshal(b, &payload) == nil {
-			if ent, ok := payload.Entries[target]; ok {
-				for _, k := range []string{"output", "status", "cost", "tokens_in", "tokens_out", "turns", "retries", "files", "session_id", "duration"} {
-					if v, ok := ent[k]; ok {
-						detail.StateBag[k] = stringify(v)
-					}
+	if b, err := cook.ReadStateFile(cookDir); err == nil {
+		if st, err := state.Restore(b); err == nil && st != nil {
+			prefix := target + "."
+			for _, k := range st.Keys() {
+				if strings.HasPrefix(k, prefix) {
+					field := strings.TrimPrefix(k, prefix)
+					detail.StateBag[field] = st.Get(k)
 				}
 			}
 		}

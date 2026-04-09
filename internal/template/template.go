@@ -1,115 +1,35 @@
 package template
 
 import (
-	"fmt"
-	"os"
 	"regexp"
 	"strings"
 
-	"github.com/isomorphx/gump/internal/statebag"
+	"github.com/isomorphx/gump/internal/state"
 )
 
-var stepsRefRegex = regexp.MustCompile(`\{steps\.(.+?)\.(output|diff|files|session_id|status|duration|cost|turns|retries|tokens_in|tokens_out|cache_read|cache_write|check_result)\}`)
-var taskVarRegex = regexp.MustCompile(`\{task\.([a-zA-Z0-9_]+)\}`)
-var runRefRegex = regexp.MustCompile(`\{run\.(cost|duration|tokens_in|tokens_out|retries|status)\}`)
-var unresolvedVarRegex = regexp.MustCompile(`\{[a-zA-Z0-9_.-]+\}`)
+// braceVar matches a single placeholder after `{{` / `}}` escaping has been applied.
+var braceVarRegex = regexp.MustCompile(`\{([a-zA-Z0-9_./-]+)\}`)
 
-// Resolve replaces {key} placeholders. vars are resolved first; then {steps.<name>.output|diff} via stateBag when non-nil.
-// If stateBag is nil (e.g. dry-run), steps refs are resolved to empty string.
-func Resolve(tmpl string, vars map[string]string, stateBag *statebag.StateBag, scopePath string) string {
+// Resolve substitutes `{var}` using strict v0.0.4 rules; nil ctx yields empty resolutions (dry-run safe).
+func Resolve(tmpl string, ctx *state.ResolveContext) string {
 	linesWithPlaceholder := markLinesWithPlaceholder(tmpl)
 	const lbraceSentinel = "\x00GUMP_LBRACE\x00"
 	const rbraceSentinel = "\x00GUMP_RBRACE\x00"
-	// WHY: `{{...}}` must survive variable resolution as literal braces.
+	// WHY: JSON and examples use doubled braces; they must not be treated as template opens.
 	tmpl = strings.ReplaceAll(tmpl, "{{", lbraceSentinel)
 	tmpl = strings.ReplaceAll(tmpl, "}}", rbraceSentinel)
 
-	// WHY: During the v3→v4 migration, templates might still reference legacy
-	// `{task.*}` variables. We support them by resolving as `{item.*}` and
-	// emitting a single warning whenever we have to translate.
-	if tmpl != "" {
-		tmpl = taskVarRegex.ReplaceAllStringFunc(tmpl, func(match string) string {
-			m := taskVarRegex.FindStringSubmatch(match)
-			if len(m) != 2 {
-				return match
-			}
-			suffix := m[1]
-			taskKey := "task." + suffix
-			itemKey := "item." + suffix
-
-			// If the engine already provided task.* vars, no need to warn.
-			if vars != nil {
-				if _, hasTask := vars[taskKey]; !hasTask {
-					if itemVal, hasItem := vars[itemKey]; hasItem {
-						// WHY: stderr warning is asserted by migration tests.
-						fmt.Fprintf(os.Stderr, "warning: {%s} is deprecated, use {%s} instead\n", taskKey, itemKey)
-						return itemVal
-					}
-				}
-			}
-			if vars != nil {
-				if v := vars[taskKey]; v != "" {
-					return v
-				}
-				if v, ok := vars[itemKey]; ok {
-					return v
-				}
-			}
-			return ""
-		})
-	}
-
-	if vars != nil {
-		for k, v := range vars {
-			tmpl = strings.ReplaceAll(tmpl, "{"+k+"}", v)
+	tmpl = braceVarRegex.ReplaceAllStringFunc(tmpl, func(match string) string {
+		subs := braceVarRegex.FindStringSubmatch(match)
+		if len(subs) != 2 {
+			return match
 		}
-	}
+		if ctx == nil {
+			return ""
+		}
+		return ctx.Resolve(subs[1])
+	})
 
-	if stateBag != nil {
-		tmpl = runRefRegex.ReplaceAllStringFunc(tmpl, func(match string) string {
-			subs := runRefRegex.FindStringSubmatch(match)
-			if len(subs) != 2 {
-				return match
-			}
-			return stateBag.GetRunMetric(subs[1])
-		})
-	} else {
-		// WHY: keep behavior symmetric with {steps.*} when state bag is nil (dry-run).
-		tmpl = runRefRegex.ReplaceAllStringFunc(tmpl, func(string) string { return "" })
-	}
-
-	if stateBag != nil && scopePath != "" {
-		tmpl = stepsRefRegex.ReplaceAllStringFunc(tmpl, func(match string) string {
-			subs := stepsRefRegex.FindStringSubmatch(match)
-			if len(subs) != 3 {
-				return match
-			}
-			// WHY: `{steps.<n>.diff}` was removed in v4, but we keep it for
-			// compatibility: resolve it as `.output` and warn.
-			field := subs[2]
-			if field == "diff" {
-				fmt.Fprintf(os.Stderr, "warning: {steps.%s.diff} is deprecated, use {steps.%s.output} instead\n", subs[1], subs[1])
-				return stateBag.Get(subs[1], scopePath, "output")
-			}
-			return stateBag.Get(subs[1], scopePath, field)
-		})
-	} else if stateBag != nil {
-		tmpl = stepsRefRegex.ReplaceAllStringFunc(tmpl, func(match string) string {
-			subs := stepsRefRegex.FindStringSubmatch(match)
-			if len(subs) != 3 {
-				return match
-			}
-			field := subs[2]
-			if field == "diff" {
-				fmt.Fprintf(os.Stderr, "warning: {steps.%s.diff} is deprecated, use {steps.%s.output} instead\n", subs[1], subs[1])
-				return stateBag.Get(subs[1], "", "output")
-			}
-			return stateBag.Get(subs[1], "", field)
-		})
-	} else {
-		tmpl = stepsRefRegex.ReplaceAllStringFunc(tmpl, func(string) string { return "" })
-	}
-	// WHY: clean only unresolved placeholder lines; keep intentional spacing in templates.
 	tmpl = cleanupUnresolvedPlaceholders(tmpl, linesWithPlaceholder)
 	tmpl = strings.ReplaceAll(tmpl, lbraceSentinel, "{")
 	tmpl = strings.ReplaceAll(tmpl, rbraceSentinel, "}")
@@ -121,10 +41,10 @@ func cleanupUnresolvedPlaceholders(input string, originalPlaceholderLines map[in
 	kept := make([]string, 0, len(lines))
 	for idx, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if unresolvedVarRegex.MatchString(trimmed) && unresolvedVarRegex.ReplaceAllString(trimmed, "") == "" {
+		if braceVarRegex.MatchString(trimmed) && braceVarRegex.ReplaceAllString(trimmed, "") == "" {
 			continue
 		}
-		cleaned := unresolvedVarRegex.ReplaceAllString(line, "")
+		cleaned := braceVarRegex.ReplaceAllString(line, "")
 		if originalPlaceholderLines[idx] && strings.TrimSpace(cleaned) == "" {
 			continue
 		}
@@ -137,7 +57,7 @@ func markLinesWithPlaceholder(input string) map[int]bool {
 	out := map[int]bool{}
 	lines := strings.Split(input, "\n")
 	for i, line := range lines {
-		if unresolvedVarRegex.MatchString(line) {
+		if braceVarRegex.MatchString(line) {
 			out[i] = true
 		}
 	}

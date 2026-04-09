@@ -491,10 +491,10 @@ func buildTelemetryPayload(rec *workflow.Workflow, source string, eng *engine.En
 			st = "fail"
 		}
 		short := path.Base(s.StepPath)
-		cost, _ := strconv.ParseFloat(eng.StateBag.Get(short, s.StepPath, "cost"), 64)
-		turns, _ := strconv.Atoi(eng.StateBag.Get(short, s.StepPath, "turns"))
-		tokensIn, _ := strconv.Atoi(eng.StateBag.Get(short, s.StepPath, "tokens_in"))
-		tokensOut, _ := strconv.Atoi(eng.StateBag.Get(short, s.StepPath, "tokens_out"))
+		cost, _ := strconv.ParseFloat(eng.State.GetStepScoped(short, s.StepPath, "cost"), 64)
+		turns, _ := strconv.Atoi(eng.State.GetStepScoped(short, s.StepPath, "turns"))
+		tokensIn, _ := strconv.Atoi(eng.State.GetStepScoped(short, s.StepPath, "tokens_in"))
+		tokensOut, _ := strconv.Atoi(eng.State.GetStepScoped(short, s.StepPath, "tokens_out"))
 		steps = append(steps, telemetry.StepPayload{
 			Name:          anonymizeForeachPath(s.StepPath),
 			Agent:         s.Agent,
@@ -514,7 +514,7 @@ func buildTelemetryPayload(rec *workflow.Workflow, source string, eng *engine.En
 		})
 	}
 	sort.Slice(steps, func(i, j int) bool { return steps[i].Name < steps[j].Name })
-	totalCost, _ := strconv.ParseFloat(eng.StateBag.GetRunMetric("cost"), 64)
+	totalCost, _ := strconv.ParseFloat(eng.State.GetRunMetric("cost"), 64)
 
 	return telemetry.RunPayload{
 		Workflow:         rec.Name,
@@ -772,10 +772,10 @@ func formatStrategyV4(entries []workflow.StrategyEntryCompat) string {
 	return "[" + strings.Join(parts, ", ") + "]"
 }
 
-// printStateBagResolutionsV4 prints which `{steps.<name>.output}` placeholders
-// resolve to which fully-qualified step outputs under StateBag scope rules.
+// printStateBagResolutionsV4 prints which `{<step>.output|diff|files}` placeholders
+// resolve to which fully-qualified step keys under strict scope rules (dry-run parity with runtime).
 func printStateBagResolutionsV4(rec *workflow.Workflow) {
-	refsRe := regexp.MustCompile(`\{steps\.(.+?)\.(output|diff|files)\}`)
+	refsRe := regexp.MustCompile(`\{([a-zA-Z0-9_/-]+)\.(output|diff|files)\}`)
 
 	type node struct {
 		fullPath string
@@ -859,13 +859,14 @@ func printStateBagResolutionsV4(rec *workflow.Workflow) {
 			}
 			refName := m[1]
 			field := m[2]
+			if strings.Contains(refName, "/") {
+				continue
+			}
 			resolvedFull, ok := resolve(refName, n.fullPath)
 			if !ok {
 				continue
 			}
-			placeholder := fmt.Sprintf("{steps.%s.%s}", refName, field)
-			// WHY: `{steps.<n>.diff}` is deprecated in v4, but dry-run resolution
-			// still displays it as `.output` to match the compatibility behavior.
+			placeholder := fmt.Sprintf("{%s.%s}", refName, field)
 			targetField := field
 			if field == "diff" {
 				targetField = "output"

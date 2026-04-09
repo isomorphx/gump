@@ -7,13 +7,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/isomorphx/gump/internal/brand"
 	"github.com/isomorphx/gump/internal/config"
-	"github.com/isomorphx/gump/internal/workflow"
+	"github.com/isomorphx/gump/internal/state"
 	"github.com/isomorphx/gump/internal/template"
+	"github.com/isomorphx/gump/internal/workflow"
 )
 
 const (
@@ -26,15 +28,10 @@ const (
 // ContextParams is the full input for the v4 system prompt. One struct keeps retry truncation,
 // mode-specific sections, and provider-agnostic text in a single place so CLAUDE.md and AGENTS.md never diverge.
 type ContextParams struct {
-	OutputMode     string
+	// StepType is v0.0.4: code, split, validate, artifact; legacy diff/plan/review are normalized in Build.
+	StepType       string
 	Prompt         string
 	Spec           string
-	IsRetry        bool
-	Attempt        int
-	MaxAttempts    int
-	Error          string
-	Diff           string
-	ReviewComment  string
 	BlastRadius    []string
 	Conventions    string
 	ContextSources []ContextSourceResult
@@ -45,6 +42,11 @@ type ContextParams struct {
 	ItemFiles      string
 	MaxErrorChars  int
 	MaxDiffChars   int
+	// RetryCtx is non-nil on validation retries; IsPromptOverridden suppresses injected retry prose (ADR-038).
+	RetryCtx *RetryContext
+	// ReplanDiff / ReplanError feed the replan template only (kept separate from retry-in-prompt variables).
+	ReplanDiff  string
+	ReplanError string
 }
 
 // ContextSourceResult is one resolved recipe context: entry (file contents or bash stdout).
@@ -54,16 +56,16 @@ type ContextSourceResult struct {
 	Content string
 }
 
-// RetrySection is passed from the engine on validation failure so the next attempt can see diff/stderr.
-type RetrySection struct {
-	Attempt       int
-	MaxAttempts   int
-	Diff          string
-	Error         string
-	Remaining     int
-	EscalateFrom  string
-	EscalateTo    string
-	ReviewComment string
+// RetryContext controls optional retry markdown in the provider context file (v0.0.4).
+type RetryContext struct {
+	Attempt            int
+	MaxAttempts        int
+	Diff               string
+	Error              string
+	IsPromptOverridden bool
+	EscalatedFrom      string
+	EscalatedTo        string
+	ReviewComment      string
 }
 
 var originalBackupByContextFile = map[string]string{
@@ -87,29 +89,40 @@ func BuildAgentContext(p ContextParams) string {
 		b.WriteString("Your new task is described below. Focus on this new task only.\n")
 		b.WriteString("The codebase has been updated with the results of the previous step.\n\n")
 	}
-	switch p.OutputMode {
-	case "plan":
+	switch normalizeStepType(p.StepType) {
+	case "split":
 		b.WriteString(buildPlanBody(p))
 	case "artifact":
 		b.WriteString(buildArtifactBody(p))
-	case "review":
-		b.WriteString(buildReviewBody(p))
+	case "validate":
+		b.WriteString(buildValidateBody(p))
 	default:
-		b.WriteString(buildDiffBody(p))
+		b.WriteString(buildCodeBody(p))
 	}
 	return b.String()
 }
 
-func buildDiffBody(p ContextParams) string {
+func normalizeStepType(s string) string {
+	switch s {
+	case "diff":
+		return "code"
+	case "plan":
+		return "split"
+	case "review":
+		return "validate"
+	default:
+		return s
+	}
+}
+
+func buildCodeBody(p ContextParams) string {
 	var b strings.Builder
 	b.WriteString("# Gump — Agent Instructions\n\n")
 	b.WriteString("You are executing a code step in a Gump workflow.\n\n")
 	b.WriteString("## Your task\n\n")
 	b.WriteString(p.Prompt)
 	b.WriteString("\n")
-	if p.IsRetry {
-		b.WriteString(buildRetrySection(p))
-	}
+	b.WriteString(retrySectionFor(p))
 	b.WriteString("\n## Blast radius\n\n")
 	b.WriteString(formatBlastRadius(p.BlastRadius))
 	b.WriteString("\n\n## Output expectations\n\n")
@@ -138,13 +151,11 @@ func buildPlanBody(p ContextParams) string {
 	}
 	var b strings.Builder
 	b.WriteString("# Gump — Agent Instructions\n\n")
-	b.WriteString("You are executing a plan step in a Gump workflow.\n\n")
+	b.WriteString("You are executing a split (plan) step in a Gump workflow.\n\n")
 	b.WriteString("## Your task\n\n")
 	b.WriteString(task)
 	b.WriteString("\n")
-	if p.IsRetry {
-		b.WriteString(buildRetrySection(p))
-	}
+	b.WriteString(retrySectionFor(p))
 	b.WriteString("\n## Output format\n\n")
 	b.WriteString("You MUST create a file called `" + brand.StateDir() + "/out/plan.json` in this repository.\n")
 	b.WriteString("The file MUST contain a JSON array of items with this exact schema:\n\n")
@@ -181,9 +192,7 @@ func buildArtifactBody(p ContextParams) string {
 	b.WriteString("## Your task\n\n")
 	b.WriteString(p.Prompt)
 	b.WriteString("\n")
-	if p.IsRetry {
-		b.WriteString(buildRetrySection(p))
-	}
+	b.WriteString(retrySectionFor(p))
 	b.WriteString("\n## Output format\n\n")
 	b.WriteString("You MUST write your output to the file `" + brand.StateDir() + "/out/artifact.txt` in this repository.\n")
 	b.WriteString("The content is free-form text. Write whatever the task requires.\n")
@@ -199,28 +208,25 @@ func buildArtifactBody(p ContextParams) string {
 	return b.String()
 }
 
-func buildReviewBody(p ContextParams) string {
+func buildValidateBody(p ContextParams) string {
 	var b strings.Builder
 	b.WriteString("# Gump — Agent Instructions\n\n")
-	b.WriteString("You are executing a review step in a Gump workflow.\n\n")
+	b.WriteString("You are executing a validate step in a Gump workflow.\n\n")
 	b.WriteString("## Your task\n\n")
 	b.WriteString(p.Prompt)
 	b.WriteString("\n")
-	if p.IsRetry {
-		b.WriteString(buildRetrySection(p))
-	}
+	b.WriteString(retrySectionFor(p))
 	b.WriteString("\n## Output format\n\n")
-	b.WriteString("You MUST create a file called `" + brand.StateDir() + "/out/review.json` in this repository.\n")
+	b.WriteString("Write your verdict (true/false) and comments to `" + brand.StateDir() + "/out/validate.json`.\n")
 	b.WriteString("The file MUST contain a JSON object with this exact schema:\n\n")
 	b.WriteString("```json\n{\n")
 	b.WriteString(`  "pass": true,` + "\n")
-	b.WriteString(`  "comment": "Brief explanation of why the review passes or fails."` + "\n")
+	b.WriteString(`  "comments": "Brief explanation of why validation passes or fails."` + "\n")
 	b.WriteString("}\n```\n\n")
-	b.WriteString("Rules for the review:\n\n")
-	b.WriteString("- `pass` is a boolean. `true` means the code meets the criteria. `false` means it does not.\n")
-	b.WriteString("- `comment` is a string. Explain your reasoning. If `pass` is `false`, be specific about what needs to change.\n")
-	b.WriteString("- Do NOT modify any source code files. You are a reviewer, not an implementer.\n")
-	b.WriteString("- Be precise and actionable in your feedback.\n\n")
+	b.WriteString("Rules:\n\n")
+	b.WriteString("- `pass` is a boolean.\n")
+	b.WriteString("- `comments` is a string. If `pass` is `false`, be specific about what needs to change.\n")
+	b.WriteString("- Do NOT modify source code files unless the task explicitly requires it.\n\n")
 	b.WriteString("## Git rules\n\n")
 	b.WriteString("- Do NOT run `git commit`, `git add`, `git push`, or any git command.\n")
 	b.WriteString("- Do NOT switch branches.\n")
@@ -232,34 +238,62 @@ func buildReviewBody(p ContextParams) string {
 	return b.String()
 }
 
-func buildRetrySection(p ContextParams) string {
-	maxE := p.MaxErrorChars
-	maxD := p.MaxDiffChars
-	if maxE <= 0 {
-		maxE = 2000
+func retrySectionFor(p ContextParams) string {
+	r := p.RetryCtx
+	if r == nil || r.Attempt < 2 || r.IsPromptOverridden {
+		return ""
 	}
-	if maxD <= 0 {
-		maxD = 3000
+	return buildRetryMarkdown(r, p.MaxErrorChars, p.MaxDiffChars, r.ReviewComment)
+}
+
+// buildRetryMarkdown is the default retry UX when the recipe does not override the prompt on that attempt.
+func buildRetryMarkdown(r *RetryContext, maxErr, maxDiff int, reviewComment string) string {
+	if maxErr <= 0 {
+		maxErr = 2000
 	}
-	td := TruncateLines(p.Diff, maxD)
-	te := TruncateLines(p.Error, maxE)
+	if maxDiff <= 0 {
+		maxDiff = 3000
+	}
+	td := TruncateLines(r.Diff, maxDiff)
+	te := TruncateLines(r.Error, maxErr)
+	remaining := r.MaxAttempts - r.Attempt
+	if remaining < 0 {
+		remaining = 0
+	}
 	var b strings.Builder
-	b.WriteString("\n## Previous attempt failed\n\n")
-	fmt.Fprintf(&b, "This is retry attempt %d of %d.\n\n", p.Attempt, p.MaxAttempts)
-	b.WriteString("The previous attempt produced this diff:\n\n")
+	b.WriteString("\n## Previous Attempt Failed (Attempt ")
+	b.WriteString(strconv.Itoa(r.Attempt))
+	b.WriteString("/")
+	b.WriteString(strconv.Itoa(r.MaxAttempts))
+	b.WriteString(")\n\n")
+	b.WriteString("Your previous attempt to complete this task failed validation.\n\n")
+	b.WriteString("### What you produced\n\n")
 	b.WriteString("```diff\n")
 	b.WriteString(td)
 	b.WriteString("\n```\n\n")
-	b.WriteString("The validation failed with this error:\n\n")
+	b.WriteString("### Why it failed\n\n")
 	b.WriteString("```\n")
 	b.WriteString(te)
-	b.WriteString("\n```\n")
-	if strings.TrimSpace(p.ReviewComment) != "" {
-		b.WriteString("\nA reviewer identified this issue:\n\n")
-		b.WriteString(p.ReviewComment)
-		b.WriteString("\n")
+	b.WriteString("\n```\n\n")
+	b.WriteString("### Instructions\n\n")
+	b.WriteString("- Read the error carefully before starting\n")
+	b.WriteString("- Do NOT repeat the same approach — the previous diff shows what did not work\n")
+	b.WriteString("- Focus specifically on addressing the validation failures\n")
+	b.WriteString("- You have ")
+	b.WriteString(strconv.Itoa(remaining))
+	b.WriteString(" attempts remaining before this task is marked as failed\n\n")
+	if strings.TrimSpace(r.EscalatedFrom) != "" && strings.TrimSpace(r.EscalatedTo) != "" {
+		b.WriteString("Note: You are a more capable agent (escalated from ")
+		b.WriteString(r.EscalatedFrom)
+		b.WriteString(" to ")
+		b.WriteString(r.EscalatedTo)
+		b.WriteString("). The previous agent was unable to solve this. Use your stronger capabilities.\n\n")
 	}
-	b.WriteString("\nAnalyze the error, understand what went wrong, and try a different approach. Do NOT repeat the same mistake.\n")
+	if strings.TrimSpace(reviewComment) != "" {
+		b.WriteString("Reviewer note:\n\n")
+		b.WriteString(reviewComment)
+		b.WriteString("\n\n")
+	}
 	return b.String()
 }
 
@@ -272,8 +306,8 @@ func buildReplanMarkdown(p ContextParams) string {
 	if maxD <= 0 {
 		maxD = 3000
 	}
-	td := TruncateLines(p.Diff, maxD)
-	te := TruncateLines(p.Error, maxE)
+	td := TruncateLines(p.ReplanDiff, maxD)
+	te := TruncateLines(p.ReplanError, maxE)
 	var b strings.Builder
 	b.WriteString("# Gump — Agent Instructions\n\n")
 	b.WriteString("You are re-planning a task that failed during implementation.\n\n")
@@ -482,11 +516,9 @@ type BuildOptions struct {
 }
 
 // Build resolves recipe context sources, builds the v4 prompt, and writes the provider file in the worktree.
-func Build(outputMode string, prompt string, contextSources []workflow.ContextSource, worktreeDir string, cfg *config.Config, taskFiles []string, vars map[string]string, contextFile string, retry *RetrySection, opts *BuildOptions) error {
-	spec := ""
-	if vars != nil {
-		spec = vars["spec"]
-	}
+// spec and blastRadius are still required for split-mode specification sections and blast-radius blocks even when the user prompt is pre-resolved upstream.
+func Build(stepType string, prompt string, contextSources []workflow.ContextSource, agentName string, cfg *config.Config, worktreeDir string, spec string, blastRadius []string, contextFile string, retryCtx *RetryContext, opts *BuildOptions) error {
+	_ = agentName // reserved for provider-specific tuning; content stays identical across agents today.
 	maxErr, maxDiff := 2000, 3000
 	if cfg != nil {
 		if cfg.ErrorContextMaxErrorChars > 0 {
@@ -497,15 +529,12 @@ func Build(outputMode string, prompt string, contextSources []workflow.ContextSo
 		}
 	}
 
-	srcResults, err := resolveContextSources(contextSources, worktreeDir, vars)
+	srcResults, err := resolveContextSources(contextSources, worktreeDir, spec)
 	if err != nil {
 		return err
 	}
 
-	conventions := ""
-	if data, err := os.ReadFile(filepath.Join(worktreeDir, brand.StateDir(), "conventions.md")); err == nil {
-		conventions = string(data)
-	}
+	conventions := readConventions(worktreeDir)
 
 	sessionReuse := false
 	if opts != nil {
@@ -513,27 +542,20 @@ func Build(outputMode string, prompt string, contextSources []workflow.ContextSo
 	}
 
 	conv := ""
-	if outputMode == "diff" {
+	if normalizeStepType(stepType) == "code" {
 		conv = conventions
 	}
 	cp := ContextParams{
-		OutputMode:     outputMode,
+		StepType:       stepType,
 		Prompt:         prompt,
 		Spec:           spec,
-		BlastRadius:    taskFiles,
+		BlastRadius:    blastRadius,
 		Conventions:    conv,
 		ContextSources: srcResults,
 		SessionReuse:   sessionReuse,
 		MaxErrorChars:  maxErr,
 		MaxDiffChars:   maxDiff,
-	}
-	if retry != nil {
-		cp.IsRetry = true
-		cp.Attempt = retry.Attempt
-		cp.MaxAttempts = retry.MaxAttempts
-		cp.Error = retry.Error
-		cp.Diff = retry.Diff
-		cp.ReviewComment = retry.ReviewComment
+		RetryCtx:       retryCtx,
 	}
 
 	body := BuildAgentContext(cp)
@@ -543,14 +565,27 @@ func Build(outputMode string, prompt string, contextSources []workflow.ContextSo
 	return writeAgentContextFile(worktreeDir, contextFile, body)
 }
 
+func readConventions(worktreeDir string) string {
+	p := filepath.Join(worktreeDir, brand.StateDir(), "conventions.md")
+	if data, err := os.ReadFile(p); err == nil {
+		return string(data)
+	}
+	legacy := filepath.Join(worktreeDir, ".pudding", "conventions.md")
+	if data, err := os.ReadFile(legacy); err == nil {
+		return string(data)
+	}
+	return ""
+}
+
 // resolveContextSources materializes recipe context: files are required; bash failures are dropped with a log line
 // so a flaky diagnostic command does not abort the whole cook.
-func resolveContextSources(contextSources []workflow.ContextSource, worktreeDir string, vars map[string]string) ([]ContextSourceResult, error) {
+func resolveContextSources(contextSources []workflow.ContextSource, worktreeDir string, spec string) ([]ContextSourceResult, error) {
+	pathCtx := &state.ResolveContext{Spec: spec}
 	var out []ContextSourceResult
 	for _, src := range contextSources {
 		switch src.Type {
 		case "file":
-			resolvedPath := template.Resolve(strings.TrimSpace(src.Value), vars, nil, "")
+			resolvedPath := template.Resolve(strings.TrimSpace(src.Value), pathCtx)
 			fullPath := filepath.Join(worktreeDir, resolvedPath)
 			data, err := os.ReadFile(fullPath)
 			if err != nil {
@@ -620,8 +655,8 @@ func BuildReplan(worktreeDir, itemName, itemDesc, itemFiles, diff, errMsg string
 		ItemName:      itemName,
 		ItemDesc:      itemDesc,
 		ItemFiles:     itemFiles,
-		Diff:          diff,
-		Error:         errMsg,
+		ReplanDiff:    diff,
+		ReplanError:   errMsg,
 		MaxErrorChars: maxErr,
 		MaxDiffChars:  maxDiff,
 	}

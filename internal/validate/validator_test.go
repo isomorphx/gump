@@ -8,7 +8,7 @@ import (
 	"github.com/isomorphx/gump/internal/config"
 	"github.com/isomorphx/gump/internal/diff"
 	"github.com/isomorphx/gump/internal/workflow"
-	"github.com/isomorphx/gump/internal/statebag"
+	"github.com/isomorphx/gump/internal/state"
 )
 
 func TestRunValidators_CompileAndTest(t *testing.T) {
@@ -20,7 +20,7 @@ func TestRunValidators_CompileAndTest(t *testing.T) {
 		t.Fatal(err)
 	}
 	validators := []workflow.GateEntry{{Type: "compile"}, {Type: "test"}}
-	res := RunValidators(validators, nil, dir, nil, statebag.New(), "do")
+	res := RunValidators(validators, nil, dir, nil, state.New(), "do")
 	if !res.Pass {
 		t.Errorf("expected pass: %+v", res)
 	}
@@ -35,7 +35,7 @@ func TestRunValidators_CompileAndTest(t *testing.T) {
 func TestRunValidators_NoShortCircuit(t *testing.T) {
 	dir := t.TempDir()
 	validators := []workflow.GateEntry{{Type: "compile"}, {Type: "bash", Arg: "echo second"}}
-	res := RunValidators(validators, nil, dir, nil, statebag.New(), "do")
+	res := RunValidators(validators, nil, dir, nil, state.New(), "do")
 	if res.Pass {
 		t.Error("expected fail (compile fails)")
 	}
@@ -50,7 +50,7 @@ func TestRunValidators_NoShortCircuit(t *testing.T) {
 func TestRunValidators_Touched(t *testing.T) {
 	dc := &diff.DiffContract{FilesChanged: []string{"a_test.go"}}
 	validators := []workflow.GateEntry{{Type: "touched", Arg: "*_test.*"}}
-	res := RunValidators(validators, &config.Config{}, t.TempDir(), dc, statebag.New(), "do")
+	res := RunValidators(validators, &config.Config{}, t.TempDir(), dc, state.New(), "do")
 	if !res.Pass {
 		t.Errorf("expected pass: %+v", res)
 	}

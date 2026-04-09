@@ -13,7 +13,7 @@ import (
 	"github.com/isomorphx/gump/internal/config"
 	"github.com/isomorphx/gump/internal/cook"
 	"github.com/isomorphx/gump/internal/workflow"
-	"github.com/isomorphx/gump/internal/statebag"
+	"github.com/isomorphx/gump/internal/state"
 )
 
 func findResumableCook(repoRoot, runID string) (string, string, error) {
@@ -135,15 +135,18 @@ func RunResume(repoRoot, runID string, resolver agent.AdapterResolver, cfg *conf
 	if err != nil {
 		return nil, 0, err
 	}
-	stateBagPath := filepath.Join(cookDir, "state-bag.json")
+	stateJSONPath := filepath.Join(cookDir, "state.json")
+	legacyStatePath := filepath.Join(cookDir, "state-bag.json")
 	manifestPath := filepath.Join(cookDir, "manifest.ndjson")
 	workflowPath := filepath.Join(cookDir, "workflow-snapshot.yaml")
 	ctxPath := filepath.Join(cookDir, "context-snapshot.json")
-	for _, p := range []string{stateBagPath, manifestPath, workflowPath, ctxPath} {
+	if _, err := os.Stat(stateJSONPath); err != nil {
+		if _, err2 := os.Stat(legacyStatePath); err2 != nil {
+			return nil, 0, fmt.Errorf("resume precondition failed: state.json (or legacy state-bag.json) missing. Fix: re-run from scratch or clean stale runs with `gump gc --keep-last 1`")
+		}
+	}
+	for _, p := range []string{manifestPath, workflowPath, ctxPath} {
 		if _, err := os.Stat(p); err != nil {
-			if strings.HasSuffix(p, "state-bag.json") {
-				return nil, 0, fmt.Errorf("resume precondition failed: state-bag.json missing. Fix: re-run from scratch or clean stale runs with `gump gc --keep-last 1`")
-			}
 			if strings.HasSuffix(p, "manifest.ndjson") {
 				return nil, 0, fmt.Errorf("resume precondition failed: manifest.ndjson missing. Fix: re-run from scratch or clean stale runs with `gump gc --keep-last 1`")
 			}
@@ -155,13 +158,13 @@ func RunResume(repoRoot, runID string, resolver agent.AdapterResolver, cfg *conf
 	}
 	ctxData, _ := os.ReadFile(ctxPath)
 	_ = json.Unmarshal(ctxData, &ctx)
-	stateData, err := os.ReadFile(stateBagPath)
+	stateData, err := cook.ReadStateFile(cookDir)
 	if err != nil {
-		return nil, 0, fmt.Errorf("read state-bag: %w", err)
+		return nil, 0, fmt.Errorf("read state: %w", err)
 	}
-	sb, err := statebag.Restore(stateData)
+	sb, err := state.Restore(stateData)
 	if err != nil {
-		return nil, 0, fmt.Errorf("restore state-bag: %w", err)
+		return nil, 0, fmt.Errorf("restore state: %w", err)
 	}
 	workflowRaw, err := os.ReadFile(workflowPath)
 	if err != nil {
@@ -197,7 +200,7 @@ func RunResume(repoRoot, runID string, resolver agent.AdapterResolver, cfg *conf
 	eng.FromStep = fatalStep
 	eng.ResumePassedSteps = passed
 	eng.ResumePreviousStatus = previousStatus
-	eng.StateBag = sb
+	eng.State = sb
 	if err := eng.Run(); err != nil {
 		return c, 0, err
 	}

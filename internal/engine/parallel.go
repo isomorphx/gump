@@ -44,7 +44,7 @@ func RunParallelGroup(e *Engine, step *workflow.Step, stepPath string, subSteps 
 		}
 		c := e.Cook.CloneForWorktree(wtDir, brName)
 		subEng := New(c, e.Recipe, e.Resolver, e.Config, e.SpecContent)
-		subEng.StateBag = e.StateBag
+		subEng.State = e.State
 		subEng.AgentsCLI = e.AgentsCLI
 		subEng.CookAgentOverride = e.CookAgentOverride
 		subEng.Cook.Ledger = e.Cook.Ledger

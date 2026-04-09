@@ -26,7 +26,7 @@ import (
 	"github.com/isomorphx/gump/internal/plan"
 	"github.com/isomorphx/gump/internal/workflow"
 	"github.com/isomorphx/gump/internal/sandbox"
-	"github.com/isomorphx/gump/internal/statebag"
+	"github.com/isomorphx/gump/internal/state"
 	"github.com/isomorphx/gump/internal/template"
 	"github.com/isomorphx/gump/internal/validate"
 )
@@ -46,7 +46,7 @@ type lastStepOutcome struct {
 	hasValidation bool
 }
 
-// Engine runs the recipe step-by-step; behavior is inferred from fields (no type:) so recipes stay declarative. State Bag holds outputs for {steps.<n>.output/diff}.
+// Engine runs the recipe step-by-step; behavior is inferred from fields (no type:) so recipes stay declarative. Flat State holds outputs for v0.0.4 `{step.field}` templates.
 // AgentsCLI is set by the CLI so cook_started can record agent versions; stepCompletedCount, retryTriggeredCount, totalCostUSD, agentsUsed are accumulated for cook_completed and index.
 type Engine struct {
 	Cook                 *cook.Cook
@@ -55,7 +55,7 @@ type Engine struct {
 	Config               *config.Config
 	SpecContent          string
 	Steps                []StepExecution
-	StateBag             *statebag.StateBag
+	State                *state.State
 	AgentsCLI            map[string]string
 	CookAgentOverride    string // CLI --agent overrides step agent when set
 	FromStep             string // when set (replay), skip steps until we reach this path
@@ -86,11 +86,11 @@ type Engine struct {
 	forceSessionReuse bool
 }
 
-// New builds an engine with an empty State Bag and counters for ledger/index.
+// New builds an engine with empty workflow State and counters for ledger/index.
 func New(c *cook.Cook, rec *workflow.Workflow, r agent.AdapterResolver, cfg *config.Config, specContent string) *Engine {
 	return &Engine{
 		Cook: c, Recipe: rec, Resolver: r, Config: cfg, SpecContent: specContent,
-		Steps: nil, StateBag: statebag.New(),
+		Steps: nil, State: state.New(),
 		agentsUsed:         make(map[string]struct{}),
 		globalStepAttempts: make(map[string]int),
 		budgetTracker:      NewBudgetTracker(rec.MaxBudget),
@@ -178,28 +178,28 @@ func (e *Engine) executeSteps(steps []workflow.Step, taskContext *plan.Task, pat
 				if err != nil {
 					return err
 				}
-				parentSB := e.StateBag
-				childSB := statebag.New()
+				parentSB := e.State
+				childSB := state.New()
 				childSB.SetRunAll(parentSB.CloneRun())
-				e.StateBag = childSB
+				e.State = childSB
 				err = e.executeSteps(childRec.Steps, taskContext, "", make(map[string]string), workflow.SessionConfig{Mode: "fresh"}, "", childVars)
-				e.StateBag = parentSB
+				e.State = parentSB
 				if err != nil {
 					return err
 				}
-				e.StateBag.Graft(stepPath, childSB)
+				e.State.Graft(stepPath, childSB)
 				continue
 			}
 			var planTasks []plan.Task
 			taskCount := 0
 			if foreachRef != "" {
 				planShortName := step.Name
-				planRaw := e.StateBag.Get(planShortName, stepPath, "output")
+				planRaw := e.State.GetStepScoped(planShortName, stepPath, "output")
 				if planRaw == "" && strings.TrimSpace(step.Agent) != "" && strings.TrimSpace(step.Prompt) != "" {
 					if err := e.runAtomicStep(&step, stepPath, taskContext, lastSessionByAgent, parentSession, groupAgentOverride, inheritedVars); err != nil {
 						return err
 					}
-					planRaw = e.StateBag.Get(planShortName, stepPath, "output")
+					planRaw = e.State.GetStepScoped(planShortName, stepPath, "output")
 				}
 				if planRaw == "" {
 					return fmt.Errorf("split step %q has no plan output in State Bag (set agent: and prompt: on the split to run a planner, or pre-seed output)", step.Name)
@@ -295,12 +295,12 @@ func (e *Engine) executeSteps(steps []workflow.Step, taskContext *plan.Task, pat
 						}
 						invalidated := []string{}
 						if strategy.Type == "escalate" || strategy.Type == "replan" {
-							invalidated = e.StateBag.ClearSessionIDsForGroup(stepPath)
+							invalidated = e.State.ClearSessionIDsForGroup(stepPath)
 							e.clearStepSessionsForGroup(stepPath)
 						}
 						keys := []string{}
 						if strategy.Type == "escalate" || strategy.Type == "replan" {
-							keys = e.StateBag.ResetGroup(stepPath)
+							keys = e.State.ResetGroup(stepPath)
 						}
 						if e.Cook.Ledger != nil {
 							if len(keys) > 0 {
@@ -408,7 +408,7 @@ func (e *Engine) executeSteps(steps []workflow.Step, taskContext *plan.Task, pat
 				}
 				return fmt.Errorf("final diff for validation step: %w", err)
 			}
-			vr := validate.RunValidators(step.Gate, e.Config, e.Cook.WorktreeDir, dc, e.StateBag, stepPath)
+			vr := validate.RunValidators(step.Gate, e.Config, e.Cook.WorktreeDir, dc, e.State, stepPath)
 			writeValidationArtifact(e.Cook.CookDir, stepPath, 1, vr)
 			validationArtifactRel := filepath.Join("artifacts", ledger.ArtifactName(stepPath, 1, "validation", "json"))
 			if vr.Pass {
@@ -514,7 +514,7 @@ func (e *Engine) executeSteps(steps []workflow.Step, taskContext *plan.Task, pat
 				for j := targetIdx; j <= i; j++ {
 					paths = append(paths, joinStepPath(pathPrefix, steps[j].Name))
 				}
-				e.StateBag.DeleteStepOutputsForRestart(paths)
+				e.State.DeleteStepOutputsForRestart(paths)
 				// WHY: do not reset the target step's attempt counter — restarts must not grant a fresh retry budget on that step.
 				for j := targetIdx + 1; j < i; j++ {
 					e.globalStepAttempts[joinStepPath(pathPrefix, steps[j].Name)] = 0
@@ -592,11 +592,14 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 	}
 	e.globalStepAttempts[stepPath]++
 	e.writeEngineStepAttemptMarker(step.Name, e.globalStepAttempts[stepPath])
+	if attempt > 1 {
+		e.State.RotatePrev(stepPath)
+	}
 	taskName := taskContextName(taskContext)
-	vars := e.buildVars(taskContext, errorContext, extraVars, inheritedVars)
+	tctx := e.newTemplateCtx(stepPath, taskContext, errorContext, attempt, inheritedVars, extraVars)
 	outputMode := step.OutputMode()
 	prompt := step.EffectivePromptAt(attempt)
-	resolvedPrompt := template.Resolve(prompt, vars, e.StateBag, stepPath)
+	resolvedPrompt := template.Resolve(prompt, tctx)
 
 	effectiveSession := workflow.ResolveSessionForEngine(step, parentSession)
 	sessionReuse := attempt == 1 && (effectiveSession.Mode == "reuse" || effectiveSession.Mode == "reuse-targeted")
@@ -612,7 +615,11 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 	if agentOverride != "" {
 		agentToUse = agentOverride
 	}
-	if strings.TrimSpace(agentToUse) == "pass" {
+	agentToUse = strings.TrimSpace(agentToUse)
+	if agentToUse != "pass" && agentToUse != "" {
+		agentToUse = strings.TrimSpace(template.Resolve(agentToUse, tctx))
+	}
+	if agentToUse == "pass" || strings.TrimSpace(agentToUse) == "pass" {
 		agentToUse = "pass"
 	}
 	var adapter agent.AgentAdapter
@@ -632,7 +639,7 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 	if err := PrepareOutputDir(e.Cook.WorktreeDir); err != nil {
 		return fmt.Errorf("prepare output dir: %w", err), preStepCommit
 	}
-	var retrySection *pkgcontext.RetrySection
+	var retryCtx *pkgcontext.RetryContext
 	if errorContext != nil && step.OnFailureCompat() != nil && (attempt > 1 || errorContext.FromRestart) {
 		ra := attempt
 		maxA := step.MaxAttempts()
@@ -643,26 +650,37 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 				maxA = 2
 			}
 		}
-		retrySection = &pkgcontext.RetrySection{
-			Attempt:       ra,
-			MaxAttempts:   maxA,
-			Diff:          errorContext.Diff,
-			Error:         errorContext.Error,
-			ReviewComment: errorContext.ReviewComment,
-			Remaining:     maxA - ra,
-			EscalateTo:    agentOverride,
-			EscalateFrom:  step.Agent,
+		promptOverridden := false
+		for _, r := range step.Retry {
+			if r.Exit > 0 {
+				continue
+			}
+			if r.Attempt > 0 && ra >= r.Attempt && strings.TrimSpace(r.Prompt) != "" {
+				promptOverridden = true
+				break
+			}
 		}
-		if agentOverride == "" {
-			retrySection.EscalateTo = ""
-			retrySection.EscalateFrom = ""
+		escFrom, escTo := "", ""
+		if agentOverride != "" {
+			escTo = agentOverride
+			escFrom = step.Agent
+		}
+		retryCtx = &pkgcontext.RetryContext{
+			Attempt:            ra,
+			MaxAttempts:        maxA,
+			Diff:               errorContext.Diff,
+			Error:              errorContext.Error,
+			IsPromptOverridden: promptOverridden,
+			EscalatedFrom:      escFrom,
+			EscalatedTo:        escTo,
+			ReviewComment:      errorContext.ReviewComment,
 		}
 	}
 	var buildOpts *pkgcontext.BuildOptions
 	if sessionReuse {
 		buildOpts = &pkgcontext.BuildOptions{SessionReuse: true}
 	}
-	if err := pkgcontext.Build(outputMode, resolvedPrompt, step.Context, e.Cook.WorktreeDir, e.Config, taskFiles, vars, contextFile, retrySection, buildOpts); err != nil {
+	if err := pkgcontext.Build(engineOutputToStepType(outputMode), resolvedPrompt, step.Context, agentForCtx, e.Config, e.Cook.WorktreeDir, e.SpecContent, taskFiles, contextFile, retryCtx, buildOpts); err != nil {
 		return fmt.Errorf("write context: %w", err), preStepCommit
 	}
 
@@ -686,7 +704,7 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 			}
 		}
 		if sessionID == "" {
-			sessionID = e.StateBag.Get(stepPath, stepPath, "session_id")
+			sessionID = e.State.Get(stepPath + ".session_id")
 		}
 	}
 	if e.forceSessionReuse && sessionID != "" {
@@ -698,7 +716,7 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 	case "reuse-on-retry":
 		if attempt > 1 {
 			sessionID = e.lastSessionIDForStep(stepPath)
-		} else if sid := e.StateBag.PrevSessionID(stepPath); sid != "" {
+		} else if sid := e.State.PrevSessionID(stepPath); sid != "" {
 			// WHY: after restart_from, the prior session id lives in prev so attempt 1 can resume the review thread.
 			sessionID = sid
 		}
@@ -709,7 +727,7 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 			}
 			if sessionID == "" {
 				// WHY: resume runs skip previously completed steps, so the in-memory map is empty.
-				sessionID = e.StateBag.Get(stepPath, stepPath, "session_id")
+				sessionID = e.State.Get(stepPath + ".session_id")
 			}
 		}
 	case "reuse-targeted":
@@ -888,10 +906,11 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 		}
 		runUsageApplied = true
 		e.totalCostUSD += cost
-		e.StateBag.AddRunCost(cost)
-		e.StateBag.IncrementRunTokensIn(tokensIn)
-		e.StateBag.IncrementRunTokensOut(tokensOut)
-		e.StateBag.UpdateStepAgentMetrics(stepPath, durationMs, cost, turns, tokensIn, tokensOut, cacheRead, cacheCreate)
+		e.State.AddRunCost(cost)
+		e.State.IncrementRunTokensIn(tokensIn)
+		e.State.IncrementRunTokensOut(tokensOut)
+		e.State.UpdateStepAgentMetrics(stepPath, durationMs, cost, turns, tokensIn, tokensOut, cacheRead, cacheCreate)
+		e.State.Set(stepPath+".agent", agentToUse)
 	}
 	if guardRuntime != nil {
 		guardRuntime.AddCost(result.CostUSD)
@@ -1080,7 +1099,7 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 				if list, err2 := gitDiffNameOnly(e.Cook.WorktreeDir, dc.BaseCommit, dc.HeadCommit); err2 == nil {
 					filesForBag = list
 				}
-				e.StateBag.Set(stepPath, raw, dc.Patch, filesForBag, result.SessionID)
+				e.State.SetStepOutput(stepPath, raw, dc.Patch, filesForBag, result.SessionID)
 			}
 			if e.globalStepAttempts[stepPath] > step.MaxAttempts() {
 				if e.Cook.Ledger != nil {
@@ -1105,7 +1124,7 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 			if list, err2 := gitDiffNameOnly(e.Cook.WorktreeDir, dc.BaseCommit, dc.HeadCommit); err2 == nil {
 				filesForBag = list
 			}
-			e.StateBag.Set(stepPath, outputValue, dc.Patch, filesForBag, result.SessionID)
+			e.State.SetStepOutput(stepPath, outputValue, dc.Patch, filesForBag, result.SessionID)
 			errMsg := fmt.Sprintf("review did not pass: %s", comment)
 			exec.ValidateError = errMsg
 			exec.ValidateDiff = dc.Patch
@@ -1141,7 +1160,7 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 	if list, err := gitDiffNameOnly(e.Cook.WorktreeDir, dc.BaseCommit, dc.HeadCommit); err == nil {
 		filesForBag = list
 	}
-	e.StateBag.Set(stepPath, outputValue, dc.Patch, filesForBag, result.SessionID)
+	e.State.SetStepOutput(stepPath, outputValue, dc.Patch, filesForBag, result.SessionID)
 	if e.Cook.Ledger != nil {
 		filesJoined := strings.Join(filesForBag, ", ")
 		keyOut := stepPath + ".output"
@@ -1199,8 +1218,8 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 				exec.Status = StepFatal
 				exec.FinishedAt = time.Now()
 				e.Steps = append(e.Steps, exec)
-				e.StateBag.SetStepCheckResult(stepPath, "fail")
-				e.StateBag.SetRunMetric("status", "fail")
+				e.State.SetStepCheckResult(stepPath, "fail")
+				e.State.SetRunMetric("status", "fail")
 				e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), dc, outputMode, outputValue, true)
 				e.lastFailureSource = "gate_fail"
 				fmt.Fprintf(os.Stderr, "[%s]\tFAIL\t%s\n", stepPath, errMsg)
@@ -1221,7 +1240,7 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 			}
 			_ = e.Cook.Ledger.Emit(ledger.GateStarted{Step: stepPath, Checks: checks})
 		}
-		vr := validate.RunValidators(step.Gate, e.Config, e.Cook.WorktreeDir, dc, e.StateBag, stepPath)
+		vr := validate.RunValidators(step.Gate, e.Config, e.Cook.WorktreeDir, dc, e.State, stepPath)
 		writeValidationArtifact(e.Cook.CookDir, stepPath, attempt, vr)
 		validationArtifactRel := filepath.Join("artifacts", ledger.ArtifactName(stepPath, attempt, "validation", "json"))
 		if vr.Pass {
@@ -1232,8 +1251,8 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 			exec.CommitHash = dc.HeadCommit
 			exec.FinishedAt = time.Now()
 			e.Steps = append(e.Steps, exec)
-			e.StateBag.SetStepCheckResult(stepPath, "pass")
-			e.StateBag.SetRunMetric("status", "pass")
+			e.State.SetStepCheckResult(stepPath, "pass")
+			e.State.SetRunMetric("status", "pass")
 			e.setLastStepOutcome(stepPath, attempt, "pass", int(time.Since(exec.StartedAt).Milliseconds()), dc, outputMode, outputValue, true)
 			detail := buildValidationPassDetail(outputMode, outputValue, dc, vr)
 			fmt.Fprintf(os.Stderr, "[%s]\tpass\t%s\n", stepPath, detail)
@@ -1273,8 +1292,8 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 		exec.Status = StepFatal
 		exec.FinishedAt = time.Now()
 		e.Steps = append(e.Steps, exec)
-		e.StateBag.SetStepCheckResult(stepPath, "fail")
-		e.StateBag.SetRunMetric("status", "fail")
+		e.State.SetStepCheckResult(stepPath, "fail")
+		e.State.SetRunMetric("status", "fail")
 		e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), dc, outputMode, outputValue, true)
 		e.lastFailureSource = "gate_fail"
 		formatValidationDetails(os.Stderr, stepPath, vr)
@@ -1289,7 +1308,7 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 	}
 
 	// No gate checks: treat as "none" for {steps.<n>.check_result}.
-	e.StateBag.SetStepCheckResult(stepPath, "none")
+	e.State.SetStepCheckResult(stepPath, "none")
 	exec.Status = StepPass
 	exec.CommitHash = dc.HeadCommit
 	exec.FinishedAt = time.Now()
@@ -1437,12 +1456,12 @@ func (e *Engine) emitStepCompletedFromLast() {
 		stepStatus = "fail"
 		checkResult = "fail"
 	}
-	e.StateBag.SetStepOutcome(o.stepPath, stepStatus, retries)
-	e.StateBag.SetStepCheckResult(o.stepPath, checkResult)
+	e.State.SetStepOutcome(o.stepPath, stepStatus, retries)
+	e.State.SetStepCheckResult(o.stepPath, checkResult)
 	if !e.cookRunStartedAt.IsZero() {
-		e.StateBag.SetRunMetric("duration", fmt.Sprintf("%d", int(time.Since(e.cookRunStartedAt).Milliseconds())))
+		e.State.SetRunMetric("duration", fmt.Sprintf("%d", int(time.Since(e.cookRunStartedAt).Milliseconds())))
 	}
-	e.StateBag.SetRunMetric("status", stepStatus)
+	e.State.SetRunMetric("status", stepStatus)
 
 	artifacts := make(map[string]string)
 	if o.patch != "" && o.outputMode == "diff" {
@@ -1489,12 +1508,12 @@ func (e *Engine) emitStepCompleted(stepPath string, attempt int, status string, 
 		stepStatus = "fail"
 		checkResult = "fail"
 	}
-	e.StateBag.SetStepOutcome(stepPath, stepStatus, retries)
-	e.StateBag.SetStepCheckResult(stepPath, checkResult)
+	e.State.SetStepOutcome(stepPath, stepStatus, retries)
+	e.State.SetStepCheckResult(stepPath, checkResult)
 	if !e.cookRunStartedAt.IsZero() {
-		e.StateBag.SetRunMetric("duration", fmt.Sprintf("%d", int(time.Since(e.cookRunStartedAt).Milliseconds())))
+		e.State.SetRunMetric("duration", fmt.Sprintf("%d", int(time.Since(e.cookRunStartedAt).Milliseconds())))
 	}
-	e.StateBag.SetRunMetric("status", stepStatus)
+	e.State.SetRunMetric("status", stepStatus)
 
 	artifacts := make(map[string]string)
 	if dc != nil && dc.Patch != "" && outputMode == "diff" {
@@ -1608,7 +1627,7 @@ func formatValidationDetails(w io.Writer, stepPath string, vr *validate.Validati
 // resolveTargetedSession returns the session ID of the last executed step named target, only if its agent matches currentAgent (cross-provider resume would be invalid).
 func (e *Engine) resolveTargetedSession(target string, currentAgent string) string {
 	// Prefer current state bag (already cleared on reset paths) before historical e.Steps.
-	if sid := e.StateBag.Get(target, target, "session_id"); sid != "" {
+	if sid := e.State.Get(target + ".session_id"); sid != "" {
 		return sid
 	}
 	for i := len(e.Steps) - 1; i >= 0; i-- {
@@ -1819,6 +1838,53 @@ func (e *Engine) buildVars(taskContext *plan.Task, errorContext *ErrorContext, e
 	return vars
 }
 
+func engineOutputToStepType(om string) string {
+	switch om {
+	case "diff":
+		return "code"
+	case "plan":
+		return "split"
+	case "review":
+		return "validate"
+	default:
+		return om
+	}
+}
+
+func (e *Engine) newTemplateCtx(stepPath string, taskContext *plan.Task, errCtx *ErrorContext, attempt int, inheritedVars, extraVars map[string]string) *state.ResolveContext {
+	ex := map[string]string{}
+	for k, v := range inheritedVars {
+		if k != "spec" {
+			ex[k] = v
+		}
+	}
+	for k, v := range extraVars {
+		if k != "spec" {
+			ex[k] = v
+		}
+	}
+	ctx := &state.ResolveContext{
+		State:       e.State,
+		StepPath:    stepPath,
+		Spec:        e.SpecContent,
+		Attempt:     attempt,
+		Extra:       ex,
+		GateResults: map[string]string{},
+		GateMeta:    map[string]map[string]string{},
+	}
+	if taskContext != nil {
+		ctx.Task = &state.TaskVars{
+			Name: taskContext.Name, Description: taskContext.Description,
+			Files: strings.Join(taskContext.Files, ", "),
+		}
+	}
+	if errCtx != nil {
+		ctx.Error = errCtx.Error
+		ctx.Diff = errCtx.Diff
+	}
+	return ctx
+}
+
 func (e *Engine) resolveSubSteps(step *workflow.Step) ([]workflow.Step, error) {
 	if len(step.Steps) > 0 {
 		return step.Steps, nil
@@ -1868,10 +1934,10 @@ func (e *Engine) resolveWorkflow(step *workflow.Step, stepPath string, taskConte
 	if errs := workflow.Validate(parsed); len(errs) > 0 {
 		return nil, nil, errs[0]
 	}
-	base := e.buildVars(taskContext, nil, nil, inheritedVars)
+	tctx := e.newTemplateCtx(stepPath, taskContext, nil, 1, inheritedVars, nil)
 	out := map[string]string{}
 	for k, raw := range step.With {
-		out[k] = template.Resolve(raw, base, e.StateBag, stepPath)
+		out[k] = template.Resolve(raw, tctx)
 	}
 	return parsed, out, nil
 }
@@ -1947,8 +2013,8 @@ func (e *Engine) finishCook(runErr error) {
 	}
 	durationMs := int(time.Since(e.cookRunStartedAt).Milliseconds())
 
-	stateJSON, _ := e.StateBag.Serialize()
-	_ = os.WriteFile(filepath.Join(cookDir, "state-bag.json"), stateJSON, 0644)
+	stateJSON, _ := e.State.Serialize()
+	_ = os.WriteFile(filepath.Join(cookDir, "state.json"), stateJSON, 0644)
 
 	var finalDiffPatch []byte
 	dc, err := e.Cook.FinalDiff()
@@ -1957,7 +2023,7 @@ func (e *Engine) finishCook(runErr error) {
 	}
 	finalDiffRel, _ := e.Cook.Ledger.WriteArtifact("final-diff.patch", finalDiffPatch)
 
-	artifacts := map[string]string{"state_bag": "state-bag.json"}
+	artifacts := map[string]string{"state": "state.json"}
 	if finalDiffRel != "" {
 		artifacts["final_diff"] = finalDiffRel
 	}

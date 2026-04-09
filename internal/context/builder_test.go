@@ -13,7 +13,7 @@ import (
 func TestBuild_WritesCLAUDE(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{}
-	err := Build("diff", "Hello world prompt", nil, dir, cfg, nil, nil, "CLAUDE.md", nil, nil)
+	err := Build("diff", "Hello world prompt", nil, "", cfg, dir, "", nil, "CLAUDE.md", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestBuild_WritesCLAUDE(t *testing.T) {
 
 func TestBuild_PlanContainsPlanJSON(t *testing.T) {
 	dir := t.TempDir()
-	err := Build("plan", "", nil, dir, nil, nil, map[string]string{"spec": "SPEC_BODY"}, "CLAUDE.md", nil, nil)
+	err := Build("plan", "", nil, "", nil, dir, "SPEC_BODY", nil, "CLAUDE.md", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestBuild_PlanContainsPlanJSON(t *testing.T) {
 
 func TestBuild_BlastRadius(t *testing.T) {
 	dir := t.TempDir()
-	err := Build("diff", "Implement", nil, dir, nil, []string{"pkg/a.go", "pkg/b.go"}, nil, "CLAUDE.md", nil, nil)
+	err := Build("diff", "Implement", nil, "", nil, dir, "", []string{"pkg/a.go", "pkg/b.go"}, "CLAUDE.md", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestBuild_ConventionsDiffOnly(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(convDir, "conventions.md"), []byte("Use Go 1.22."), 0644); err != nil {
 		t.Fatal(err)
 	}
-	err := Build("diff", "Do it", nil, dir, nil, nil, nil, "CLAUDE.md", nil, nil)
+	err := Build("diff", "Do it", nil, "", nil, dir, "", nil, "CLAUDE.md", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestBuild_PlanOmitsConventions(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(convDir, "conventions.md"), []byte("Use Go 1.22."), 0644); err != nil {
 		t.Fatal(err)
 	}
-	err := Build("plan", "x", nil, dir, nil, nil, map[string]string{"spec": "S"}, "CLAUDE.md", nil, nil)
+	err := Build("plan", "x", nil, "", nil, dir, "S", nil, "CLAUDE.md", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestBuild_ContextFile(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "ctx.txt", "Context content here")
 	sources := []workflow.ContextSource{{Type: "file", Value: "ctx.txt"}}
-	err := Build("diff", "Do it", sources, dir, nil, nil, nil, "CLAUDE.md", nil, nil)
+	err := Build("diff", "Do it", sources, "", nil, dir, "", nil, "CLAUDE.md", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func TestBuild_ContextFile(t *testing.T) {
 func TestBuild_ContextFileNotFound(t *testing.T) {
 	dir := t.TempDir()
 	sources := []workflow.ContextSource{{Type: "file", Value: "missing.md"}}
-	err := Build("diff", "Do it", sources, dir, nil, nil, nil, "CLAUDE.md", nil, nil)
+	err := Build("diff", "Do it", sources, "", nil, dir, "", nil, "CLAUDE.md", nil, nil)
 	if err == nil {
 		t.Fatal("expected error for missing context file")
 	}
@@ -143,15 +143,15 @@ func TestBuild_ContextFileNotFound(t *testing.T) {
 }
 
 func TestBuildAgentContext_ReviewMode(t *testing.T) {
-	s := BuildAgentContext(ContextParams{OutputMode: "review", Prompt: "Check code"})
-	if !strings.Contains(s, "review step") || !strings.Contains(s, "review.json") {
-		t.Errorf("review template: %s", s)
+	s := BuildAgentContext(ContextParams{StepType: "validate", Prompt: "Check code"})
+	if !strings.Contains(s, "validate step") || !strings.Contains(s, "validate.json") {
+		t.Errorf("validate template: %s", s)
 	}
 }
 
 func TestBuild_ArtifactContainsArtifactTxt(t *testing.T) {
 	dir := t.TempDir()
-	err := Build("artifact", "Summarize the spec", nil, dir, nil, nil, map[string]string{"spec": "SPEC"}, "CLAUDE.md", nil, nil)
+	err := Build("artifact", "Summarize the spec", nil, "", nil, dir, "SPEC", nil, "CLAUDE.md", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestBuild_ArtifactContainsArtifactTxt(t *testing.T) {
 }
 
 func TestBuildAgentContext_SessionReusePrepends(t *testing.T) {
-	s := BuildAgentContext(ContextParams{OutputMode: "diff", Prompt: "x", SessionReuse: true})
+	s := BuildAgentContext(ContextParams{StepType: "diff", Prompt: "x", SessionReuse: true})
 	if !strings.HasPrefix(strings.TrimSpace(s), "## Context transition") {
 		t.Errorf("expected transition first: %q", s[:min(80, len(s))])
 	}

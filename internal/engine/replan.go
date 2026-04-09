@@ -19,8 +19,7 @@ func (e *Engine) ExecuteReplan(replanAgent string, step *workflow.Step, scopePat
 	if step.OutputMode() == "plan" && originalPrompt == "" {
 		originalPrompt = "Analyze the following specification and produce a plan.\n\n{spec}"
 	}
-	vars := e.buildVars(nil, nil, nil, nil)
-	originalResolved := template.Resolve(originalPrompt, vars, e.StateBag, scopePath)
+	originalResolved := template.Resolve(originalPrompt, e.newTemplateCtx(scopePath, nil, nil, 1, nil, nil))
 	itemName, itemDesc, itemFiles := "", originalResolved, ""
 	if task != nil {
 		itemName = task.Name
@@ -102,7 +101,7 @@ func (e *Engine) ExecuteReplan(replanAgent string, step *workflow.Step, scopePat
 	if _, err := e.Cook.Snapshot(step.Name+"/replan", taskName, 1); err != nil {
 		return fmt.Errorf("snapshot replan: %w", err)
 	}
-	e.StateBag.Set(scopePath+"/replan", raw, "", nil, "")
+	e.State.SetStepOutput(scopePath+"/replan", raw, "", nil, "")
 
 	// Run each sub-task with the original step agent; no retry on sub-tasks.
 	sessionMap := make(map[string]string)
