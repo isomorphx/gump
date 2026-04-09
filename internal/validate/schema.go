@@ -1,7 +1,6 @@
 package validate
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"github.com/isomorphx/gump/internal/plan"
@@ -34,38 +33,37 @@ func RunSchemaValidator(stepPath string, st *state.State) *SingleResult {
 	return &SingleResult{Validator: "schema: plan", Pass: true}
 }
 
-// RunReviewSchemaValidator checks review step output in the State Bag (pass boolean + comment string).
+// RunReviewSchemaValidator checks validate step output in the State Bag (output "true"/"false" and optional .comments).
 func RunReviewSchemaValidator(stepPath string, st *state.State) *SingleResult {
 	raw := ""
 	if st != nil {
 		raw = st.Get(stepPath + ".output")
 	}
-	if raw == "" {
+	if raw != "true" && raw != "false" {
 		return &SingleResult{
 			Validator: "schema: review",
 			Pass:      false,
-			Stderr:    fmt.Sprintf("schema: no review output found for step %q", stepPath),
+			Stderr:    fmt.Sprintf("schema: no validate output (true/false) found for step %q", stepPath),
 		}
 	}
-	var m map[string]interface{}
-	if err := json.Unmarshal([]byte(raw), &m); err != nil {
-		return &SingleResult{Validator: "schema: review", Pass: false, Stderr: "schema: " + err.Error()}
-	}
-	_, hasPass := m["pass"]
-	cv, hasComment := m["comment"]
-	if !hasComment {
-		cv, hasComment = m["comments"]
-	}
-	if !hasPass || !hasComment {
-		return &SingleResult{Validator: "schema: review", Pass: false, Stderr: "schema: review output must include pass and comment or comments"}
-	}
-	if _, ok := cv.(string); !ok {
-		return &SingleResult{Validator: "schema: review", Pass: false, Stderr: "schema: comment/comments must be a string"}
+	if raw == "false" {
+		comments := ""
+		if st != nil {
+			comments = st.Get(stepPath + ".comments")
+		}
+		if comments == "" {
+			return &SingleResult{
+				Validator: "schema: review",
+				Pass:      false,
+				Stderr:    "schema: validate output is false but .comments is empty",
+			}
+		}
+		return &SingleResult{Validator: "schema: review", Pass: false, Stderr: comments}
 	}
 	return &SingleResult{Validator: "schema: review", Pass: true}
 }
 
-// RunSchemaValidatorWithArg runs schema validation; Arg is "plan" (default), or "review" for review steps.
+// RunSchemaValidatorWithArg runs schema validation; Arg is "plan" (default), or "review" for validate-type steps.
 func RunSchemaValidatorWithArg(stepPath string, st *state.State, arg string) *SingleResult {
 	if arg == "" {
 		arg = planSchemaArg

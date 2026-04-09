@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/isomorphx/gump/internal/cook"
+	"github.com/isomorphx/gump/internal/run"
 	"github.com/isomorphx/gump/internal/state"
 )
 
@@ -73,7 +73,11 @@ func BuildStepDetail(cookDir, stepQuery string) (*StepDetail, error) {
 			if ag, _ := ev["agent"].(string); ag != "" {
 				detail.Agent = ag
 			}
-			if om, _ := ev["output_mode"].(string); om != "" {
+			st, _ := ev["step_type"].(string)
+			om, _ := ev["output_mode"].(string)
+			if m := ledgerStepTypeToReportOutputMode(st); m != "" {
+				detail.Output = m
+			} else if om != "" {
 				detail.Output = om
 			}
 			if sm, _ := ev["session_mode"].(string); sm != "" {
@@ -124,7 +128,7 @@ func BuildStepDetail(cookDir, stepQuery string) (*StepDetail, error) {
 		}
 	}
 
-	if b, err := cook.ReadStateFile(cookDir); err == nil {
+	if b, err := run.ReadStateFile(cookDir); err == nil {
 		if st, err := state.Restore(b); err == nil && st != nil {
 			prefix := target + "."
 			for _, k := range st.Keys() {

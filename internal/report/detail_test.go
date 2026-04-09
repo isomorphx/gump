@@ -19,13 +19,13 @@ func TestBuildStepDetailAndRender(t *testing.T) {
 	}
 
 	manifest := strings.Join([]string{
-		`{"type":"step_started","step":"build/impl","agent":"claude-sonnet","output_mode":"diff","attempt":1}`,
+		`{"type":"step_started","step":"build/impl","agent":"claude-sonnet","step_type":"code","attempt":1}`,
 		`{"type":"agent_completed","step":"build/impl","duration_ms":1200,"tokens_in":1000,"tokens_out":200,"cost_usd":0.12}`,
 		`{"type":"gate_failed","step":"build/impl","reason":"tests failed"}`,
-		`{"type":"retry_triggered","step":"build/impl","attempt":1}`,
-		`{"type":"step_started","step":"build/impl","agent":"claude-sonnet","output_mode":"diff","attempt":2}`,
+		`{"type":"retry_triggered","step":"build/impl","attempt":1,"overrides":{"retry":"minimal"}}`,
+		`{"type":"step_started","step":"build/impl","agent":"claude-sonnet","step_type":"code","attempt":2}`,
 		`{"type":"agent_completed","step":"build/impl","duration_ms":900,"tokens_in":700,"tokens_out":150,"cost_usd":0.08}`,
-		`{"type":"step_completed","step":"build/impl","status":"pass","artifacts":{"diff":"` + diffRel + `"}}`,
+		`{"type":"step_completed","step":"build/impl","status":"pass"}`,
 	}, "\n")
 	if err := os.WriteFile(filepath.Join(dir, "manifest.ndjson"), []byte(manifest), 0644); err != nil {
 		t.Fatal(err)

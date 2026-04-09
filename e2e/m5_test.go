@@ -201,9 +201,9 @@ func TestM5_E2E6_ManifestV3Compat(t *testing.T) {
 		t.Fatal(err)
 	}
 	manifest := `{"ts":"2026-01-01T00:00:00.000Z","type":"cook_started","cook_id":"` + cookID + `","recipe":"leg","spec":"spec.md","commit":"abc","branch":"main"}
-{"ts":"2026-01-01T00:00:01.000Z","type":"step_started","step":"gate-step","agent":"","output_mode":"","item":"","attempt":1,"session_mode":""}
+{"ts":"2026-01-01T00:00:01.000Z","type":"step_started","step":"gate-step","agent":"","step_type":"validate","item":"","attempt":1,"session_mode":""}
 {"ts":"2026-01-01T00:00:02.000Z","type":"validation_passed","step":"gate-step","artifact":"x"}
-{"ts":"2026-01-01T00:00:03.000Z","type":"step_completed","step":"gate-step","status":"pass","duration_ms":100,"artifacts":{}}
+{"ts":"2026-01-01T00:00:03.000Z","type":"step_completed","step":"gate-step","status":"pass","duration_ms":100}
 {"ts":"2026-01-01T00:00:04.000Z","type":"cook_completed","status":"pass","duration_ms":1000,"total_cost_usd":0,"steps":1,"retries":0,"artifacts":{}}
 `
 	writeFile(t, dir, filepath.Join(".gump", "runs", cookID, "manifest.ndjson"), manifest)

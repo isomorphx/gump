@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/isomorphx/gump/internal/cook"
+	"github.com/isomorphx/gump/internal/run"
 	"github.com/isomorphx/gump/internal/ledger"
 )
 
@@ -180,7 +180,7 @@ func TestGCCleansOldRuns(t *testing.T) {
 			t.Fatalf("cook %d failed: %s", i, stdout)
 		}
 	}
-	listBefore, err := cook.ListCooks(cooksDir)
+	listBefore, err := run.ListRuns(cooksDir)
 	if err != nil {
 		t.Fatalf("list cooks before gc: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestGCCleansOldRuns(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("gc failed: %s", stdout)
 	}
-	listAfter, err := cook.ListCooks(cooksDir)
+	listAfter, err := run.ListRuns(cooksDir)
 	if err != nil {
 		t.Fatalf("list cooks after gc: %v", err)
 	}
@@ -1742,6 +1742,7 @@ steps:
 
 // TestE2EStep6R6Replan (spec R6): replan strategy decomposes into sub-tasks that pass.
 func TestE2EStep6R6Replan(t *testing.T) {
+	t.Skip("replan removed in v0.0.4 engine; use sub-workflows in retry per ADR-037")
 	dir := setupGoRepo(t)
 	writeFile(t, dir, ".pudding-test-plan.json", `[{"name": "task-1", "description": "Add"}, {"name": "task-2", "description": "Multiply"}]`)
 	writeFile(t, dir, ".pudding/recipes/retry-replan.yaml", `name: retry-replan
@@ -1896,7 +1897,7 @@ steps:
 	}
 }
 
-// TestE2EStateBagScopeReset (spec step-8 Feature 5): group retry emits state_bag_scope_reset and state-bag has no .prev.
+// TestE2EStateBagScopeReset (spec step-8 Feature 5): group retry with escalate resets scope internally; persisted state-bag has no .prev keys.
 func TestE2EStateBagScopeReset(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, ".pudding/recipes/group-retry.yaml", `name: group-retry
@@ -1933,8 +1934,6 @@ steps:
 	if err != nil {
 		t.Fatalf("read manifest: %v", err)
 	}
-	var foundReset bool
-	var resetKeys []string
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -1945,23 +1944,11 @@ steps:
 			continue
 		}
 		if ev["type"] == "state_bag_scope_reset" {
-			foundReset = true
-			if g, _ := ev["group"].(string); g != "" {
-				if k, ok := ev["keys"].([]interface{}); ok {
-					for _, v := range k {
-						if s, _ := v.(string); s != "" {
-							resetKeys = append(resetKeys, s)
-						}
-					}
-				}
-			}
+			t.Error("ledger must not emit removed event state_bag_scope_reset (v0.0.4)")
 		}
 	}
-	if !foundReset {
-		t.Error("ledger should contain state_bag_scope_reset (Feature 5)")
-	}
-	if len(resetKeys) == 0 && foundReset {
-		t.Error("state_bag_scope_reset should list keys moved for the group")
+	if !strings.Contains(string(data), "group_retry_sessions_reset") {
+		t.Error("expected group_retry_sessions_reset in manifest for escalate group retry")
 	}
 	stateBagPath := filepath.Join(cookDir, "state-bag.json")
 	stateBagData, err := os.ReadFile(stateBagPath)

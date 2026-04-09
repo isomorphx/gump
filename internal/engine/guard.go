@@ -2,8 +2,10 @@ package engine
 
 import (
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/isomorphx/gump/internal/brand"
 	"github.com/isomorphx/gump/internal/workflow"
@@ -14,6 +16,8 @@ type GuardRuntime struct {
 	outputMode         string
 	turns              int
 	cost               float64
+	tokensAccum        int
+	stepStart          time.Time
 	sawAction          bool
 	sawAssistantInTurn bool
 }
@@ -22,7 +26,7 @@ func NewGuardRuntime(step *workflow.Step) *GuardRuntime {
 	cfg := step.Guard
 	om := step.OutputMode()
 	if cfg.NoWrite == nil {
-		if om == "plan" || om == "review" || om == "artifact" {
+		if om == "plan" || om == "review" || om == "validate" || om == "artifact" {
 			v := true
 			cfg.NoWrite = &v
 		}
@@ -30,16 +34,61 @@ func NewGuardRuntime(step *workflow.Step) *GuardRuntime {
 	if cfg.MaxTurns <= 0 && cfg.MaxBudget <= 0 && cfg.MaxTokens <= 0 && cfg.MaxTime == "" && cfg.NoWrite == nil {
 		return nil
 	}
-	return &GuardRuntime{cfg: cfg, outputMode: om}
+	return &GuardRuntime{cfg: cfg, outputMode: om, stepStart: time.Now()}
 }
 
 func (g *GuardRuntime) AddCost(cost float64) {
 	g.cost += cost
 }
 
+func (g *GuardRuntime) AddTokens(in, out int) {
+	if g == nil {
+		return
+	}
+	g.tokensAccum += in + out
+}
+
+// SyncTokensFromResult sets token totals from the provider's final result when stream deltas were incomplete (e.g. stub usage only on result).
+func (g *GuardRuntime) SyncTokensFromResult(in, out int) {
+	if g == nil {
+		return
+	}
+	total := in + out
+	if total > g.tokensAccum {
+		g.tokensAccum = total
+	}
+}
+
+func (g *GuardRuntime) CheckMaxTokens() (guardName, reason string, ok bool) {
+	if g == nil || g.cfg.MaxTokens <= 0 {
+		return "", "", false
+	}
+	if g.tokensAccum > g.cfg.MaxTokens {
+		return "max_tokens", fmt.Sprintf("token limit exceeded (%d > %d)", g.tokensAccum, g.cfg.MaxTokens), true
+	}
+	return "", "", false
+}
+
+func (g *GuardRuntime) CheckMaxTime() (guardName, reason string, ok bool) {
+	if g == nil || strings.TrimSpace(g.cfg.MaxTime) == "" {
+		return "", "", false
+	}
+	d, err := time.ParseDuration(strings.TrimSpace(g.cfg.MaxTime))
+	if err != nil || d <= 0 {
+		return "", "", false
+	}
+	if time.Since(g.stepStart) > d {
+		return "max_time", "step time limit exceeded", true
+	}
+	return "", "", false
+}
+
 func (g *GuardRuntime) CheckEvent(raw []byte) (guardName, reason string, ok bool) {
 	if g == nil {
 		return "", "", false
+	}
+	if gn, gr, ok := g.CheckMaxTime(); ok {
+		return gn, gr, true
 	}
 	if g.cfg.MaxTurns > 0 && isAssistantTextEvent(raw) {
 		// WHY: a turn starts when assistant speaks after an action, not for each text chunk.

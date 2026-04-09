@@ -6,12 +6,15 @@ import (
 	"sync"
 )
 
+// PrevSnapshotJSONKey is the state.json key for RotatePrev snapshots (template {prev.*}); not a flat string entry.
+const PrevSnapshotJSONKey = "__gump_prev_snapshot__"
+
 // State is the flat v0.0.4 workflow state: one string per fully-qualified key so templates and persistence stay simple.
 type State struct {
 	mu sync.RWMutex
 	// entries keys use slashes in the step path segment (e.g. build/task-1/converge.output).
 	entries map[string]string
-	// prevEntries holds a virtual {prev.*} namespace per step path across retries; not persisted.
+	// prevEntries holds a virtual {prev.*} namespace per step path across retries; persisted under PrevSnapshotJSONKey.
 	prevEntries map[string]map[string]string
 }
 
@@ -102,14 +105,36 @@ func (s *State) Keys() []string {
 	return out
 }
 
-// Serialize exports entries as a single JSON object; prev is intentionally omitted.
+// Serialize exports string entries as JSON plus an optional PrevSnapshotJSONKey object for retry template {prev.*}.
 func (s *State) Serialize() ([]byte, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.entries == nil {
+	out := make(map[string]interface{})
+	if s.entries != nil {
+		for k, v := range s.entries {
+			out[k] = v
+		}
+	}
+	if len(s.prevEntries) > 0 {
+		prev := make(map[string]map[string]string, len(s.prevEntries))
+		for sp, m := range s.prevEntries {
+			if m == nil {
+				continue
+			}
+			cp := make(map[string]string, len(m))
+			for fk, fv := range m {
+				cp[fk] = fv
+			}
+			prev[sp] = cp
+		}
+		if len(prev) > 0 {
+			out[PrevSnapshotJSONKey] = prev
+		}
+	}
+	if len(out) == 0 {
 		return json.MarshalIndent(map[string]string{}, "", "  ")
 	}
-	return json.MarshalIndent(s.entries, "", "  ")
+	return json.MarshalIndent(out, "", "  ")
 }
 
 // Restore loads a State from Serialize output or migrates legacy state-bag.json shape.
@@ -123,6 +148,26 @@ func Restore(data []byte) (*State, error) {
 	}
 	st := New()
 	for k, v := range raw {
+		if k == PrevSnapshotJSONKey {
+			var prev map[string]map[string]string
+			if json.Unmarshal(v, &prev) != nil || len(prev) == 0 {
+				continue
+			}
+			if st.prevEntries == nil {
+				st.prevEntries = make(map[string]map[string]string)
+			}
+			for sp, fields := range prev {
+				if fields == nil {
+					continue
+				}
+				cp := make(map[string]string, len(fields))
+				for fk, fv := range fields {
+					cp[fk] = fv
+				}
+				st.prevEntries[sp] = cp
+			}
+			continue
+		}
 		var str string
 		if err := json.Unmarshal(v, &str); err != nil {
 			continue

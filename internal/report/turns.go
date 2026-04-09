@@ -86,7 +86,7 @@ func labelTurnEvents(events []AgentEvent, outputMode string) string {
 		return "planning"
 	case "artifact":
 		return "writing"
-	case "review":
+	case "review", "validate":
 		return "reviewing"
 	}
 	has := map[string]bool{}

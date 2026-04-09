@@ -16,7 +16,7 @@ import (
 
 	"github.com/isomorphx/gump/internal/agent"
 	"github.com/isomorphx/gump/internal/config"
-	"github.com/isomorphx/gump/internal/cook"
+	"github.com/isomorphx/gump/internal/run"
 	"github.com/isomorphx/gump/internal/engine"
 	"github.com/isomorphx/gump/internal/workflow"
 	"github.com/isomorphx/gump/internal/sandbox"
@@ -103,7 +103,7 @@ func runCookReplay(specPath string, cfg *config.Config, resolved *workflow.Resol
 	c, stepsCount, err := engine.RunReplay(repoRoot, specPath, cookFromStep, cookCookID, rec, resolved.Raw, resolver, cfg, agentsCLI)
 	if err != nil {
 		if c != nil {
-			_ = cook.WriteStatus(c.CookDir, "fatal")
+			_ = run.WriteStatus(c.RunDir, "fatal")
 			fmt.Fprintf(os.Stderr, "Run failed at step: %v\n", err)
 			fmt.Fprintf(os.Stderr, "Worktree preserved at %s\n", c.WorktreeDir)
 		} else {
@@ -114,7 +114,7 @@ func runCookReplay(specPath string, cfg *config.Config, resolved *workflow.Resol
 	if c == nil {
 		return fmt.Errorf("replay: internal error (no run returned)")
 	}
-	if err := cook.WriteStatusWithSteps(c.CookDir, "pass", stepsCount); err != nil {
+	if err := run.WriteStatusWithSteps(c.RunDir, "pass", stepsCount); err != nil {
 		return err
 	}
 	fmt.Printf("Replay complete (run %s, %d steps). Run 'gump apply' to merge results.\n", c.ID, stepsCount)
@@ -187,14 +187,14 @@ func runCook(cmd *cobra.Command, args []string) error {
 		c, stepsCount, err := engine.RunResume(repoRoot, cookCookID, resolver, cfg, nil)
 		if err != nil {
 			if c != nil {
-				_ = cook.WriteStatus(c.CookDir, "fatal")
+				_ = run.WriteStatus(c.RunDir, "fatal")
 			}
 			return err
 		}
 		if c == nil {
 			return fmt.Errorf("resume: internal error (no run returned)")
 		}
-		if err := cook.WriteStatusWithSteps(c.CookDir, "pass", stepsCount); err != nil {
+		if err := run.WriteStatusWithSteps(c.RunDir, "pass", stepsCount); err != nil {
 			return err
 		}
 		fmt.Printf("Resume complete (run %s, %d steps). Run 'gump apply' to merge results.\n", c.ID, stepsCount)
@@ -364,7 +364,7 @@ func runCook(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	c, err := cook.NewCook(rec, specPath, repoRoot, resolved.Raw)
+	c, err := run.NewRun(rec, specPath, repoRoot, resolved.Raw, cfg)
 	if err != nil {
 		return err
 	}
@@ -403,16 +403,16 @@ func runCook(cmd *cobra.Command, args []string) error {
 	sendTelemetry := func(runStatus string) {
 		telemetry.Send(cfg.Analytics, anonymousID, telemetryFirstRun, version.Version, buildTelemetryPayload(rec, resolved.Source, eng, runStatus, runStartedAt, repoRoot))
 	}
-	if err := eng.Run(); err != nil {
+	if err := eng.Execute(); err != nil {
 		sendTelemetry("fail")
 		if errors.Is(err, engine.ErrCookAborted) {
-			_ = cook.WriteStatus(c.CookDir, "aborted")
+			_ = run.WriteStatus(c.RunDir, "aborted")
 			return err
 		}
-		_ = cook.WriteStatus(c.CookDir, "fatal")
+		_ = run.WriteStatus(c.RunDir, "fatal")
 		return err
 	}
-	if err := cook.WriteStatusWithSteps(c.CookDir, "pass", len(eng.Steps)); err != nil {
+	if err := run.WriteStatusWithSteps(c.RunDir, "pass", len(eng.Steps)); err != nil {
 		return err
 	}
 	sendTelemetry("pass")

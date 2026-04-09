@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/isomorphx/gump/internal/plan"
 	"github.com/isomorphx/gump/internal/brand"
+	"github.com/isomorphx/gump/internal/plan"
 )
 
 func outDirPath(worktreeDir string) string {

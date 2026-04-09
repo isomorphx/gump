@@ -1,4 +1,4 @@
-package cook
+package run
 
 import (
 	"os"
@@ -10,10 +10,10 @@ import (
 	"github.com/isomorphx/gump/internal/workflow"
 )
 
-func TestNewCook_RequiresGitRepo(t *testing.T) {
+func TestNewRun_RequiresGitRepo(t *testing.T) {
 	dir := t.TempDir()
 	rec := &workflow.Workflow{Name: "tdd"}
-	_, err := NewCook(rec, filepath.Join(dir, "spec.md"), dir, []byte("name: tdd"))
+	_, err := NewRun(rec, filepath.Join(dir, "spec.md"), dir, []byte("name: tdd"), nil)
 	if err == nil {
 		t.Fatal("expected error outside git repo")
 	}
@@ -22,14 +22,14 @@ func TestNewCook_RequiresGitRepo(t *testing.T) {
 	}
 }
 
-func TestNewCook_RequiresCleanWorkingDir(t *testing.T) {
+func TestNewRun_RequiresCleanWorkingDir(t *testing.T) {
 	repo := initRepo(t)
 	specPath := filepath.Join(repo, "spec.md")
 	if err := os.WriteFile(specPath, []byte("x"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	rec := &workflow.Workflow{Name: "tdd"}
-	_, err := NewCook(rec, specPath, repo, []byte("name: tdd"))
+	_, err := NewRun(rec, specPath, repo, []byte("name: tdd"), nil)
 	if err == nil {
 		t.Fatal("expected error with uncommitted changes")
 	}

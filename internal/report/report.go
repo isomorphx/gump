@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/isomorphx/gump/internal/cook"
+	"github.com/isomorphx/gump/internal/run"
 	"github.com/isomorphx/gump/internal/state"
 )
 
@@ -20,7 +20,7 @@ type stateBagEntryLite struct {
 }
 
 func loadStateBagEntriesForReport(cookDir string) map[string]stateBagEntryLite {
-	b, err := cook.ReadStateFile(cookDir)
+	b, err := run.ReadStateFile(cookDir)
 	if err != nil {
 		return nil
 	}
@@ -248,7 +248,11 @@ func BuildCookReport(cookDir string) (*CookReport, error) {
 					agentsSet[ag] = struct{}{}
 				}
 			}
-			if om, ok := ev["output_mode"].(string); ok {
+			st, _ := ev["step_type"].(string)
+			om, _ := ev["output_mode"].(string)
+			if m := ledgerStepTypeToReportOutputMode(st); m != "" {
+				a.outputMode = m
+			} else if om != "" {
 				a.outputMode = om
 			}
 			if it, ok := ev["item"].(string); ok {
@@ -492,6 +496,22 @@ func pathBase(p string) string {
 		return p[i+1:]
 	}
 	return p
+}
+
+// ledgerStepTypeToReportOutputMode maps R3 workflow step_type (ledger) to the internal output mode used for TTFD / turn labels.
+func ledgerStepTypeToReportOutputMode(stepType string) string {
+	switch strings.TrimSpace(stepType) {
+	case "code":
+		return "diff"
+	case "split":
+		return "plan"
+	case "validate":
+		return "validate"
+	case "artifact":
+		return "artifact"
+	default:
+		return ""
+	}
 }
 
 func gateResultForStep(gateOf map[string]string, stepPath, agent string) string {

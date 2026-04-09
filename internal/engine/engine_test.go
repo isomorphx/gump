@@ -9,17 +9,18 @@ import (
 
 	"github.com/isomorphx/gump/internal/agent"
 	"github.com/isomorphx/gump/internal/config"
-	"github.com/isomorphx/gump/internal/cook"
-	"github.com/isomorphx/gump/internal/workflow"
+	"github.com/isomorphx/gump/internal/run"
+	"github.com/isomorphx/gump/internal/state"
 	"github.com/isomorphx/gump/internal/validate"
+	"github.com/isomorphx/gump/internal/workflow"
 )
 
 func TestNew(t *testing.T) {
-	c := &cook.Cook{ID: "test"}
+	c := &run.Run{ID: "test", State: state.New()}
 	rec := &workflow.Workflow{Name: "r", Steps: []workflow.Step{}}
 	cfg := &config.Config{}
 	e := New(c, rec, &agent.StubResolver{Stub: &agent.StubAdapter{}}, cfg, "spec content")
-	if e.Cook != c || e.Recipe != rec || e.SpecContent != "spec content" {
+	if e.Run != c || e.Workflow != rec || e.SpecContent != "spec content" {
 		t.Errorf("New: fields not set %+v", e)
 	}
 }

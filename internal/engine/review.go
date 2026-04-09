@@ -9,44 +9,45 @@ import (
 	"github.com/isomorphx/gump/internal/brand"
 )
 
-// ParseReviewJSON reads validate.json (v0.0.4) or legacy review.json for gate and retry semantics.
-func ParseReviewJSON(worktreeDir string) (pass bool, comment string, raw string, err error) {
-	out := outDirPath(worktreeDir)
-	try := func(name string) ([]byte, error) {
-		return os.ReadFile(filepath.Join(out, name))
-	}
-	var data []byte
-	var pathUsed string
-	if b, err := try("validate.json"); err == nil {
-		data, pathUsed = b, "validate.json"
-	} else if b, err := try("review.json"); err == nil {
-		data, pathUsed = b, "review.json"
-	} else {
-		return false, "", "", fmt.Errorf("validate.json or review.json not found in %s/out/", brand.StateDir())
+// ParseValidateJSON reads `.gump/out/validate.json` (R3 §4.6): `{ "pass": bool, "comments": string }`.
+// Returns the pass bit, output strings "true"/"false" for the state bag, comments, raw JSON, and an error if missing or invalid.
+func ParseValidateJSON(worktreeDir string) (pass bool, outStr string, comments string, raw string, err error) {
+	p := filepath.Join(outDirPath(worktreeDir), "validate.json")
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return false, "", "", "", fmt.Errorf("validate.json not found in %s/out/: %w", brand.StateDir(), err)
 	}
 	raw = string(data)
 	var m map[string]interface{}
 	if err := json.Unmarshal(data, &m); err != nil {
-		return false, "", raw, fmt.Errorf("invalid %s: %w", pathUsed, err)
+		return false, "", "", raw, fmt.Errorf("invalid validate.json: %w", err)
 	}
 	pv, ok := m["pass"]
 	if !ok {
-		return false, "", raw, fmt.Errorf("invalid %s: 'pass' must be a boolean", pathUsed)
+		return false, "", "", raw, fmt.Errorf("invalid validate.json: 'pass' must be a boolean")
 	}
 	pass, ok = pv.(bool)
 	if !ok {
-		return false, "", raw, fmt.Errorf("invalid %s: 'pass' must be a boolean", pathUsed)
+		return false, "", "", raw, fmt.Errorf("invalid validate.json: 'pass' must be a boolean")
 	}
-	cv, ok := m["comment"]
-	if !ok {
-		cv, ok = m["comments"]
+	if pass {
+		outStr = "true"
+	} else {
+		outStr = "false"
 	}
-	if !ok {
-		return false, "", raw, fmt.Errorf("invalid %s: need comment or comments string", pathUsed)
+	var cv interface{}
+	var hasComment bool
+	if cv, hasComment = m["comments"]; !hasComment {
+		cv, hasComment = m["comment"]
 	}
-	comment, ok = cv.(string)
-	if !ok {
-		return false, "", raw, fmt.Errorf("invalid %s: comment/comments must be a string", pathUsed)
+	if hasComment {
+		s, ok := cv.(string)
+		if !ok {
+			return false, "", "", raw, fmt.Errorf("invalid validate.json: comments must be a string")
+		}
+		comments = s
+	} else if !pass {
+		return false, outStr, "", raw, fmt.Errorf("invalid validate.json: 'comments' required when pass is false")
 	}
-	return pass, comment, raw, nil
+	return pass, outStr, comments, raw, nil
 }

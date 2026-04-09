@@ -75,8 +75,8 @@ func TestE2E_R2_04_SerializeRestore(t *testing.T) {
 	if r.Get("a.x") != "3" || r.Get("b.y") != "2" {
 		t.Fatal("round-trip entries")
 	}
-	if r.GetPrev("a", "x") != "" {
-		t.Fatal("prev must not serialize")
+	if r.GetPrev("a", "x") != "1" {
+		t.Fatal("prev snapshot must serialize and restore for {prev.*} templates")
 	}
 }
 

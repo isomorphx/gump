@@ -8,13 +8,15 @@ type Event interface {
 // RunStarted is emitted at the very start of a run so the ledger has full run context.
 // WHY: G1 rebrands ledger domain objects from cook->run.
 type RunStarted struct {
-	RunID     string            `json:"run_id"`
-	Workflow  string            `json:"workflow"`
-	Spec      string            `json:"spec"`
-	Commit    string            `json:"commit"`
-	Branch    string            `json:"branch"`
-	AgentsCLI map[string]string `json:"agents_cli"`
-	MaxBudget float64           `json:"max_budget,omitempty"`
+	RunID       string            `json:"run_id"`
+	Workflow    string            `json:"workflow"`
+	Spec        string            `json:"spec"`
+	Commit      string            `json:"commit"`
+	Branch      string            `json:"branch"`
+	AgentsCLI   map[string]string `json:"agents_cli"`
+	MaxBudget   float64           `json:"max_budget,omitempty"`
+	MaxTimeout  string            `json:"max_timeout,omitempty"`
+	MaxTokens   int               `json:"max_tokens,omitempty"`
 }
 
 func (RunStarted) EventType() string { return "run_started" }
@@ -23,7 +25,7 @@ func (RunStarted) EventType() string { return "run_started" }
 type StepStarted struct {
 	Step        string `json:"step"`
 	Agent       string `json:"agent"`
-	OutputMode  string `json:"output_mode"`
+	StepType    string `json:"step_type,omitempty"`
 	Item        string `json:"item"`
 	Attempt     int    `json:"attempt"`
 	SessionMode string `json:"session_mode"`
@@ -87,15 +89,7 @@ type StateBagUpdated struct {
 	Artifact string `json:"artifact"`
 }
 
-func (StateBagUpdated) EventType() string { return "state_bag_updated" }
-
-// StateBagScopeReset is emitted when a group retry resets scope (keys moved to prev).
-type StateBagScopeReset struct {
-	Group string   `json:"group"`
-	Keys  []string `json:"keys"`
-}
-
-func (StateBagScopeReset) EventType() string { return "state_bag_scope_reset" }
+func (StateBagUpdated) EventType() string { return "state_updated" }
 
 // GateStarted is emitted before running gate checks so audits know what was evaluated.
 type GateStarted struct {
@@ -132,7 +126,8 @@ func (GuardTriggered) EventType() string { return "guard_triggered" }
 
 // HITLPaused is emitted when the cook blocks for human review before continuing.
 type HITLPaused struct {
-	Step string `json:"step"`
+	Step     string `json:"step"`
+	Position string `json:"position,omitempty"`
 }
 
 func (HITLPaused) EventType() string { return "hitl_paused" }
@@ -147,41 +142,35 @@ func (HITLResumed) EventType() string { return "hitl_resumed" }
 
 // BudgetExceeded is emitted when spend crosses a configured limit so the ledger shows why the run stopped.
 type BudgetExceeded struct {
-	Step     string  `json:"step"`
-	Scope    string  `json:"scope"`
-	MaxUSD   float64 `json:"max_usd"`
-	SpentUSD float64 `json:"spent_usd"`
+	Step           string  `json:"step"`
+	Scope          string  `json:"scope"`
+	MaxUSD         float64 `json:"max_usd,omitempty"`
+	SpentUSD       float64 `json:"spent_usd,omitempty"`
+	MaxTokens      int     `json:"max_tokens,omitempty"`
+	CurrentTokens  int     `json:"current_tokens,omitempty"`
+	MaxSeconds     float64 `json:"max_seconds,omitempty"`
+	ElapsedSeconds float64 `json:"elapsed_seconds,omitempty"`
 }
 
 func (BudgetExceeded) EventType() string { return "budget_exceeded" }
 
 // RetryTriggered is emitted when the retry engine decides to retry (before worktree reset).
 type RetryTriggered struct {
-	Step     string `json:"step"`
-	Attempt  int    `json:"attempt"`
-	Strategy string `json:"strategy"`
-	Scope    string `json:"scope"`
+	Step      string            `json:"step"`
+	Attempt   int               `json:"attempt"`
+	Overrides map[string]string `json:"overrides,omitempty"`
 }
 
 func (RetryTriggered) EventType() string { return "retry_triggered" }
 
-// ReplanTriggered is emitted when replan produces a valid plan (artifact path must exist).
-type ReplanTriggered struct {
-	Step     string `json:"step"`
-	Agent    string `json:"agent"`
-	Artifact string `json:"artifact"`
-}
-
-func (ReplanTriggered) EventType() string { return "replan_triggered" }
-
 // StepCompleted is emitted at the end of a step (pass or fatal); artifacts already written.
 // Commit is the worktree HEAD after this step (for replay: restore worktree from this commit before next step).
 type StepCompleted struct {
-	Step       string            `json:"step"`
-	Status     string            `json:"status"`
-	DurationMs int               `json:"duration_ms"`
-	Artifacts  map[string]string `json:"artifacts"`
-	Commit     string            `json:"commit,omitempty"`
+	Step       string `json:"step"`
+	Status     string `json:"status"`
+	StepType   string `json:"step_type,omitempty"`
+	DurationMs int    `json:"duration_ms"`
+	Commit     string `json:"commit,omitempty"`
 }
 
 func (StepCompleted) EventType() string { return "step_completed" }
@@ -202,26 +191,6 @@ type RunResumed struct {
 }
 
 func (RunResumed) EventType() string { return "run_resumed" }
-
-// GroupCompleted is emitted at the end of a composite group.
-type GroupCompleted struct {
-	Step       string `json:"step"`
-	Status     string `json:"status"`
-	Iterations int    `json:"iterations"`
-	Attempts   int    `json:"attempts"`
-	DurationMs int    `json:"duration_ms"`
-}
-
-func (GroupCompleted) EventType() string { return "group_completed" }
-
-// GroupRetry is emitted at the start of a group retry (after worktree reset, before re-run).
-type GroupRetry struct {
-	Step     string `json:"step"`
-	Attempt  int    `json:"attempt"`
-	Strategy string `json:"strategy"`
-}
-
-func (GroupRetry) EventType() string { return "group_retry" }
 
 type GroupRetrySessionsReset struct {
 	Group               string   `json:"group"`

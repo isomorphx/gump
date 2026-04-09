@@ -4,7 +4,7 @@ import (
 	"strings"
 )
 
-// SynthesizeOnFailure derives the legacy flat retry cap from the v0.0.4 exit: entry so RunWithRetry keeps working until R3.
+// SynthesizeOnFailure derives the flat retry cap from the v0.0.4 exit: entry (max attempts for the step).
 func SynthesizeOnFailure(s *Step) *OnFailureCompat {
 	if s == nil || len(s.Retry) == 0 {
 		return nil
@@ -36,6 +36,19 @@ func (s *Step) MaxAttempts() int {
 // ShouldRunWithRetryLoop is true when the retry list allows more than one attempt.
 func (s *Step) ShouldRunWithRetryLoop() bool {
 	return s != nil && len(s.Retry) > 0 && s.MaxAttempts() > 1
+}
+
+// StepRetryWorktreeReset is true when any retry entry requests a hard git reset before the next attempt (R3 §4.2).
+func StepRetryWorktreeReset(s *Step) bool {
+	if s == nil {
+		return false
+	}
+	for _, r := range s.Retry {
+		if strings.EqualFold(strings.TrimSpace(r.Worktree), "reset") {
+			return true
+		}
+	}
+	return false
 }
 
 // ResolveSessionForEngine maps v0.0.4 session keywords onto the modes the runner already implements.
@@ -85,14 +98,14 @@ func (s *Step) OutputMode() string {
 			return "plan"
 		}
 		if a == "review" {
-			return "review"
+			return "validate"
 		}
 	}
 	switch s.Type {
 	case "split":
 		return "plan"
 	case "validate":
-		return "review"
+		return "validate"
 	default:
 		return "diff"
 	}
@@ -132,7 +145,7 @@ func (s *Step) EffectiveAgentAt(attempt int, base string) string {
 	return out
 }
 
-// OnFailureCompat returns the synthesized policy for engine.RunWithRetry.
+// OnFailureCompat returns the synthesized policy (attempt cap) for group retry and compatibility helpers.
 func (s *Step) OnFailureCompat() *OnFailureCompat {
 	return SynthesizeOnFailure(s)
 }

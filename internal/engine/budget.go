@@ -17,11 +17,11 @@ func (e *BudgetExceededError) Error() string { return e.Msg }
 
 // BudgetTracker enforces run- and step-level max_budget after each agent run (no pre-flight prediction).
 type BudgetTracker struct {
-	CookBudget   float64
-	StepBudgets  map[string]float64
-	CookSpent    float64
-	StepSpent    map[string]float64
-	mu           sync.Mutex
+	CookBudget  float64
+	StepBudgets map[string]float64
+	CookSpent   float64
+	StepSpent   map[string]float64
+	mu          sync.Mutex
 }
 
 func NewBudgetTracker(cookBudget float64) *BudgetTracker {

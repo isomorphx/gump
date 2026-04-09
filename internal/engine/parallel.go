@@ -9,8 +9,8 @@ import (
 	"github.com/isomorphx/gump/internal/diff"
 	"github.com/isomorphx/gump/internal/ledger"
 	"github.com/isomorphx/gump/internal/plan"
-	"github.com/isomorphx/gump/internal/workflow"
 	"github.com/isomorphx/gump/internal/sandbox"
+	"github.com/isomorphx/gump/internal/workflow"
 )
 
 // parallelResult holds the outcome of one parallel unit (sub-step or task) for barrier and merge.
@@ -30,8 +30,8 @@ type parallelResult struct {
 
 // RunParallelGroup runs sub-steps or tasks in parallel worktrees, then merges diff outputs or fails on conflict.
 func RunParallelGroup(e *Engine, step *workflow.Step, stepPath string, subSteps []workflow.Step, planTasks []plan.Task, baseCommit string, lastSessionByAgent map[string]string, parentSession workflow.SessionConfig, groupAgentOverride string, inheritedVars map[string]string) error {
-	repoRoot := e.Cook.RepoRoot
-	cookID := e.Cook.ID
+	repoRoot := e.Run.RepoRoot
+	cookID := e.Run.ID
 	units := buildParallelUnits(step, stepPath, subSteps, planTasks)
 	results := make([]parallelResult, len(units))
 	var wg sync.WaitGroup
@@ -42,17 +42,17 @@ func RunParallelGroup(e *Engine, step *workflow.Step, stepPath string, subSteps 
 		if err := sandbox.CreateWorktreeAtCommit(repoRoot, wtDir, brName, baseCommit); err != nil {
 			return fmt.Errorf("parallel worktree %s: %w", u.Name, err)
 		}
-		c := e.Cook.CloneForWorktree(wtDir, brName)
-		subEng := New(c, e.Recipe, e.Resolver, e.Config, e.SpecContent)
+		c := e.Run.CloneForWorktree(wtDir, brName)
+		subEng := New(c, e.Workflow, e.Resolver, e.Config, e.SpecContent)
 		subEng.State = e.State
 		subEng.AgentsCLI = e.AgentsCLI
 		subEng.CookAgentOverride = e.CookAgentOverride
-		subEng.Cook.Ledger = e.Cook.Ledger
+		subEng.Run.Ledger = e.Run.Ledger
 		wg.Add(1)
 		go func(idx int, eng *Engine, unit *parallelUnit) {
 			defer wg.Done()
 			defer func() {
-				_ = sandbox.RemoveWorktree(repoRoot, eng.Cook.WorktreeDir, eng.Cook.BranchName)
+				_ = sandbox.RemoveWorktree(repoRoot, eng.Run.WorktreeDir, eng.Run.BranchName)
 			}()
 			sessionMap := make(map[string]string)
 			var err error
@@ -68,15 +68,15 @@ func RunParallelGroup(e *Engine, step *workflow.Step, stepPath string, subSteps 
 			}
 			res := parallelResult{
 				StepName:    unit.Name,
-				WorktreeDir: eng.Cook.WorktreeDir,
-				BranchName:  eng.Cook.BranchName,
+				WorktreeDir: eng.Run.WorktreeDir,
+				BranchName:  eng.Run.BranchName,
 				Err:         err,
 				OutputMode:  unit.OutputMode,
 			}
 			if err == nil {
 				if unit.OutputMode == "diff" {
 					// Exclude <brand> worktrees and provider context files so only repo code is merged.
-					dc, _ := sandbox.FinalDiffExclude(eng.Cook.WorktreeDir, baseCommit, sandbox.ParallelMergeExcludes)
+					dc, _ := sandbox.FinalDiffExclude(eng.Run.WorktreeDir, baseCommit, sandbox.ParallelMergeExcludes)
 					res.Diff = dc
 				}
 				res.Steps = append([]StepExecution(nil), eng.Steps...)
@@ -176,7 +176,7 @@ func filterDiffResults(results []parallelResult) []parallelResult {
 
 // mergeParallelDiffs detects file conflicts, then applies patches in declaration order and snapshots the main worktree.
 func mergeParallelDiffs(e *Engine, stepPath, stepName, baseCommit string, results []parallelResult) error {
-	mainDir := e.Cook.WorktreeDir
+	mainDir := e.Run.WorktreeDir
 	type stepDiff struct {
 		stepName string
 		files    []string
@@ -192,8 +192,8 @@ func mergeParallelDiffs(e *Engine, stepPath, stepName, baseCommit string, result
 			common := fileIntersection(stepDiffs[i].files, stepDiffs[j].files)
 			if len(common) > 0 {
 				reason := fmt.Sprintf("merge conflict: steps %q and %q both modify: %v. Hint: ensure the plan decomposes tasks with disjoint blast radii.", stepDiffs[i].stepName, stepDiffs[j].stepName, common)
-				if e.Cook.Ledger != nil {
-					_ = e.Cook.Ledger.Emit(ledger.CircuitBreaker{Step: stepPath, Scope: "group", Reason: reason, TotalAttempts: 1})
+				if e.Run.Ledger != nil {
+					_ = e.Run.Ledger.Emit(ledger.CircuitBreaker{Step: stepPath, Scope: "group", Reason: reason, TotalAttempts: 1})
 				}
 				return fmt.Errorf("Fan-out merge failed: steps %q and %q both modify:\n  - %s\nHint: ensure the plan decomposes tasks with disjoint blast radii.", stepDiffs[i].stepName, stepDiffs[j].stepName, joinPaths(common))
 			}
@@ -202,13 +202,13 @@ func mergeParallelDiffs(e *Engine, stepPath, stepName, baseCommit string, result
 	for _, sd := range stepDiffs {
 		if err := sandbox.ApplyPatch(mainDir, []byte(sd.patch)); err != nil {
 			reason := fmt.Sprintf("merge apply failed: %v", err)
-			if e.Cook.Ledger != nil {
-				_ = e.Cook.Ledger.Emit(ledger.CircuitBreaker{Step: stepPath, Scope: "group", Reason: reason, TotalAttempts: 1})
+			if e.Run.Ledger != nil {
+				_ = e.Run.Ledger.Emit(ledger.CircuitBreaker{Step: stepPath, Scope: "group", Reason: reason, TotalAttempts: 1})
 			}
 			return fmt.Errorf("Fan-out merge apply: %w", err)
 		}
 	}
-	_, err := e.Cook.Snapshot(stepName, "", 1)
+	_, err := e.Run.Snapshot(stepName, "", 1)
 	return err
 }
 

@@ -33,7 +33,7 @@ func RunValidators(gates []workflow.GateEntry, cfg *config.Config, worktreeDir s
 		case "coverage":
 			r = RunCoverageValidator(v.Arg, cfg, worktreeDir)
 		case "validate":
-			r = &SingleResult{Validator: "validate: " + v.Arg, Pass: true, Skipped: true, Stdout: "validate gate not executed in this release (R1 parser only)"}
+			r = &SingleResult{Validator: "validate: " + v.Arg, Pass: false, Stderr: "gate validator not yet implemented (R5)"}
 		default:
 			r = &SingleResult{Validator: v.Type, Pass: false, Stderr: "unknown validator type: " + v.Type}
 		}

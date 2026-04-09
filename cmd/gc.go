@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/isomorphx/gump/internal/brand"
-	"github.com/isomorphx/gump/internal/cook"
+	"github.com/isomorphx/gump/internal/run"
 	"github.com/isomorphx/gump/internal/sandbox"
 	"github.com/spf13/cobra"
 )
@@ -36,7 +36,7 @@ func runGC(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("gump gc must be run inside a git repository")
 	}
 	cooksDir := filepath.Join(repoRoot, brand.StateDir(), brand.RunsDir())
-	entries, err := cook.ListCooks(cooksDir)
+	entries, err := run.ListRuns(cooksDir)
 	if err != nil {
 		return err
 	}
@@ -52,7 +52,7 @@ func runGC(cmd *cobra.Command, args []string) error {
 	if len(entries) > keep {
 		toKeep = entries[:keep]
 	}
-	var toRemove []cook.CookEntry
+	var toRemove []run.RunEntry
 	if keep < len(entries) {
 		toRemove = entries[keep:]
 	}
@@ -62,13 +62,13 @@ func runGC(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(os.Stderr, "Skipping run %s (still running)\n", e.ID)
 			continue
 		}
-		wtPath := cook.WorktreePath(repoRoot, e.ID)
+		wtPath := run.WorktreePath(repoRoot, e.ID)
 		if _, err := os.Stat(wtPath); err == nil {
 			if err := sandbox.RemoveWorktree(repoRoot, wtPath, brand.WorktreeBranchPrefix()+e.ID); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: failed to remove worktree %s: %v\n", e.ID, err)
 			}
 		}
-		dir := cook.CookDir(repoRoot, e.ID)
+		dir := run.RunPath(repoRoot, e.ID)
 		if err := os.RemoveAll(dir); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to remove run dir %s: %v\n", e.ID, err)
 		} else {

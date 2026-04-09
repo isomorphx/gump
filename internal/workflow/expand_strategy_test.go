@@ -1,18 +1,14 @@
-package engine
+package workflow
 
-import (
-	"testing"
-
-	"github.com/isomorphx/gump/internal/workflow"
-)
+import "testing"
 
 func TestExpandStrategyUsedInRetry(t *testing.T) {
 	// same: 2, escalate: claude-sonnet → [same, same, escalate: claude-sonnet]
-	entries := []workflow.StrategyEntryCompat{
+	entries := []StrategyEntryCompat{
 		{Type: "same", Count: 2},
 		{Type: "escalate", Agent: "claude-sonnet", Count: 1},
 	}
-	expanded := workflow.ExpandStrategy(entries)
+	expanded := ExpandStrategy(entries)
 	if len(expanded) != 3 {
 		t.Fatalf("len(expanded) = %d, want 3", len(expanded))
 	}

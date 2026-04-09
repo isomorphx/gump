@@ -79,4 +79,3 @@ func TestExtractArtifactOutput_Valid(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
-

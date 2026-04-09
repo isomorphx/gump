@@ -103,6 +103,7 @@ var (
 	planMarker       = "[" + brand.Upper() + ":plan]"
 	artifactMarker   = "[" + brand.Upper() + ":artifact]"
 	reviewMarker     = "[" + brand.Upper() + ":review]"
+	validateMarker   = "[" + brand.Upper() + ":validate]"
 	testScenarioFile = ".pud" + "ding-test-scenario.json"
 	testPlanFile     = ".pud" + "ding-test-plan.json"
 )
@@ -236,9 +237,10 @@ func (s *StubAdapter) run(ctx context.Context, worktree, prompt, agentName strin
 		lowerPrompt := strings.ToLower(prompt)
 		// WHY: v0.0.4 prompts omit [BRAND:step:name] and [BRAND:plan]; detect plan steps from wording so schema: plan gates and split plan_from still see JSON in e2e.
 		isPlan := strings.Contains(prompt, planMarker) || strings.EqualFold(stepName, "decompose") ||
+			strings.Contains(lowerPrompt, "plan.json") ||
 			(strings.Contains(lowerPrompt, "plan ") && strings.Contains(lowerPrompt, "task"))
 		isArtifact := strings.Contains(prompt, artifactMarker)
-		isReview := strings.Contains(prompt, reviewMarker)
+		isReview := strings.Contains(prompt, reviewMarker) || strings.Contains(prompt, validateMarker)
 		// WHY: replan sub-tasks must use root scenario files only (ignore by_attempt),
 		// so e2e R6 stays deterministic. Provider context files may be missing or
 		// reformatted, so we key off the prompt itself.
@@ -287,11 +289,15 @@ func (s *StubAdapter) run(ctx context.Context, worktree, prompt, agentName strin
 				planContent = custom
 			}
 			_ = os.WriteFile(planPath, planContent, 0644)
-			filename := stepName + ".stub"
-			if stepName == "" {
-				filename = "step.stub"
+			if applyTestScenarioWithStep(worktree, stepName, isReplanFromPrompt, attemptFromPrompt) {
+				// scenario files (e.g. evil.go) for split/plan no_write e2e
+			} else {
+				filename := stepName + ".stub"
+				if stepName == "" {
+					filename = "step.stub"
+				}
+				_ = os.WriteFile(filepath.Join(worktree, filename), []byte("stub output"), 0644)
 			}
-			_ = os.WriteFile(filepath.Join(worktree, filename), []byte("stub output"), 0644)
 		} else if isArtifact {
 			artifactPath := filepath.Join(outDir, "artifact.txt")
 			_ = os.WriteFile(artifactPath, []byte("stub artifact output for "+stepName), 0644)
@@ -301,11 +307,11 @@ func (s *StubAdapter) run(ctx context.Context, worktree, prompt, agentName strin
 			}
 			_ = os.WriteFile(filepath.Join(worktree, filename), []byte("stub output"), 0644)
 		} else if isReview {
-			reviewPath := filepath.Join(outDir, "review.json")
+			validatePath := filepath.Join(outDir, "validate.json")
 			if body := reviewJSONFromScenario(worktree, stepName, attemptFromPrompt); body != "" {
-				_ = os.WriteFile(reviewPath, []byte(body), 0644)
+				_ = os.WriteFile(validatePath, []byte(body), 0644)
 			} else {
-				_ = os.WriteFile(reviewPath, []byte(`{"pass":true,"comment":"stub review ok"}`), 0644)
+				_ = os.WriteFile(validatePath, []byte(`{"pass":true,"comments":"stub validate ok"}`), 0644)
 			}
 			if applyTestScenarioWithStep(worktree, stepName, isReplanFromPrompt, attemptFromPrompt) {
 				// scenario supplies files (e.g. compile gate)

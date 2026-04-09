@@ -1,4 +1,4 @@
-package cook
+package run
 
 import (
 	"crypto/sha256"
@@ -23,7 +23,7 @@ var knownLockfiles = []string{
 	"Cargo.lock", "Gemfile.lock", "poetry.lock",
 }
 
-// ContextSnapshot is written at cook creation for audit and replay; lockfile hashes and runtime versions enable drift checks later.
+// ContextSnapshot is written at run creation for audit and replay; lockfile hashes and runtime versions enable drift checks later.
 type ContextSnapshot struct {
 	CookID          string            `json:"cook_id"`
 	Recipe          string            `json:"recipe"`
@@ -43,26 +43,26 @@ type StatusFile struct {
 	StepsCount int    `json:"steps_count,omitempty"`
 }
 
-// EnsureCookDir creates .gump/runs/<uuid>/ and artifacts/ so ledger and artifacts have a stable place.
-func EnsureCookDir(cookDir string) error {
-	artifacts := filepath.Join(cookDir, "artifacts")
+// EnsureRunDir creates .gump/runs/<uuid>/ and artifacts/ so ledger and artifacts have a stable place.
+func EnsureRunDir(runDir string) error {
+	artifacts := filepath.Join(runDir, "artifacts")
 	return os.MkdirAll(artifacts, 0755)
 }
 
 // WriteRecipeSnapshot copies the workflow YAML into the run dir so we know exactly what was run.
-func WriteRecipeSnapshot(cookDir string, recipeYAML []byte) error {
-	p := filepath.Join(cookDir, "workflow-snapshot.yaml")
+func WriteRecipeSnapshot(runDir string, recipeYAML []byte) error {
+	p := filepath.Join(runDir, "workflow-snapshot.yaml")
 	return os.WriteFile(p, recipeYAML, 0644)
 }
 
 // WriteStatus persists status and updated_at so apply/gc can filter by pass and recency.
-func WriteStatus(cookDir, status string) error {
-	return WriteStatusWithSteps(cookDir, status, 0)
+func WriteStatus(runDir, status string) error {
+	return WriteStatusWithSteps(runDir, status, 0)
 }
 
 // WriteStatusWithSteps persists status with step count so apply can show it in the merge message.
-func WriteStatusWithSteps(cookDir, status string, stepsCount int) error {
-	p := filepath.Join(cookDir, "status.json")
+func WriteStatusWithSteps(runDir, status string, stepsCount int) error {
+	p := filepath.Join(runDir, "status.json")
 	body := StatusFile{Status: status, UpdatedAt: time.Now().UTC().Format(time.RFC3339), StepsCount: stepsCount}
 	data, err := json.MarshalIndent(body, "", "  ")
 	if err != nil {
@@ -71,9 +71,9 @@ func WriteStatusWithSteps(cookDir, status string, stepsCount int) error {
 	return os.WriteFile(p, data, 0644)
 }
 
-// ReadStatus reads status.json from a cook dir; missing file returns error.
-func ReadStatus(cookDir string) (*StatusFile, error) {
-	data, err := os.ReadFile(filepath.Join(cookDir, "status.json"))
+// ReadStatus reads status.json from a run dir; missing file returns error.
+func ReadStatus(runDir string) (*StatusFile, error) {
+	data, err := os.ReadFile(filepath.Join(runDir, "status.json"))
 	if err != nil {
 		return nil, err
 	}
@@ -84,12 +84,12 @@ func ReadStatus(cookDir string) (*StatusFile, error) {
 	return &s, nil
 }
 
-// AppendLedgerEvent appends one NDJSON line to ledger.ndjson in the cook dir for step 4 agent events (agent_launched, agent_completed, agent_timeout, agent_error).
-func AppendLedgerEvent(cookDir string, event map[string]interface{}) error {
+// AppendLedgerEvent appends one NDJSON line to ledger.ndjson in the run dir for step 4 agent events (agent_launched, agent_completed, agent_timeout, agent_error).
+func AppendLedgerEvent(runDir string, event map[string]interface{}) error {
 	if event == nil {
 		return nil
 	}
-	p := filepath.Join(cookDir, "ledger.ndjson")
+	p := filepath.Join(runDir, "ledger.ndjson")
 	f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
@@ -104,16 +104,16 @@ func AppendLedgerEvent(cookDir string, event map[string]interface{}) error {
 }
 
 // WriteContextSnapshot writes context-snapshot.json with lockfile hashes and runtime versions for reproducibility.
-func WriteContextSnapshot(cookDir string, ctx *ContextSnapshot) error {
+func WriteContextSnapshot(runDir string, ctx *ContextSnapshot) error {
 	data, err := json.MarshalIndent(ctx, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(cookDir, "context-snapshot.json"), data, 0644)
+	return os.WriteFile(filepath.Join(runDir, "context-snapshot.json"), data, 0644)
 }
 
 // WriteState persists flat workflow state for replay (v0.0.4 path: state.json).
-func WriteState(cookDir string, st *state.State) error {
+func WriteState(runDir string, st *state.State) error {
 	if st == nil {
 		return nil
 	}
@@ -121,16 +121,16 @@ func WriteState(cookDir string, st *state.State) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(cookDir, "state.json"), data, 0644)
+	return os.WriteFile(filepath.Join(runDir, "state.json"), data, 0644)
 }
 
 // ReadStateFile returns state.json bytes when present, otherwise legacy state-bag.json.
-func ReadStateFile(cookDir string) ([]byte, error) {
-	p := filepath.Join(cookDir, "state.json")
+func ReadStateFile(runDir string) ([]byte, error) {
+	p := filepath.Join(runDir, "state.json")
 	if data, err := os.ReadFile(p); err == nil {
 		return data, nil
 	}
-	return os.ReadFile(filepath.Join(cookDir, "state-bag.json"))
+	return os.ReadFile(filepath.Join(runDir, "state-bag.json"))
 }
 
 // LockfileHashesForDir scans worktreeDir for known lockfiles and returns sha256 hashes.
@@ -178,94 +178,95 @@ func parseVersion(s string) string {
 	return strings.TrimSpace(m)
 }
 
-// ListCooks returns cook IDs under cooksDir sorted by updated_at descending (newest first).
-func ListCooks(cooksDir string) ([]CookEntry, error) {
-	entries, err := os.ReadDir(cooksDir)
+// ListRuns returns run IDs under runsDir sorted by updated_at descending (newest first).
+func ListRuns(runsDir string) ([]RunEntry, error) {
+	entries, err := os.ReadDir(runsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	var cooks []CookEntry
+	var runs []RunEntry
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
 		id := e.Name()
-		dir := filepath.Join(cooksDir, id)
+		dir := filepath.Join(runsDir, id)
 		st, err := ReadStatus(dir)
 		if err != nil {
 			continue
 		}
-		cooks = append(cooks, CookEntry{ID: id, Status: st.Status, UpdatedAt: st.UpdatedAt})
+		runs = append(runs, RunEntry{ID: id, Status: st.Status, UpdatedAt: st.UpdatedAt})
 	}
-	sort.Slice(cooks, func(i, j int) bool { return cooks[i].UpdatedAt > cooks[j].UpdatedAt })
-	return cooks, nil
+	sort.Slice(runs, func(i, j int) bool { return runs[i].UpdatedAt > runs[j].UpdatedAt })
+	return runs, nil
 }
 
-// CookEntry is one cook directory with status; used by apply and gc.
-type CookEntry struct {
+// RunEntry is one run directory with status; used by apply and gc.
+type RunEntry struct {
 	ID        string
 	Status    string
 	UpdatedAt string
 }
 
-// FindLatestPassingCook returns the most recent cook with status "pass", or empty string if none.
-func FindLatestPassingCook(cooksDir string) (string, error) {
-	cooks, err := ListCooks(cooksDir)
+// FindLatestPassingRun returns the most recent run with status "pass", or empty string if none.
+func FindLatestPassingRun(runsDir string) (string, error) {
+	runs, err := ListRuns(runsDir)
 	if err != nil {
 		return "", err
 	}
-	for _, c := range cooks {
-		if c.Status == "pass" {
-			return c.ID, nil
+	for _, r := range runs {
+		if r.Status == "pass" {
+			return r.ID, nil
 		}
 	}
 	return "", nil
 }
 
-// WorktreePath returns the worktree path for a cook id (used to check existence before apply).
-func WorktreePath(repoRoot, cookID string) string {
-	return filepath.Join(repoRoot, brand.StateDir(), "worktrees", brand.WorktreeDirPrefix()+cookID)
+// WorktreePath returns the worktree path for a run id (used to check existence before apply).
+func WorktreePath(repoRoot, runID string) string {
+	return filepath.Join(repoRoot, brand.StateDir(), "worktrees", brand.WorktreeDirPrefix()+runID)
 }
 
 // WorktreeExists checks if the worktree directory exists so we can refuse apply after gc.
-func WorktreeExists(repoRoot, cookID string) bool {
-	_, err := os.Stat(WorktreePath(repoRoot, cookID))
+func WorktreeExists(repoRoot, runID string) bool {
+	_, err := os.Stat(WorktreePath(repoRoot, runID))
 	return err == nil
 }
 
-// CookDir returns .gump/runs/<uuid>/ for a given repo and run id.
-func CookDir(repoRoot, cookID string) string {
-	return filepath.Join(repoRoot, brand.StateDir(), brand.RunsDir(), cookID)
+// RunPath returns .gump/runs/<uuid>/ for a given repo and run id.
+func RunPath(repoRoot, runID string) string {
+	return filepath.Join(repoRoot, brand.StateDir(), brand.RunsDir(), runID)
 }
 
-// LoadCookFromDir loads minimal cook metadata from a cook dir (for apply when we have uuid but not a live Cook).
-func LoadCookFromDir(repoRoot, cookID string) (*Cook, error) {
-	dir := CookDir(repoRoot, cookID)
+// LoadRunFromDir loads minimal run metadata from a run dir (for apply when we have uuid but not a live Run).
+func LoadRunFromDir(repoRoot, runID string) (*Run, error) {
+	dir := RunPath(repoRoot, runID)
 	data, err := os.ReadFile(filepath.Join(dir, "context-snapshot.json"))
 	if err != nil {
-		return nil, fmt.Errorf("cook %s: %w", cookID, err)
+		return nil, fmt.Errorf("run %s: %w", runID, err)
 	}
 	var ctx ContextSnapshot
 	if err := json.Unmarshal(data, &ctx); err != nil {
 		return nil, err
 	}
-	c := &Cook{
-		ID:            cookID,
-		RecipeName:    ctx.Recipe,
+	r := &Run{
+		ID:            runID,
+		WorkflowName:  ctx.Recipe,
 		SpecPath:      ctx.Spec,
 		RepoRoot:      repoRoot,
 		OrigBranch:    ctx.Branch,
+		BaseCommit:    ctx.InitialCommit,
 		InitialCommit: ctx.InitialCommit,
-		WorktreeDir:   WorktreePath(repoRoot, cookID),
-		BranchName:    brand.WorktreeBranchPrefix() + cookID,
-		CookDir:       dir,
+		WorktreeDir:   WorktreePath(repoRoot, runID),
+		BranchName:    brand.WorktreeBranchPrefix() + runID,
+		RunDir:        dir,
 	}
 	st, err := ReadStatus(dir)
 	if err == nil {
-		c.Status = st.Status
+		r.Status = st.Status
 	}
-	return c, nil
+	return r, nil
 }

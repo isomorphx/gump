@@ -10,10 +10,10 @@ import (
 	"github.com/isomorphx/gump/internal/agent"
 	"github.com/isomorphx/gump/internal/brand"
 	"github.com/isomorphx/gump/internal/config"
-	"github.com/isomorphx/gump/internal/cook"
 	"github.com/isomorphx/gump/internal/ledger"
-	"github.com/isomorphx/gump/internal/workflow"
+	"github.com/isomorphx/gump/internal/run"
 	"github.com/isomorphx/gump/internal/state"
+	"github.com/isomorphx/gump/internal/workflow"
 )
 
 // FindLastFatalCook returns the run dir of the most recent run with status "fatal", or the run dir for cookID if cookID != "" (status not checked).
@@ -40,7 +40,7 @@ func FindLastFatalCook(repoRoot string, cookID string) (string, error) {
 			continue
 		}
 		dir := filepath.Join(cooksDir, e.Name())
-		st, err := cook.ReadStatus(dir)
+		st, err := run.ReadStatus(dir)
 		if err != nil || st.Status != "fatal" {
 			continue
 		}
@@ -103,7 +103,7 @@ func ResolveFromStep(fromStep string, rec *workflow.Workflow) (string, error) {
 }
 
 // RunReplay finds the fatal run, restores state bag, reuses the original run worktree (HITL), and runs the engine from fromStep. Returns the new run and steps count so the CLI can write status.
-func RunReplay(repoRoot, specPath, fromStep, cookID string, rec *workflow.Workflow, recipeRaw []byte, resolver agent.AdapterResolver, cfg *config.Config, agentsCLI map[string]string) (*cook.Cook, int, error) {
+func RunReplay(repoRoot, specPath, fromStep, cookID string, rec *workflow.Workflow, recipeRaw []byte, resolver agent.AdapterResolver, cfg *config.Config, agentsCLI map[string]string) (*run.Run, int, error) {
 	cookDir, err := FindLastFatalCook(repoRoot, cookID)
 	if err != nil {
 		return nil, 0, err
@@ -116,9 +116,19 @@ func RunReplay(repoRoot, specPath, fromStep, cookID string, rec *workflow.Workfl
 	if err != nil {
 		return nil, 0, err
 	}
+	for i := range rec.Steps {
+		st := &rec.Steps[i]
+		if len(st.Each) == 0 {
+			continue
+		}
+		p := st.Name
+		if resolvedStep == p || strings.HasPrefix(resolvedStep, p+"/") {
+			return nil, 0, fmt.Errorf("replay: from-step %q is under split+each; not yet fully implemented", resolvedStep)
+		}
+	}
 	restoreCommit := info.RestoreCommitBeforeStep(resolvedStep, info.InitialCommit)
 	originalWorktree := filepath.Join(repoRoot, brand.StateDir(), "worktrees", brand.WorktreeDirPrefix()+info.OriginalCookID)
-	stateBagData, err := cook.ReadStateFile(cookDir)
+	stateBagData, err := run.ReadStateFile(cookDir)
 	if err != nil {
 		return nil, 0, fmt.Errorf("read state: %w", err)
 	}
@@ -130,17 +140,17 @@ func RunReplay(repoRoot, specPath, fromStep, cookID string, rec *workflow.Workfl
 	if err != nil {
 		return nil, 0, err
 	}
-	c, err := cook.NewCookForReplay(rec, specPath, repoRoot, recipeRaw, restoreCommit, originalWorktree)
+	c, err := run.NewRunForReplay(rec, specPath, repoRoot, recipeRaw, restoreCommit, originalWorktree, cfg)
 	if err != nil {
 		return nil, 0, err
 	}
+	c.State = sb
 	eng := New(c, rec, resolver, cfg, string(specContent))
 	eng.AgentsCLI = agentsCLI
 	eng.FromStep = resolvedStep
-	eng.State = sb
 	eng.replayOriginalCookID = info.OriginalCookID
 	eng.replayRestoredCommit = restoreCommit
-	if err := eng.Run(); err != nil {
+	if err := eng.Execute(); err != nil {
 		return c, 0, err
 	}
 	return c, len(eng.Steps), nil

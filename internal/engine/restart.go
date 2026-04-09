@@ -1,10 +1,12 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
 
+	"github.com/isomorphx/gump/internal/sandbox"
 	"github.com/isomorphx/gump/internal/workflow"
 )
 
@@ -60,6 +62,20 @@ func gitCleanFD(worktree string) error {
 		return fmt.Errorf("git clean -fd: %w: %s", err, out)
 	}
 	return nil
+}
+
+// PreStepCommit returns the current worktree HEAD so a future retry can reset to it.
+func PreStepCommit(worktreeDir string) (string, error) {
+	return sandbox.HeadCommit(worktreeDir)
+}
+
+// IsRestartFrom reports whether err requests a restart_from sibling jump.
+func IsRestartFrom(err error) (*ErrRestartFrom, bool) {
+	var rf *ErrRestartFrom
+	if errors.As(err, &rf) {
+		return rf, true
+	}
+	return nil, false
 }
 
 func gitDiffNameOnly(worktree, base, head string) ([]string, error) {

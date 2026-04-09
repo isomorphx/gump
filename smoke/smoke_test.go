@@ -480,7 +480,7 @@ steps:
 	ledger := readLedger(t, dir)
 	var hasGroupStartedParallel bool
 	agentLaunched := 0
-	var hasGroupCompleted bool
+	stepCompleted := 0
 	for _, ev := range ledger {
 		if ev["type"] == "group_started" {
 			if par, _ := ev["parallel"].(bool); par {
@@ -490,8 +490,8 @@ steps:
 		if ev["type"] == "agent_launched" {
 			agentLaunched++
 		}
-		if ev["type"] == "group_completed" {
-			hasGroupCompleted = true
+		if ev["type"] == "step_completed" {
+			stepCompleted++
 		}
 	}
 	if !hasGroupStartedParallel {
@@ -500,8 +500,8 @@ steps:
 	if agentLaunched < 2 {
 		t.Errorf("ledger should contain at least 2 agent_launched, got %d", agentLaunched)
 	}
-	if !hasGroupCompleted {
-		t.Error("ledger should contain group_completed")
+	if stepCompleted < 2 {
+		t.Errorf("ledger should contain at least 2 step_completed for parallel child steps, got %d", stepCompleted)
 	}
 	runDir := latestRunDir(t, dir)
 	artifactsDir := filepath.Join(runDir, "artifacts")

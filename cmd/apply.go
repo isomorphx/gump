@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/isomorphx/gump/internal/brand"
-	"github.com/isomorphx/gump/internal/cook"
+	"github.com/isomorphx/gump/internal/run"
 	"github.com/isomorphx/gump/internal/sandbox"
 	"github.com/spf13/cobra"
 )
@@ -48,7 +48,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 		cookID = applyCookIDLegacy
 	}
 	if cookID == "" {
-		cookID, err = cook.FindLatestPassingCook(cooksDir)
+		cookID, err = run.FindLatestPassingRun(cooksDir)
 		if err != nil {
 			return err
 		}
@@ -57,14 +57,14 @@ func runApply(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	c, err := cook.LoadCookFromDir(repoRoot, cookID)
+	c, err := run.LoadRunFromDir(repoRoot, cookID)
 	if err != nil {
 		return err
 	}
 	if c.Status != "pass" {
 		return fmt.Errorf("run %s has status %s — only completed runs can be applied", cookID, c.Status)
 	}
-	if !cook.WorktreeExists(repoRoot, cookID) {
+	if !run.WorktreeExists(repoRoot, cookID) {
 		return fmt.Errorf("worktree for run %s has been cleaned up — cannot apply", cookID)
 	}
 	return c.Apply()

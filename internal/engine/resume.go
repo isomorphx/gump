@@ -7,13 +7,16 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/isomorphx/gump/internal/agent"
 	"github.com/isomorphx/gump/internal/brand"
 	"github.com/isomorphx/gump/internal/config"
-	"github.com/isomorphx/gump/internal/cook"
-	"github.com/isomorphx/gump/internal/workflow"
+	"github.com/isomorphx/gump/internal/ledger"
+	"github.com/isomorphx/gump/internal/run"
+	"github.com/isomorphx/gump/internal/sandbox"
 	"github.com/isomorphx/gump/internal/state"
+	"github.com/isomorphx/gump/internal/workflow"
 )
 
 func findResumableCook(repoRoot, runID string) (string, string, error) {
@@ -24,7 +27,7 @@ func findResumableCook(repoRoot, runID string) (string, string, error) {
 	}
 	if runID != "" {
 		dir := filepath.Join(runsDir, runID)
-		st, err := cook.ReadStatus(dir)
+		st, err := run.ReadStatus(dir)
 		if err != nil {
 			return "", "", fmt.Errorf("run %s: %w", runID, err)
 		}
@@ -47,7 +50,7 @@ func findResumableCook(repoRoot, runID string) (string, string, error) {
 			continue
 		}
 		dir := filepath.Join(runsDir, e.Name())
-		st, err := cook.ReadStatus(dir)
+		st, err := run.ReadStatus(dir)
 		if err != nil {
 			continue
 		}
@@ -69,7 +72,7 @@ func findResumableCook(repoRoot, runID string) (string, string, error) {
 				continue
 			}
 			dir := filepath.Join(runsDir, e.Name())
-			st, err := cook.ReadStatus(dir)
+			st, err := run.ReadStatus(dir)
 			if err != nil {
 				continue
 			}
@@ -130,7 +133,7 @@ func parseManifestForResume(manifestPath string) (fatalStep string, passed map[s
 }
 
 // RunResume resumes a failed run in-place (worktree preserved).
-func RunResume(repoRoot, runID string, resolver agent.AdapterResolver, cfg *config.Config, agentsCLI map[string]string) (*cook.Cook, int, error) {
+func RunResume(repoRoot, runID string, resolver agent.AdapterResolver, cfg *config.Config, agentsCLI map[string]string) (*run.Run, int, error) {
 	cookDir, previousStatus, err := findResumableCook(repoRoot, runID)
 	if err != nil {
 		return nil, 0, err
@@ -158,7 +161,7 @@ func RunResume(repoRoot, runID string, resolver agent.AdapterResolver, cfg *conf
 	}
 	ctxData, _ := os.ReadFile(ctxPath)
 	_ = json.Unmarshal(ctxData, &ctx)
-	stateData, err := cook.ReadStateFile(cookDir)
+	stateData, err := run.ReadStateFile(cookDir)
 	if err != nil {
 		return nil, 0, fmt.Errorf("read state: %w", err)
 	}
@@ -187,21 +190,49 @@ func RunResume(repoRoot, runID string, resolver agent.AdapterResolver, cfg *conf
 		return nil, 0, fmt.Errorf("resume precondition failed: worktree missing (%s). Fix: clear stale runs with `gump gc --keep-last 1`", wt)
 	}
 	specPath := filepath.Join(repoRoot, ctx.Spec)
-	c, err := cook.NewCookForReplay(rec, specPath, repoRoot, workflowRaw, "", wt)
+	root, err := sandbox.GitRepoRoot(repoRoot)
 	if err != nil {
 		return nil, 0, err
+	}
+	origBranch, _ := sandbox.CurrentBranch(root)
+	wtHead, _ := sandbox.HeadCommit(wt)
+	branchName, _ := sandbox.CurrentBranch(wt)
+	if strings.TrimSpace(branchName) == "" {
+		branchName = brand.WorktreeBranchPrefix() + cookID
+	}
+	led, err := ledger.New(cookDir, cookID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("open ledger: %w", err)
 	}
 	specContent, err := os.ReadFile(specPath)
 	if err != nil {
 		return nil, 0, err
+	}
+	c := &run.Run{
+		ID:            cookID,
+		Workflow:      rec,
+		WorkflowName:  rec.Name,
+		SpecPath:      specPath,
+		SpecContent:   string(specContent),
+		RepoRoot:      root,
+		OrigBranch:    origBranch,
+		InitialCommit: wtHead,
+		BaseCommit:    wtHead,
+		WorktreeDir:   wt,
+		BranchName:    branchName,
+		RunDir:        cookDir,
+		Status:        "running",
+		StartedAt:     time.Now(),
+		Ledger:        led,
+		State:         sb,
+		Config:        cfg,
 	}
 	eng := New(c, rec, resolver, cfg, string(specContent))
 	eng.AgentsCLI = agentsCLI
 	eng.FromStep = fatalStep
 	eng.ResumePassedSteps = passed
 	eng.ResumePreviousStatus = previousStatus
-	eng.State = sb
-	if err := eng.Run(); err != nil {
+	if err := eng.Execute(); err != nil {
 		return c, 0, err
 	}
 	return c, len(eng.Steps), nil

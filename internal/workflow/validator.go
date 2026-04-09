@@ -102,6 +102,11 @@ func isGateOnlyStep(s *Step) bool {
 	return s.Type == "" && s.Agent == "" && strings.TrimSpace(s.Prompt) == ""
 }
 
+// IsGateOnlyStep reports steps that run only the gate phase (no agent, no type, no prompt).
+func IsGateOnlyStep(s *Step) bool {
+	return isGateOnlyStep(s)
+}
+
 func isWorkflowCallStep(s *Step) bool {
 	return strings.TrimSpace(s.Workflow) != ""
 }
