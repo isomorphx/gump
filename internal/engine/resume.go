@@ -230,6 +230,7 @@ func RunResume(repoRoot, runID string, resolver agent.AdapterResolver, cfg *conf
 	eng := New(c, rec, resolver, cfg, string(specContent))
 	eng.AgentsCLI = agentsCLI
 	eng.FromStep = fatalStep
+	eng.ResumeMode = true
 	eng.ResumePassedSteps = passed
 	eng.ResumePreviousStatus = previousStatus
 	if err := eng.Execute(); err != nil {

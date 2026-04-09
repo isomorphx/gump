@@ -36,13 +36,11 @@ func TestParsePlanOutput_InvalidJSON(t *testing.T) {
 }
 
 func TestValidatePlanSchema_Empty(t *testing.T) {
-	err := ValidatePlanSchema(nil)
-	if err == nil {
-		t.Error("expected error for nil")
+	if err := ValidatePlanSchema(nil); err != nil {
+		t.Errorf("nil slice: %v", err)
 	}
-	err = ValidatePlanSchema([]Task{})
-	if err == nil {
-		t.Error("expected error for empty")
+	if err := ValidatePlanSchema([]Task{}); err != nil {
+		t.Errorf("empty slice: %v", err)
 	}
 }
 

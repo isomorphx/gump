@@ -425,7 +425,7 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 				}
 			case "reuse-targeted":
 				if attempt == 1 {
-					sessionID = e.resolveTargetedSession(effectiveSession.Target, agentToUse)
+					sessionID = e.resolveTargetedSession(stepPath, effectiveSession.Target, agentToUse)
 					if sessionID == "" {
 						fmt.Fprintf(os.Stderr, "[%s] session: reuse: %s — target step not found or different agent, using fresh session\n", brand.Lower(), effectiveSession.Target)
 					}

@@ -22,11 +22,31 @@ func ParsePlanOutput(raw []byte) ([]Task, error) {
 	return tasks, nil
 }
 
+// ValidateSplitTasks enforces task identity after a split (R6); empty list is valid (caller may warn).
+func ValidateSplitTasks(tasks []Task) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(tasks))
+	for i, t := range tasks {
+		n := strings.TrimSpace(t.Name)
+		if n == "" {
+			return fmt.Errorf("task at index %d: name is required", i)
+		}
+		if _, ok := seen[n]; ok {
+			return fmt.Errorf("duplicate task name %q", n)
+		}
+		seen[n] = struct{}{}
+	}
+	return nil
+}
+
 // ValidatePlanSchema checks the plan shape so foreach_task can rely on name/description and optional files.
 // Failing early avoids confusing errors when expanding tasks.
+// Empty JSON array is valid for split output (R6); the engine warns and skips each.
 func ValidatePlanSchema(tasks []Task) error {
 	if len(tasks) == 0 {
-		return fmt.Errorf("plan must contain at least one task")
+		return nil
 	}
 	for i, t := range tasks {
 		if strings.TrimSpace(t.Name) == "" {

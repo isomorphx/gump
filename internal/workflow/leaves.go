@@ -26,11 +26,11 @@ func walkLeaves(steps []Step, pathPrefix string, out *[]LeafStep) {
 			if pathPrefix != "" {
 				prefix = pathPrefix + "/" + s.Name
 			}
+			// WHY: each-task paths are dynamic (<split>/<task>/<step>); static leaf enumeration must not invent decompose/impl without a task id.
 			if s.Type == "split" && len(s.Each) > 0 {
-				walkLeaves(s.Each, prefix, out)
-			} else {
-				walkLeaves(s.Steps, prefix, out)
+				continue
 			}
+			walkLeaves(s.Steps, prefix, out)
 			continue
 		}
 		*out = append(*out, LeafStep{PathPrefix: pathPrefix, Name: s.Name})

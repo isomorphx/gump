@@ -138,11 +138,11 @@ func buildParallelUnits(step *workflow.Step, stepPath string, subSteps []workflo
 	}
 	units := make([]parallelUnit, len(subSteps))
 	for i, s := range subSteps {
-		pathPrefix := stepPath + "/" + s.Name
+		// WHY: executeSteps appends each child name to pathPrefix; including s.Name here produced reviews/arch-review/arch-review (R6 paths must match sequential groups).
 		out := s.OutputMode()
 		units[i] = parallelUnit{
 			Name:       s.Name,
-			PathPrefix: pathPrefix,
+			PathPrefix: stepPath,
 			Steps:      []workflow.Step{s},
 			Task:       nil,
 			OutputMode: out,
@@ -191,11 +191,12 @@ func mergeParallelDiffs(e *Engine, stepPath, stepName, baseCommit string, result
 		for j := i + 1; j < len(stepDiffs); j++ {
 			common := fileIntersection(stepDiffs[i].files, stepDiffs[j].files)
 			if len(common) > 0 {
-				reason := fmt.Sprintf("merge conflict: steps %q and %q both modify: %v. Hint: ensure the plan decomposes tasks with disjoint blast radii.", stepDiffs[i].stepName, stepDiffs[j].stepName, common)
+				// WHY: operators grep logs for this phrase when tuning split-parallel blast radii (spec R6-07).
+				reason := fmt.Sprintf("parallel merge conflict: steps %q and %q both modify: %v", stepDiffs[i].stepName, stepDiffs[j].stepName, common)
 				if e.Run.Ledger != nil {
 					_ = e.Run.Ledger.Emit(ledger.CircuitBreaker{Step: stepPath, Scope: "group", Reason: reason, TotalAttempts: 1})
 				}
-				return fmt.Errorf("Fan-out merge failed: steps %q and %q both modify:\n  - %s\nHint: ensure the plan decomposes tasks with disjoint blast radii.", stepDiffs[i].stepName, stepDiffs[j].stepName, joinPaths(common))
+				return fmt.Errorf("parallel merge conflict: steps %q and %q both modify:\n  - %s", stepDiffs[i].stepName, stepDiffs[j].stepName, joinPaths(common))
 			}
 		}
 	}

@@ -38,6 +38,7 @@ type Engine struct {
 	AgentsCLI            map[string]string
 	CookAgentOverride    string // CLI --agent overrides step agent when set
 	FromStep             string // when set (replay), skip steps until we reach this path
+	ResumeMode           bool   // when true, FromStep is only for ledger metadata; skipping uses ResumePassedSteps/state (resume after fatal in each)
 	ResumePassedSteps    map[string]bool
 	ResumePreviousStatus string
 	replayOriginalCookID string // for replay_started event
@@ -176,7 +177,8 @@ func (e *Engine) executeSteps(steps []workflow.Step, taskContext *plan.Task, pat
 		stepPath += step.Name
 
 		// Replay: skip steps until we reach FromStep; do not skip a group that contains FromStep (e.g. implement when FromStep is implement/task-2/code).
-		if e.FromStep != "" {
+		// WHY: resume must not treat FromStep like replay skip-walk — that would skip whole tasks before the fatal path.
+		if e.FromStep != "" && !e.ResumeMode {
 			if !e.replayReachedStart {
 				if stepPath == e.FromStep {
 					e.replayReachedStart = true
@@ -188,15 +190,26 @@ func (e *Engine) executeSteps(steps []workflow.Step, taskContext *plan.Task, pat
 			}
 		}
 		if e.ResumePassedSteps != nil && e.ResumePassedSteps[stepPath] {
-			continue
+			// WHY: manifest marks the split step pass after schema/plan even when an each-task child fatals (e.g. decompose/c/impl). Skipping the whole composite would never resume the failed task.
+			if !(e.ResumeMode && e.FromStep != "" && (e.FromStep == stepPath || strings.HasPrefix(e.FromStep, stepPath+"/"))) {
+				continue
+			}
 		}
 
 		// Composite: parallel group, split+each, or nested workflow call (plan iteration uses the split step name as state-bag scope).
+		if err := e.checkGlobalWorkflowBounds(); err != nil {
+			return err
+		}
+
 		foreachRef := ""
 		if step.Type == "split" && len(step.Each) > 0 {
 			foreachRef = step.Name
 		}
 		isComposite := len(step.Steps) > 0 || step.Workflow != "" || (step.Type == "split" && len(step.Each) > 0)
+		// WHY: a composite parent may still carry .status pass from an earlier planner run; replay/resume must enter it to reach nested steps.
+		if e.State != nil && e.State.Get(stepPath+".status") == "pass" && !isComposite {
+			continue
+		}
 		if isComposite {
 			if step.Workflow != "" && foreachRef == "" && len(step.Steps) == 0 && len(step.Each) == 0 {
 				swr := &SubWorkflowRunner{ParentEngine: e}
@@ -231,7 +244,13 @@ func (e *Engine) executeSteps(steps []workflow.Step, taskContext *plan.Task, pat
 				var err error
 				planTasks, err = plan.ParsePlanOutput([]byte(planRaw))
 				if err != nil {
-					return fmt.Errorf("foreach plan from State Bag: %w", err)
+					return fmt.Errorf("split plan output: %w", err)
+				}
+				if len(planTasks) == 0 {
+					fmt.Fprintf(os.Stderr, "[%s]\twarning\tsplit produced 0 tasks\n", stepPath)
+				}
+				if err := plan.ValidateSplitTasks(planTasks); err != nil {
+					return fmt.Errorf("split produced invalid tasks: %w", err)
 				}
 				taskCount = len(planTasks)
 			}
@@ -371,9 +390,16 @@ func (e *Engine) executeSteps(steps []workflow.Step, taskContext *plan.Task, pat
 
 		// Validation pure: no agent; run validators on the worktree state (cumulative diff).
 		if step.Agent == "" && len(step.Gate) > 0 {
-			if err := e.executeValidationWithoutAgent(&step, stepPath, taskContext, parentSession, validationWithoutAgentOpts{
-				finalDiffErrLabel: "validation",
-			}); err != nil {
+			vopts := validationWithoutAgentOpts{finalDiffErrLabel: "validation"}
+			// WHY: gate-only top-level steps need the same ledger/session persistence as the old sequential dispatcher.
+			if workflow.IsGateOnlyStep(&step) {
+				vopts = validationWithoutAgentOpts{
+					fixedSessionLedgerMode: "new",
+					persistStepStatusKeys:  true,
+					finalDiffErrLabel:      "gate-only",
+				}
+			}
+			if err := e.executeValidationWithoutAgent(&step, stepPath, taskContext, parentSession, vopts); err != nil {
 				return err
 			}
 			continue

@@ -54,3 +54,28 @@ func TestResolveContext_extraOverridesFlatState(t *testing.T) {
 		t.Fatalf("got %q", ctx.Resolve("agent"))
 	}
 }
+
+func TestResolveContext_eachScopeBlocksTopLevelSiblingName(t *testing.T) {
+	st := New()
+	st.Set("converge.agent", "LEAK")
+	st.Set("decompose/auth/converge.agent", "INNER")
+	ctx := &ResolveContext{State: st, StepPath: "decompose/auth/smoke"}
+	if got := ctx.Resolve("converge.agent"); got != "INNER" {
+		t.Fatalf("scoped converge.agent: got %q", got)
+	}
+	st2 := New()
+	st2.Set("converge.agent", "LEAK")
+	ctx2 := &ResolveContext{State: st2, StepPath: "decompose/auth/smoke"}
+	if got := ctx2.Resolve("converge.agent"); got != "" {
+		t.Fatalf("missing task-local converge must not fall back to top-level: got %q", got)
+	}
+}
+
+func TestResolveContext_eachScopeStillSeesAncestorSplitOutput(t *testing.T) {
+	st := New()
+	st.Set("decompose.output", `PLAN`)
+	ctx := &ResolveContext{State: st, StepPath: "decompose/auth/impl"}
+	if got := ctx.Resolve("decompose.output"); got != `PLAN` {
+		t.Fatalf("decompose.output: got %q", got)
+	}
+}

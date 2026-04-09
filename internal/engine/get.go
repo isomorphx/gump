@@ -35,17 +35,40 @@ func sessionModeForLedger(step *workflow.Step, parentSession workflow.SessionCon
 		return eff.Mode
 	}
 }
-func (e *Engine) resolveTargetedSession(target string, currentAgent string) string {
-	sid := e.State.Get(target + ".session_id")
-	targetAgent := strings.TrimSpace(e.State.Get(target + ".agent"))
-	if targetAgent == "" {
-		for i := len(e.Steps) - 1; i >= 0; i-- {
-			if e.Steps[i].StepName == target && e.Steps[i].Agent != "" {
-				targetAgent = e.Steps[i].Agent
-				break
+func (e *Engine) resolveTargetedSession(stepPath, target string, currentAgent string) string {
+	// WHY: session: from: inside each must not bind to a top-level step with the same short name (e.g. converge) when the task-local target has not run yet.
+	var qualified string
+	if p := state.EachScopePrefix(stepPath); p != "" {
+		if base := strings.TrimSuffix(p, "/"); base != "" {
+			qualified = base + "/" + target
+		}
+	}
+
+	var sid, targetAgent string
+	if qualified != "" {
+		sid = e.State.Get(qualified + ".session_id")
+		targetAgent = strings.TrimSpace(e.State.Get(qualified + ".agent"))
+		if targetAgent == "" {
+			for i := len(e.Steps) - 1; i >= 0; i-- {
+				if e.Steps[i].StepPath == qualified && e.Steps[i].Agent != "" {
+					targetAgent = e.Steps[i].Agent
+					break
+				}
+			}
+		}
+	} else {
+		sid = e.State.Get(target + ".session_id")
+		targetAgent = strings.TrimSpace(e.State.Get(target + ".agent"))
+		if targetAgent == "" {
+			for i := len(e.Steps) - 1; i >= 0; i-- {
+				if e.Steps[i].StepName == target && e.Steps[i].Agent != "" {
+					targetAgent = e.Steps[i].Agent
+					break
+				}
 			}
 		}
 	}
+
 	if sid != "" && targetAgent != "" && agent.AgentPrefix(targetAgent) != agent.AgentPrefix(currentAgent) {
 		fmt.Fprintf(os.Stderr, "[%s] session: different agent/provider (reference step %q used %s, current %s), using new session\n", brand.Lower(), target, targetAgent, currentAgent)
 		return ""
@@ -54,6 +77,17 @@ func (e *Engine) resolveTargetedSession(target string, currentAgent string) stri
 		return sid
 	}
 	for i := len(e.Steps) - 1; i >= 0; i-- {
+		if qualified != "" {
+			if e.Steps[i].StepPath == qualified && e.Steps[i].SessionID != "" {
+				prevA := e.Steps[i].Agent
+				if prevA != "" && agent.AgentPrefix(prevA) != agent.AgentPrefix(currentAgent) {
+					fmt.Fprintf(os.Stderr, "[%s] session: different agent/provider (reference step %q used %s, current %s), using new session\n", brand.Lower(), target, prevA, currentAgent)
+					return ""
+				}
+				return e.Steps[i].SessionID
+			}
+			continue
+		}
 		if e.Steps[i].StepName == target && e.Steps[i].SessionID != "" {
 			prevA := e.Steps[i].Agent
 			if prevA != "" && agent.AgentPrefix(prevA) != agent.AgentPrefix(currentAgent) {

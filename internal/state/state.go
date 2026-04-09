@@ -15,6 +15,7 @@ type State struct {
 	// entries keys use slashes in the step path segment (e.g. build/task-1/converge.output).
 	entries map[string]string
 	// prevEntries holds a virtual {prev.*} namespace per step path across retries; persisted under PrevSnapshotJSONKey.
+	prevMu      sync.RWMutex
 	prevEntries map[string]map[string]string
 }
 
@@ -354,6 +355,57 @@ func (s *State) deleteKeysWithPrefix(prefix string) []string {
 		}
 	}
 	return removed
+}
+
+// ClearKeyPrefix drops every entry under prefix so replay can re-execute one split task without resurrecting stale gate/session keys from the failed run.
+func (s *State) ClearKeyPrefix(prefix string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.entries != nil {
+		for k := range s.entries {
+			if strings.HasPrefix(k, prefix) {
+				delete(s.entries, k)
+			}
+		}
+	}
+	s.clearPrevLocked(prefix)
+}
+
+// ClearSplitSubtree wipes the planner step and all task branches so a replay from the split anchor cannot short-circuit on an old plan or half-finished tasks.
+func (s *State) ClearSplitSubtree(splitStepPath string) {
+	p := strings.Trim(splitStepPath, "/")
+	if p == "" {
+		return
+	}
+	slash := p + "/"
+	dot := p + "."
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.entries != nil {
+		for k := range s.entries {
+			if strings.HasPrefix(k, slash) || strings.HasPrefix(k, dot) {
+				delete(s.entries, k)
+			}
+		}
+	}
+	if s.prevEntries != nil {
+		for sp := range s.prevEntries {
+			if sp == p || strings.HasPrefix(sp, slash) {
+				delete(s.prevEntries, sp)
+			}
+		}
+	}
+}
+
+func (s *State) clearPrevLocked(prefix string) {
+	if s.prevEntries == nil {
+		return
+	}
+	for sp := range s.prevEntries {
+		if strings.HasPrefix(sp, prefix) {
+			delete(s.prevEntries, sp)
+		}
+	}
 }
 
 // DeleteStepOutputsForRestart clears live keys for paths while preserving prev for session reuse.

@@ -125,10 +125,10 @@ func TestE2E_R2_08_ResolverGate(t *testing.T) {
 
 func TestE2E_R2_09_ResolverScopeEach(t *testing.T) {
 	st := state.New()
-	st.Set("build/task-1/impl.output", "impl_diff")
-	st.Set("build/task-1/smoke.output", "smoke_ok")
+	st.Set("decompose/task-1/impl.output", "impl_diff")
+	st.Set("decompose/task-1/smoke.output", "smoke_ok")
 	st.Set("decompose.output", "plan_json")
-	ctx := &state.ResolveContext{State: st, StepPath: "build/task-1/smoke"}
+	ctx := &state.ResolveContext{State: st, StepPath: "decompose/task-1/smoke"}
 	if ctx.Resolve("impl.output") != "impl_diff" || ctx.Resolve("decompose.output") != "plan_json" ||
 		ctx.Resolve("nonexistent.output") != "" {
 		t.Fatal("scope each")

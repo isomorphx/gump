@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/isomorphx/gump/internal/agent"
 	"github.com/isomorphx/gump/internal/brand"
@@ -57,49 +56,9 @@ func FindLastFatalCook(repoRoot string, cookID string) (string, error) {
 	return candidates[0].dir, nil
 }
 
-// fullPath returns the engine step path for a leaf (PathPrefix/Name or Name).
-func leafFullPath(l workflow.LeafStep) string {
-	if l.PathPrefix == "" {
-		return l.Name
-	}
-	return l.PathPrefix + "/" + l.Name
-}
-
 // ResolveFromStep resolves --from-step (short name or full path) against the recipe only. The manifest is not used for resolution (it may not contain the from-step if that step failed). Returns the full step path for the engine. The manifest is only used later for RestoreCommitBeforeStep.
 func ResolveFromStep(fromStep string, rec *workflow.Workflow) (string, error) {
-	fromStep = strings.TrimSpace(fromStep)
-	if fromStep == "" {
-		return "", fmt.Errorf("--from-step is required for replay")
-	}
-	recipeName := rec.Name
-	leaves := workflow.LeafSteps(rec)
-	// Full path (contains "/"): must match a leaf path in the workflow.
-	if strings.Contains(fromStep, "/") {
-		for _, l := range leaves {
-			if leafFullPath(l) == fromStep {
-				return fromStep, nil
-			}
-		}
-		return "", fmt.Errorf("step %q not found in recipe %q", fromStep, recipeName)
-	}
-	// Short name: resolve against recipe step names only.
-	var withName []workflow.LeafStep
-	for _, l := range leaves {
-		if l.Name == fromStep {
-			withName = append(withName, l)
-		}
-	}
-	if len(withName) == 0 {
-		return "", fmt.Errorf("step %q not found in recipe %q", fromStep, recipeName)
-	}
-	if len(withName) > 1 {
-		var paths []string
-		for _, l := range withName {
-			paths = append(paths, leafFullPath(l))
-		}
-		return "", fmt.Errorf("step %q is ambiguous in recipe %q. Use full path: %s", fromStep, recipeName, strings.Join(paths, ", "))
-	}
-	return leafFullPath(withName[0]), nil
+	return workflow.ResolveEngineStepPath(fromStep, rec)
 }
 
 // RunReplay finds the fatal run, restores state bag, reuses the original run worktree (HITL), and runs the engine from fromStep. Returns the new run and steps count so the CLI can write status.
@@ -116,16 +75,6 @@ func RunReplay(repoRoot, specPath, fromStep, cookID string, rec *workflow.Workfl
 	if err != nil {
 		return nil, 0, err
 	}
-	for i := range rec.Steps {
-		st := &rec.Steps[i]
-		if len(st.Each) == 0 {
-			continue
-		}
-		p := st.Name
-		if resolvedStep == p || strings.HasPrefix(resolvedStep, p+"/") {
-			return nil, 0, fmt.Errorf("replay: from-step %q is under split+each; not yet fully implemented", resolvedStep)
-		}
-	}
 	restoreCommit := info.RestoreCommitBeforeStep(resolvedStep, info.InitialCommit)
 	originalWorktree := filepath.Join(repoRoot, brand.StateDir(), "worktrees", brand.WorktreeDirPrefix()+info.OriginalCookID)
 	stateBagData, err := run.ReadStateFile(cookDir)
@@ -135,6 +84,12 @@ func RunReplay(repoRoot, specPath, fromStep, cookID string, rec *workflow.Workfl
 	sb, err := state.Restore(stateBagData)
 	if err != nil {
 		return nil, 0, fmt.Errorf("restore state: %w", err)
+	}
+	if workflow.MatchSplitEachQualifiedPath(rec, resolvedStep) {
+		sb.ClearKeyPrefix(workflow.SplitTaskStatePrefix(resolvedStep))
+	} else if workflow.IsSplitCompositePath(rec, resolvedStep) {
+		// WHY: replay from the split anchor must re-run GET/RUN/GATE and every task, not reuse a stale plan or per-task keys.
+		sb.ClearSplitSubtree(resolvedStep)
 	}
 	specContent, err := os.ReadFile(specPath)
 	if err != nil {

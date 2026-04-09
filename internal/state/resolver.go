@@ -130,15 +130,28 @@ func (ctx *ResolveContext) resolveQualifiedStepVar(varName string) string {
 	if strings.Contains(first, "/") {
 		return ctx.State.Get(varName)
 	}
-	if p := eachScopePrefix(ctx.StepPath); p != "" {
+	if p := EachScopePrefix(ctx.StepPath); p != "" {
 		if v := ctx.State.Get(p + first + "." + field); v != "" {
 			return v
+		}
+		// WHY: R2 allows {decompose.output} from inside a task when decompose is an ancestor of the current path; short sibling names (converge, smoke) must not read a top-level key with the same name (ADR split/each isolation).
+		if !workflowStepVarMayFallBackToRoot(ctx.StepPath, first) {
+			return ""
 		}
 	}
 	return ctx.State.Get(first + "." + field)
 }
 
-func eachScopePrefix(stepPath string) string {
+// workflowStepVarMayFallBackToRoot is true when shortName denotes a workflow step that prefixes the current engine path (e.g. decompose for decompose/auth/impl), so flat keys like decompose.output remain visible from inside each.
+func workflowStepVarMayFallBackToRoot(stepPath, shortName string) bool {
+	if shortName == "" {
+		return false
+	}
+	return stepPath == shortName || strings.HasPrefix(stepPath, shortName+"/")
+}
+
+// EachScopePrefix is the directory prefix for sibling steps under the same split task (R2 each-scope).
+func EachScopePrefix(stepPath string) string {
 	i := strings.LastIndex(stepPath, "/")
 	if i < 0 {
 		return ""
