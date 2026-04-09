@@ -6,11 +6,11 @@ import (
 	"strings"
 
 	"github.com/isomorphx/gump/internal/brand"
-	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/workflow"
 )
 
 type GuardRuntime struct {
-	cfg                recipe.Guard
+	cfg                workflow.Guard
 	outputMode         string
 	turns              int
 	cost               float64
@@ -18,18 +18,19 @@ type GuardRuntime struct {
 	sawAssistantInTurn bool
 }
 
-func NewGuardRuntime(step *recipe.Step) *GuardRuntime {
+func NewGuardRuntime(step *workflow.Step) *GuardRuntime {
 	cfg := step.Guard
+	om := step.OutputMode()
 	if cfg.NoWrite == nil {
-		if step.Output == "plan" || step.Output == "review" || step.Output == "artifact" {
+		if om == "plan" || om == "review" || om == "artifact" {
 			v := true
 			cfg.NoWrite = &v
 		}
 	}
-	if cfg.MaxTurns <= 0 && cfg.MaxBudget <= 0 && cfg.NoWrite == nil {
+	if cfg.MaxTurns <= 0 && cfg.MaxBudget <= 0 && cfg.MaxTokens <= 0 && cfg.MaxTime == "" && cfg.NoWrite == nil {
 		return nil
 	}
-	return &GuardRuntime{cfg: cfg, outputMode: step.Output}
+	return &GuardRuntime{cfg: cfg, outputMode: om}
 }
 
 func (g *GuardRuntime) AddCost(cost float64) {

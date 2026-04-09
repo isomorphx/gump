@@ -3,15 +3,15 @@ package validate
 import (
 	"github.com/isomorphx/gump/internal/config"
 	"github.com/isomorphx/gump/internal/diff"
-	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/workflow"
 	"github.com/isomorphx/gump/internal/statebag"
 )
 
 // RunValidators runs every validator for the step in order and aggregates results.
 // We do not short-circuit on first failure so the agent (and logs) see all failures in one go at retry time.
-func RunValidators(validators []recipe.Validator, cfg *config.Config, worktreeDir string, dc *diff.DiffContract, stateBag *statebag.StateBag, stepPath string) *ValidationResult {
-	out := &ValidationResult{Results: make([]SingleResult, 0, len(validators))}
-	for _, v := range validators {
+func RunValidators(gates []workflow.GateEntry, cfg *config.Config, worktreeDir string, dc *diff.DiffContract, stateBag *statebag.StateBag, stepPath string) *ValidationResult {
+	out := &ValidationResult{Results: make([]SingleResult, 0, len(gates))}
+	for _, v := range gates {
 		var r *SingleResult
 		switch v.Type {
 		case "compile":
@@ -32,6 +32,8 @@ func RunValidators(validators []recipe.Validator, cfg *config.Config, worktreeDi
 			r = RunTestsFoundValidator(cfg, worktreeDir)
 		case "coverage":
 			r = RunCoverageValidator(v.Arg, cfg, worktreeDir)
+		case "validate":
+			r = &SingleResult{Validator: "validate: " + v.Arg, Pass: true, Skipped: true, Stdout: "validate gate not executed in this release (R1 parser only)"}
 		default:
 			r = &SingleResult{Validator: v.Type, Pass: false, Stderr: "unknown validator type: " + v.Type}
 		}

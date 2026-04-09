@@ -1,0 +1,8 @@
+name: bugfix
+steps:
+  - name: execute
+    type: code
+    prompt: "{spec}"
+    agent: claude-opus
+    guard: { max_turns: 80 }
+    gate: [compile]

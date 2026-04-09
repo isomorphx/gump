@@ -1,0 +1,24 @@
+name: tdd
+max_budget: 5.00
+steps:
+  - name: build
+    type: split
+    agent: claude-opus
+    prompt: "Plan TDD tasks for {spec}"
+    guard: { max_turns: 80 }
+    gate: [schema]
+    each:
+      - name: tests
+        type: code
+        agent: claude-opus
+        prompt: "Write tests for {task.description}"
+        guard: { max_turns: 80 }
+        gate: [compile, test]
+      - name: impl
+        type: code
+        agent: claude-opus
+        prompt: "Implement {task.description}"
+        guard: { max_turns: 80 }
+        gate: [compile, test]
+  - name: quality
+    gate: [compile, lint, test]

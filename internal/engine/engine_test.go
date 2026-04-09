@@ -10,13 +10,13 @@ import (
 	"github.com/isomorphx/gump/internal/agent"
 	"github.com/isomorphx/gump/internal/config"
 	"github.com/isomorphx/gump/internal/cook"
-	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/workflow"
 	"github.com/isomorphx/gump/internal/validate"
 )
 
 func TestNew(t *testing.T) {
 	c := &cook.Cook{ID: "test"}
-	rec := &recipe.Recipe{Name: "r", Steps: []recipe.Step{}}
+	rec := &workflow.Workflow{Name: "r", Steps: []workflow.Step{}}
 	cfg := &config.Config{}
 	e := New(c, rec, &agent.StubResolver{Stub: &agent.StubAdapter{}}, cfg, "spec content")
 	if e.Cook != c || e.Recipe != rec || e.SpecContent != "spec content" {

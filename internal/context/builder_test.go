@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/isomorphx/gump/internal/config"
-	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/workflow"
 )
 
 func TestBuild_WritesCLAUDE(t *testing.T) {
@@ -115,7 +115,7 @@ func TestBuild_PlanOmitsConventions(t *testing.T) {
 func TestBuild_ContextFile(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "ctx.txt", "Context content here")
-	sources := []recipe.ContextSource{{File: "ctx.txt"}}
+	sources := []workflow.ContextSource{{Type: "file", Value: "ctx.txt"}}
 	err := Build("diff", "Do it", sources, dir, nil, nil, nil, "CLAUDE.md", nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -132,7 +132,7 @@ func TestBuild_ContextFile(t *testing.T) {
 
 func TestBuild_ContextFileNotFound(t *testing.T) {
 	dir := t.TempDir()
-	sources := []recipe.ContextSource{{File: "missing.md"}}
+	sources := []workflow.ContextSource{{Type: "file", Value: "missing.md"}}
 	err := Build("diff", "Do it", sources, dir, nil, nil, nil, "CLAUDE.md", nil, nil)
 	if err == nil {
 		t.Fatal("expected error for missing context file")

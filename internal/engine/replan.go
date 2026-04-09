@@ -9,14 +9,14 @@ import (
 	pkgcontext "github.com/isomorphx/gump/internal/context"
 	"github.com/isomorphx/gump/internal/ledger"
 	"github.com/isomorphx/gump/internal/plan"
-	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/workflow"
 	"github.com/isomorphx/gump/internal/template"
 )
 
 // ExecuteReplan runs the replan agent to produce a new plan, then runs each sub-task with the original step agent (no retry on sub-tasks).
-func (e *Engine) ExecuteReplan(replanAgent string, step recipe.Step, scopePath string, errorContext *ErrorContext, task *plan.Task) error {
+func (e *Engine) ExecuteReplan(replanAgent string, step *workflow.Step, scopePath string, errorContext *ErrorContext, task *plan.Task) error {
 	originalPrompt := step.Prompt
-	if step.Output == "plan" && originalPrompt == "" {
+	if step.OutputMode() == "plan" && originalPrompt == "" {
 		originalPrompt = "Analyze the following specification and produce a plan.\n\n{spec}"
 	}
 	vars := e.buildVars(nil, nil, nil, nil)
@@ -110,18 +110,15 @@ func (e *Engine) ExecuteReplan(replanAgent string, step recipe.Step, scopePath s
 		// Parent prefix in name so State Bag, artifacts and logs show e.g. [green/replan-task-fix-add] not [replan-task-fix-add].
 		ephemeralName := step.Name + "/replan-task-" + task.Name
 		subPath := scopePath + "/replan-task-" + task.Name
-		ephemeral := recipe.Step{
+		ephemeral := workflow.Step{
 			Name:   ephemeralName,
+			Type:   "code",
 			Agent:  step.Agent,
-			Output: step.Output,
 			Prompt: replanSubTaskPrompt,
 			Gate:   step.Gate,
 		}
-		if ephemeral.Output == "" {
-			ephemeral.Output = "diff"
-		}
 		extraVars := map[string]string{"original_prompt": originalResolved}
-		if err := e.runAtomicStepWithVars(&ephemeral, subPath, &task, sessionMap, recipe.SessionConfig{Mode: "fresh"}, extraVars); err != nil {
+		if err := e.runAtomicStepWithVars(&ephemeral, subPath, &task, sessionMap, workflow.SessionConfig{Mode: "fresh"}, extraVars); err != nil {
 			return err
 		}
 	}

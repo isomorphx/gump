@@ -7,12 +7,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/workflow"
 )
 
 func TestNewCook_RequiresGitRepo(t *testing.T) {
 	dir := t.TempDir()
-	rec := &recipe.Recipe{Name: "tdd"}
+	rec := &workflow.Workflow{Name: "tdd"}
 	_, err := NewCook(rec, filepath.Join(dir, "spec.md"), dir, []byte("name: tdd"))
 	if err == nil {
 		t.Fatal("expected error outside git repo")
@@ -28,7 +28,7 @@ func TestNewCook_RequiresCleanWorkingDir(t *testing.T) {
 	if err := os.WriteFile(specPath, []byte("x"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	rec := &recipe.Recipe{Name: "tdd"}
+	rec := &workflow.Workflow{Name: "tdd"}
 	_, err := NewCook(rec, specPath, repo, []byte("name: tdd"))
 	if err == nil {
 		t.Fatal("expected error with uncommitted changes")

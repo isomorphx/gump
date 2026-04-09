@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/isomorphx/gump/internal/config"
-	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/workflow"
 )
 
 const defaultShellTimeout = 10 * time.Minute
@@ -153,7 +153,7 @@ func RunLintValidator(cfg *config.Config, worktreeDir string) *SingleResult {
 }
 
 // RunBashValidator runs the validator's Arg as the shell command for fully custom checks.
-func RunBashValidator(v recipe.Validator, worktreeDir string, cfg *config.Config) *SingleResult {
+func RunBashValidator(v workflow.GateEntry, worktreeDir string, cfg *config.Config) *SingleResult {
 	r := RunShellValidator(v.Arg, worktreeDir, validationTimeout(cfg))
 	r.Validator = "bash: " + v.Arg
 	return r

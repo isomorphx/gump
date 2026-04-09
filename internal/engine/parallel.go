@@ -9,7 +9,7 @@ import (
 	"github.com/isomorphx/gump/internal/diff"
 	"github.com/isomorphx/gump/internal/ledger"
 	"github.com/isomorphx/gump/internal/plan"
-	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/workflow"
 	"github.com/isomorphx/gump/internal/sandbox"
 )
 
@@ -29,7 +29,7 @@ type parallelResult struct {
 }
 
 // RunParallelGroup runs sub-steps or tasks in parallel worktrees, then merges diff outputs or fails on conflict.
-func RunParallelGroup(e *Engine, step *recipe.Step, stepPath string, subSteps []recipe.Step, planTasks []plan.Task, baseCommit string, lastSessionByAgent map[string]string, parentSession recipe.SessionConfig, groupAgentOverride string, inheritedVars map[string]string) error {
+func RunParallelGroup(e *Engine, step *workflow.Step, stepPath string, subSteps []workflow.Step, planTasks []plan.Task, baseCommit string, lastSessionByAgent map[string]string, parentSession workflow.SessionConfig, groupAgentOverride string, inheritedVars map[string]string) error {
 	repoRoot := e.Cook.RepoRoot
 	cookID := e.Cook.ID
 	units := buildParallelUnits(step, stepPath, subSteps, planTasks)
@@ -56,7 +56,7 @@ func RunParallelGroup(e *Engine, step *recipe.Step, stepPath string, subSteps []
 			}()
 			sessionMap := make(map[string]string)
 			var err error
-			if step.Workflow != "" && len(step.Steps) == 0 && unit.Task != nil {
+			if step.Workflow != "" && len(step.Steps) == 0 && len(step.Each) == 0 && unit.Task != nil {
 				childRec, childVars, werr := eng.resolveWorkflow(step, unit.PathPrefix, unit.Task, inheritedVars)
 				if werr != nil {
 					err = werr
@@ -113,12 +113,12 @@ func RunParallelGroup(e *Engine, step *recipe.Step, stepPath string, subSteps []
 type parallelUnit struct {
 	Name       string
 	PathPrefix string
-	Steps      []recipe.Step
+	Steps      []workflow.Step
 	Task       *plan.Task
 	OutputMode string
 }
 
-func buildParallelUnits(step *recipe.Step, stepPath string, subSteps []recipe.Step, planTasks []plan.Task) []parallelUnit {
+func buildParallelUnits(step *workflow.Step, stepPath string, subSteps []workflow.Step, planTasks []plan.Task) []parallelUnit {
 	if len(planTasks) > 0 {
 		units := make([]parallelUnit, len(planTasks))
 		for i, task := range planTasks {
@@ -139,14 +139,11 @@ func buildParallelUnits(step *recipe.Step, stepPath string, subSteps []recipe.St
 	units := make([]parallelUnit, len(subSteps))
 	for i, s := range subSteps {
 		pathPrefix := stepPath + "/" + s.Name
-		out := s.Output
-		if out == "" && s.Agent != "" {
-			out = "diff"
-		}
+		out := s.OutputMode()
 		units[i] = parallelUnit{
 			Name:       s.Name,
 			PathPrefix: pathPrefix,
-			Steps:      []recipe.Step{s},
+			Steps:      []workflow.Step{s},
 			Task:       nil,
 			OutputMode: out,
 		}
@@ -154,10 +151,11 @@ func buildParallelUnits(step *recipe.Step, stepPath string, subSteps []recipe.St
 	return units
 }
 
-func inferOutputMode(steps []recipe.Step) string {
+func inferOutputMode(steps []workflow.Step) string {
 	for _, s := range steps {
-		if s.Output != "" {
-			return s.Output
+		om := s.OutputMode()
+		if om != "" && om != "diff" {
+			return om
 		}
 		if s.Agent != "" {
 			return "diff"

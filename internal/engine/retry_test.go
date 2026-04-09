@@ -3,16 +3,16 @@ package engine
 import (
 	"testing"
 
-	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/workflow"
 )
 
 func TestExpandStrategyUsedInRetry(t *testing.T) {
 	// same: 2, escalate: claude-sonnet → [same, same, escalate: claude-sonnet]
-	entries := []recipe.StrategyEntry{
+	entries := []workflow.StrategyEntryCompat{
 		{Type: "same", Count: 2},
 		{Type: "escalate", Agent: "claude-sonnet", Count: 1},
 	}
-	expanded := recipe.ExpandStrategy(entries)
+	expanded := workflow.ExpandStrategy(entries)
 	if len(expanded) != 3 {
 		t.Fatalf("len(expanded) = %d, want 3", len(expanded))
 	}

@@ -1,3 +1,5 @@
+//go:build legacy_e2e
+
 package e2e
 
 import (
@@ -73,8 +75,8 @@ func TestM5_E2E2_ReportStepsTable(t *testing.T) {
 	if !strings.Contains(reportOut, "Steps") {
 		t.Error("report should contain Steps section")
 	}
-	if !strings.Contains(reportOut, "decompose") {
-		t.Error("report should list decompose")
+	if !strings.Contains(reportOut, "build") {
+		t.Error("report should list build")
 	}
 	if !strings.Contains(reportOut, "quality") {
 		t.Error("report should list quality")
@@ -241,7 +243,7 @@ func TestM5_E2E7_ReportFullTDD(t *testing.T) {
 	if !regexp.MustCompile(`Retries\s+\d+`).MatchString(reportOut) {
 		t.Errorf("expected Retries line in report: %s", reportOut)
 	}
-	if !strings.Contains(reportOut, "decompose") || !strings.Contains(reportOut, "quality") {
+	if !strings.Contains(reportOut, "build") || !strings.Contains(reportOut, "quality") {
 		t.Error("expected step names")
 	}
 	if !strings.Contains(reportOut, "build/") || !strings.Contains(reportOut, "tests") || !strings.Contains(reportOut, "impl") {

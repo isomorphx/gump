@@ -233,13 +233,15 @@ func (s *StubAdapter) run(ctx context.Context, worktree, prompt, agentName strin
 		if sessOverride != "" {
 			stubSid = sessOverride
 		}
-		isPlan := strings.Contains(prompt, planMarker)
+		lowerPrompt := strings.ToLower(prompt)
+		// WHY: v0.0.4 prompts omit [BRAND:step:name] and [BRAND:plan]; detect plan steps from wording so schema: plan gates and split plan_from still see JSON in e2e.
+		isPlan := strings.Contains(prompt, planMarker) || strings.EqualFold(stepName, "decompose") ||
+			(strings.Contains(lowerPrompt, "plan ") && strings.Contains(lowerPrompt, "task"))
 		isArtifact := strings.Contains(prompt, artifactMarker)
 		isReview := strings.Contains(prompt, reviewMarker)
 		// WHY: replan sub-tasks must use root scenario files only (ignore by_attempt),
 		// so e2e R6 stays deterministic. Provider context files may be missing or
 		// reformatted, so we key off the prompt itself.
-		lowerPrompt := strings.ToLower(prompt)
 		// `replan` is a strong enough signal in stub prompts: when replan is
 		// active, we want to ignore by_attempt and use root scenario files.
 		isReplanFromPrompt := strings.Contains(lowerPrompt, "replan")

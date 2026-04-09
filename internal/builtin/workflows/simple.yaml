@@ -1,0 +1,17 @@
+name: simple
+steps:
+  - name: implement
+    type: split
+    agent: claude-opus
+    prompt: "Plan tasks for {spec}"
+    guard: { max_turns: 80 }
+    gate: [schema]
+    each:
+      - name: code
+        type: code
+        agent: claude-opus
+        prompt: "{task.description}"
+        guard: { max_turns: 80 }
+        gate: [compile]
+  - name: final-check
+    gate: [compile, test]

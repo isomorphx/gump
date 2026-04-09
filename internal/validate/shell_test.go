@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/isomorphx/gump/internal/config"
-	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/workflow"
 )
 
 func TestRunShellValidator_ExitZero(t *testing.T) {
@@ -49,12 +49,12 @@ func TestRunCompileValidator_ResolveFails(t *testing.T) {
 
 func TestRunBashValidator_CustomCommand(t *testing.T) {
 	dir := t.TempDir()
-	r := RunBashValidator(recipe.Validator{Type: "bash", Arg: "test -f " + filepath.Join(dir, "x")}, dir, nil)
+	r := RunBashValidator(workflow.GateEntry{Type: "bash", Arg: "test -f " + filepath.Join(dir, "x")}, dir, nil)
 	if r.Pass {
 		t.Error("expected fail when file missing")
 	}
 	writeFile(t, dir, "x", "ok")
-	r2 := RunBashValidator(recipe.Validator{Type: "bash", Arg: "test -f x"}, dir, nil)
+	r2 := RunBashValidator(workflow.GateEntry{Type: "bash", Arg: "test -f x"}, dir, nil)
 	if !r2.Pass {
 		t.Error("expected pass when file exists")
 	}
@@ -164,7 +164,7 @@ func TestRunValidators_PassTrueWithSkips(t *testing.T) {
 	writeFile(t, dir, "go.mod", "module x\n")
 	writeFile(t, dir, "main.go", "package main\nfunc main() {}\n")
 	cfg := &config.Config{LintCmd: "nonexistent-xyz run"} // lint will be skipped
-	validators := []recipe.Validator{
+	validators := []workflow.GateEntry{
 		{Type: "compile"},
 		{Type: "test"},
 		{Type: "lint"},
@@ -194,7 +194,7 @@ func TestRunValidators_PassFalseWhenEssentialFails(t *testing.T) {
 		TestCmd:    "true",
 		LintCmd:    "nonexistent-lint-xyz run",
 	}
-	validators := []recipe.Validator{
+	validators := []workflow.GateEntry{
 		{Type: "compile"}, // fails (essential)
 		{Type: "test"},    // passes (essential)
 		{Type: "lint"},    // skipped (optional)

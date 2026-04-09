@@ -18,7 +18,7 @@ import (
 	"github.com/isomorphx/gump/internal/config"
 	"github.com/isomorphx/gump/internal/cook"
 	"github.com/isomorphx/gump/internal/engine"
-	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/workflow"
 	"github.com/isomorphx/gump/internal/sandbox"
 	"github.com/isomorphx/gump/internal/telemetry"
 	"github.com/isomorphx/gump/internal/version"
@@ -71,7 +71,7 @@ func init() {
 }
 
 // runCookReplay runs a replay from the last fatal run (or --cook <id>), restoring state bag and worktree, then running from --from-step.
-func runCookReplay(specPath string, cfg *config.Config, resolved *recipe.ResolvedRecipe, rec *recipe.Recipe) error {
+func runCookReplay(specPath string, cfg *config.Config, resolved *workflow.ResolvedWorkflow, rec *workflow.Workflow) error {
 	if rec == nil {
 		return fmt.Errorf("replay: recipe is nil")
 	}
@@ -144,8 +144,8 @@ func runCook(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	recipe.ParseWarn = func(msg string) { fmt.Fprintln(os.Stderr, "warning:", msg) }
-	recipe.ValidateWarn = func(path, message string) {
+	workflow.ParseWarn = func(msg string) { fmt.Fprintln(os.Stderr, "warning:", msg) }
+	workflow.ValidateWarn = func(path, message string) {
 		if path != "" {
 			fmt.Fprintf(os.Stderr, "warning: %s: %s\n", path, message)
 		} else {
@@ -154,8 +154,8 @@ func runCook(cmd *cobra.Command, args []string) error {
 	}
 
 	var specPath string
-	var resolved *recipe.ResolvedRecipe
-	var rec *recipe.Recipe
+	var resolved *workflow.ResolvedWorkflow
+	var rec *workflow.Workflow
 
 	if cookResume {
 		if len(args) > 0 {
@@ -207,7 +207,7 @@ func runCook(cmd *cobra.Command, args []string) error {
 			specPath = args[0]
 			projectRoot := config.ProjectRoot()
 			var err error
-			resolved, err = recipe.Resolve(cookRecipe, projectRoot)
+			resolved, err = workflow.Resolve(cookRecipe, projectRoot)
 			if err != nil {
 				return err
 			}
@@ -215,11 +215,15 @@ func runCook(cmd *cobra.Command, args []string) error {
 			if resolved.Path != "" {
 				recipeDir = filepath.Dir(resolved.Path)
 			}
-			rec, err = recipe.Parse(resolved.Raw, recipeDir)
+			var warns []workflow.Warning
+			rec, warns, err = workflow.Parse(resolved.Raw, recipeDir)
+			for _, w := range warns {
+				fmt.Fprintln(os.Stderr, "warning:", w.Message)
+			}
 			if err != nil {
 				return fmt.Errorf("%w\n(recipe loaded from %s)", err, resolved.Source)
 			}
-			if errs := recipe.Validate(rec); len(errs) > 0 {
+			if errs := workflow.Validate(rec); len(errs) > 0 {
 				for _, e := range errs {
 					fmt.Fprintln(os.Stderr, e.Error())
 				}
@@ -255,12 +259,16 @@ func runCook(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("replay: read workflow snapshot: %w", err)
 		}
-		resolved = &recipe.ResolvedRecipe{Name: "", Source: "replay", Path: recipePath, Raw: recipeRaw}
-		rec, err = recipe.Parse(recipeRaw, "")
+		resolved = &workflow.ResolvedWorkflow{Name: "", Source: "replay", Path: recipePath, Raw: recipeRaw}
+		var warns []workflow.Warning
+		rec, warns, err = workflow.Parse(recipeRaw, "")
+		for _, w := range warns {
+			fmt.Fprintln(os.Stderr, "warning:", w.Message)
+		}
 		if err != nil {
 			return fmt.Errorf("replay: parse workflow snapshot: %w", err)
 		}
-		if errs := recipe.Validate(rec); len(errs) > 0 {
+		if errs := workflow.Validate(rec); len(errs) > 0 {
 			for _, e := range errs {
 				fmt.Fprintln(os.Stderr, e.Error())
 			}
@@ -277,7 +285,7 @@ func runCook(cmd *cobra.Command, args []string) error {
 	}
 	specPath = args[0]
 	projectRoot := config.ProjectRoot()
-	resolved, err = recipe.Resolve(cookRecipe, projectRoot)
+	resolved, err = workflow.Resolve(cookRecipe, projectRoot)
 	if err != nil {
 		return err
 	}
@@ -285,16 +293,20 @@ func runCook(cmd *cobra.Command, args []string) error {
 	if resolved.Path != "" {
 		recipeDir = filepath.Dir(resolved.Path)
 	}
-	rec, err = recipe.Parse(resolved.Raw, recipeDir)
+	var warns []workflow.Warning
+	rec, warns, err = workflow.Parse(resolved.Raw, recipeDir)
+	for _, w := range warns {
+		fmt.Fprintln(os.Stderr, "warning:", w.Message)
+	}
 	if err != nil {
 		source := resolved.Source
 		path := resolved.Path
 		if path != "" {
-			return fmt.Errorf("%w\n(recipe loaded from %s: %s)", err, source, path)
+			return fmt.Errorf("%w\n(workflow loaded from %s: %s)", err, source, path)
 		}
-		return fmt.Errorf("%w\n(recipe loaded from %s)", err, source)
+		return fmt.Errorf("%w\n(workflow loaded from %s)", err, source)
 	}
-	errs := recipe.Validate(rec)
+	errs := workflow.Validate(rec)
 	if len(errs) > 0 {
 		for _, e := range errs {
 			fmt.Fprintln(os.Stderr, e.Error())
@@ -319,16 +331,16 @@ func runCook(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 		fmt.Printf("Workflow:  %s\n", resolved.Name)
 		fmt.Printf("Source:    %s\n", resolved.Source)
-		if rec.Description != "" {
-			fmt.Printf("Description: %s\n", rec.Description)
-		}
 		fmt.Printf("Spec:      %s (%d bytes)\n", specPath, specSize)
 		fmt.Printf("Config:    %s\n", configSource)
-		fmt.Printf("blast_radius: %s\n", rec.BlastRadius)
 		if rec.MaxBudget > 0 {
-			fmt.Printf("Budget:    $%.2f\n", rec.MaxBudget)
-		} else {
-			fmt.Printf("Budget:    $0.00\n")
+			fmt.Printf("max_budget: $%.2f\n", rec.MaxBudget)
+		}
+		if rec.MaxTimeout != "" {
+			fmt.Printf("max_timeout: %s\n", rec.MaxTimeout)
+		}
+		if rec.MaxTokens > 0 {
+			fmt.Printf("max_tokens: %d\n", rec.MaxTokens)
 		}
 		if cfg.Analytics {
 			fmt.Printf("Analytics: enabled\n")
@@ -381,7 +393,7 @@ func runCook(cmd *cobra.Command, args []string) error {
 		engine.Verbose = cfg.Verbose
 	}
 	if cookPauseAfter != "" {
-		if recipe.FindStepByName(rec.Steps, cookPauseAfter, "") == nil {
+		if workflow.FindStepByName(rec.Steps, cookPauseAfter) == nil {
 			return fmt.Errorf("--pause-after: step %q not found in recipe", cookPauseAfter)
 		}
 		eng.PauseAfterStep = cookPauseAfter
@@ -408,7 +420,7 @@ func runCook(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func buildTelemetryPayload(rec *recipe.Recipe, source string, eng *engine.Engine, runStatus string, startedAt time.Time, repoRoot string) telemetry.RunPayload {
+func buildTelemetryPayload(rec *workflow.Workflow, source string, eng *engine.Engine, runStatus string, startedAt time.Time, repoRoot string) telemetry.RunPayload {
 	workflowSource := "builtin"
 	switch source {
 	case "project", "user":
@@ -416,32 +428,35 @@ func buildTelemetryPayload(rec *recipe.Recipe, source string, eng *engine.Engine
 	}
 	agentsSet := map[string]struct{}{}
 	hasForeach, hasParallel, hasGuard, hasHITL, hasSubworkflow, usesSessionReuse := false, false, false, false, false, false
-	var walk func(steps []recipe.Step)
-	walk = func(steps []recipe.Step) {
+	var walk func(steps []workflow.Step)
+	walk = func(steps []workflow.Step) {
 		for _, s := range steps {
-			if s.Foreach != "" {
+			if s.Type == "split" && len(s.Each) > 0 {
 				hasForeach = true
 			}
 			if s.Parallel {
 				hasParallel = true
 			}
-			if s.Workflow != "" || s.Recipe != "" {
+			if s.Workflow != "" {
 				hasSubworkflow = true
 			}
-			if s.HITL {
+			if strings.TrimSpace(s.HITL) != "" {
 				hasHITL = true
 			}
 			if s.Agent != "" {
 				agentsSet[s.Agent] = struct{}{}
 			}
-			if s.Guard.MaxTurns > 0 || s.Guard.MaxBudget > 0 || s.Guard.NoWrite != nil {
+			if s.Guard.MaxTurns > 0 || s.Guard.MaxBudget > 0 || s.Guard.MaxTokens > 0 || s.Guard.MaxTime != "" || s.Guard.NoWrite != nil {
 				hasGuard = true
 			}
-			if s.Session.Mode == "reuse" || s.Session.Mode == "reuse-targeted" || s.Session.Mode == "reuse-on-retry" {
+			if s.Session.Mode == "from" {
 				usesSessionReuse = true
 			}
 			if len(s.Steps) > 0 {
 				walk(s.Steps)
+			}
+			if len(s.Each) > 0 {
+				walk(s.Each)
 			}
 		}
 	}
@@ -607,16 +622,19 @@ func maxInt(a, b int) int {
 }
 
 // agentsCLIFromRecipe builds a map of agent name -> CLI version for cook_started. Stub mode uses "stub-1.0.0"; otherwise "unknown".
-func agentsCLIFromRecipe(rec *recipe.Recipe, useStub bool) map[string]string {
+func agentsCLIFromRecipe(rec *workflow.Workflow, useStub bool) map[string]string {
 	agents := make(map[string]struct{})
-	var walkAgents func(steps []recipe.Step)
-	walkAgents = func(steps []recipe.Step) {
+	var walkAgents func(steps []workflow.Step)
+	walkAgents = func(steps []workflow.Step) {
 		for _, s := range steps {
 			if s.Agent != "" {
 				agents[s.Agent] = struct{}{}
 			}
 			if len(s.Steps) > 0 {
 				walkAgents(s.Steps)
+			}
+			if len(s.Each) > 0 {
+				walkAgents(s.Each)
 			}
 		}
 	}
@@ -633,16 +651,19 @@ func agentsCLIFromRecipe(rec *recipe.Recipe, useStub bool) map[string]string {
 }
 
 // walkStepNames calls fn for each step name (including nested steps in foreach_task).
-func walkStepNames(steps []recipe.Step, fn func(name string)) {
+func walkStepNames(steps []workflow.Step, fn func(name string)) {
 	for _, s := range steps {
 		fn(s.Name)
 		if len(s.Steps) > 0 {
 			walkStepNames(s.Steps, fn)
 		}
+		if len(s.Each) > 0 {
+			walkStepNames(s.Each, fn)
+		}
 	}
 }
 
-func printStepsV4(steps []recipe.Step, indent string, parentNum string) {
+func printStepsV4(steps []workflow.Step, indent string, parentNum string) {
 	for i, s := range steps {
 		stepNum := fmt.Sprintf("%d", i+1)
 		if parentNum != "" {
@@ -650,45 +671,40 @@ func printStepsV4(steps []recipe.Step, indent string, parentNum string) {
 		}
 		fmt.Printf("%s%s. %s\n", indent, stepNum, s.Name)
 		detailIndent := indent + "   "
-
-		// Gate step / agent step: v4 uses `gate` keyword; parser normalises into Step.Gate.
+		if strings.TrimSpace(s.Type) != "" {
+			fmt.Printf("%stype=%s\n", detailIndent, s.Type)
+		}
 		if len(s.Gate) > 0 {
 			fmt.Printf("%sgate=%s\n", detailIndent, formatValidators(s.Gate))
 		}
-		// Orchestration fields.
-		if s.Foreach != "" {
-			fmt.Printf("%sforeach=%s\n", detailIndent, s.Foreach)
+		if s.Type == "split" && len(s.Each) > 0 {
+			fmt.Printf("%seach: (%d nested steps)\n", detailIndent, len(s.Each))
 		}
 		if s.Parallel {
 			fmt.Printf("%sparallel=true\n", detailIndent)
 		}
 		if s.Workflow != "" {
 			fmt.Printf("%sworkflow=%s\n", detailIndent, s.Workflow)
-		} else if s.Recipe != "" {
-			fmt.Printf("%sworkflow=%s\n", detailIndent, s.Recipe)
 		}
-		// Agent step fields.
 		if s.Agent != "" {
-			fmt.Printf("%sagent=%s", detailIndent, s.Agent)
-			if strings.TrimSpace(s.Output) != "" {
-				fmt.Printf("  output=%s", s.Output)
-			}
-			fmt.Printf("\n")
-		} else if strings.TrimSpace(s.Output) != "" {
-			// WHY: gate steps can omit output, but we still print it if present
-			// so dry-run stays faithful to the YAML.
-			fmt.Printf("%soutput=%s\n", detailIndent, s.Output)
+			fmt.Printf("%sagent=%s\n", detailIndent, s.Agent)
 		}
-
-		// Session is optional; show non-default modes (including `reuse`).
-		if s.Session.Mode != "" && s.Session.Mode != "fresh" {
-			if s.Session.Mode == "reuse-targeted" {
-				fmt.Printf("%ssession=reuse:%s\n", detailIndent, s.Session.Target)
-			} else {
-				fmt.Printf("%ssession=%s\n", detailIndent, s.Session.Mode)
+		if strings.TrimSpace(s.Prompt) != "" {
+			preview := strings.TrimSpace(s.Prompt)
+			if len(preview) > 60 {
+				preview = preview[:57] + "..."
 			}
+			fmt.Printf("%sprompt=%q\n", detailIndent, preview)
 		}
-		hasExplicitGuard := s.Guard.MaxTurns > 0 || s.Guard.MaxBudget > 0 || s.Guard.NoWrite != nil
+		if strings.TrimSpace(s.HITL) != "" {
+			fmt.Printf("%shitl=%s\n", detailIndent, s.HITL)
+		}
+		if s.Session.Mode == "from" && s.Session.Target != "" {
+			fmt.Printf("%ssession=from:%s\n", detailIndent, s.Session.Target)
+		} else if s.Session.Mode == "new" {
+			fmt.Printf("%ssession=new\n", detailIndent)
+		}
+		hasExplicitGuard := s.Guard.MaxTurns > 0 || s.Guard.MaxBudget > 0 || s.Guard.MaxTokens > 0 || s.Guard.MaxTime != "" || s.Guard.NoWrite != nil
 		if hasExplicitGuard {
 			fmt.Printf("%sguard:", detailIndent)
 			if s.Guard.MaxTurns > 0 {
@@ -697,31 +713,30 @@ func printStepsV4(steps []recipe.Step, indent string, parentNum string) {
 			if s.Guard.MaxBudget > 0 {
 				fmt.Printf(" max_budget=%.2f", s.Guard.MaxBudget)
 			}
+			if s.Guard.MaxTokens > 0 {
+				fmt.Printf(" max_tokens=%d", s.Guard.MaxTokens)
+			}
+			if s.Guard.MaxTime != "" {
+				fmt.Printf(" max_time=%s", s.Guard.MaxTime)
+			}
 			if s.Guard.NoWrite != nil {
 				fmt.Printf(" no_write=%t", *s.Guard.NoWrite)
 			}
 			fmt.Printf("\n")
-		} else if s.Agent != "" && s.Output != "" && s.Output != "diff" {
-			// WHY: non-diff outputs are write-restricted by default; showing it in dry-run prevents surprises.
-			fmt.Printf("%sguard: no_write=true (implicit)\n", detailIndent)
 		}
-
-		// v4 retry policy is moved under `on_failure:`.
-		if s.OnFailure != nil {
-			fmt.Printf("%son_failure: retry=%d", detailIndent, s.OnFailure.Retry)
-			if s.OnFailure.RestartFrom != "" {
-				fmt.Printf(" restart_from=%s", s.OnFailure.RestartFrom)
-			}
-			fmt.Printf("\n")
+		if of := s.OnFailureCompat(); of != nil && of.Retry > 0 {
+			fmt.Printf("%sretry: exit cap ≈ %d attempts\n", detailIndent, of.Retry)
 		}
-
 		if len(s.Steps) > 0 {
 			printStepsV4(s.Steps, detailIndent, stepNum)
+		}
+		if len(s.Each) > 0 {
+			printStepsV4(s.Each, detailIndent, stepNum)
 		}
 	}
 }
 
-func formatValidators(v []recipe.Validator) string {
+func formatValidators(v []workflow.GateEntry) string {
 	var parts []string
 	for _, x := range v {
 		if x.Arg != "" {
@@ -733,7 +748,7 @@ func formatValidators(v []recipe.Validator) string {
 	return "[" + strings.Join(parts, ", ") + "]"
 }
 
-func formatStrategyV4(entries []recipe.StrategyEntry) string {
+func formatStrategyV4(entries []workflow.StrategyEntryCompat) string {
 	if len(entries) == 0 {
 		return "[]"
 	}
@@ -759,7 +774,7 @@ func formatStrategyV4(entries []recipe.StrategyEntry) string {
 
 // printStateBagResolutionsV4 prints which `{steps.<name>.output}` placeholders
 // resolve to which fully-qualified step outputs under StateBag scope rules.
-func printStateBagResolutionsV4(rec *recipe.Recipe) {
+func printStateBagResolutionsV4(rec *workflow.Workflow) {
 	refsRe := regexp.MustCompile(`\{steps\.(.+?)\.(output|diff|files)\}`)
 
 	type node struct {
@@ -768,8 +783,8 @@ func printStateBagResolutionsV4(rec *recipe.Recipe) {
 		prompt   string
 	}
 	var nodes []node
-	var collect func(steps []recipe.Step, prefix string)
-	collect = func(steps []recipe.Step, prefix string) {
+	var collect func(steps []workflow.Step, prefix string)
+	collect = func(steps []workflow.Step, prefix string) {
 		for _, s := range steps {
 			full := s.Name
 			if prefix != "" {
@@ -778,6 +793,9 @@ func printStateBagResolutionsV4(rec *recipe.Recipe) {
 			nodes = append(nodes, node{fullPath: full, name: s.Name, prompt: s.Prompt})
 			if len(s.Steps) > 0 {
 				collect(s.Steps, full)
+			}
+			if len(s.Each) > 0 {
+				collect(s.Each, full)
 			}
 		}
 	}

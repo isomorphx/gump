@@ -8,8 +8,8 @@ import (
 
 	"github.com/isomorphx/gump/internal/ledger"
 	"github.com/isomorphx/gump/internal/plan"
-	"github.com/isomorphx/gump/internal/recipe"
 	"github.com/isomorphx/gump/internal/sandbox"
+	"github.com/isomorphx/gump/internal/workflow"
 )
 
 // ErrorContext carries failed validation output so the next attempt gets {error} and {diff} in the prompt.
@@ -24,9 +24,9 @@ type ErrorContext struct {
 	FromRestart bool
 }
 
-// RunWithRetry runs one atomic step with the recipe on_failure policy.
+// RunWithRetry runs one atomic step using the legacy-shaped policy synthesized from v0.0.4 retry: until the engine is fully ported.
 // runOnce runs the step once and returns (nil, _) on pass, (err, preStepCommit) on failure; preStepCommit is the worktree HEAD at start of runOnce so we can reset before the next attempt.
-func (e *Engine) RunWithRetry(step recipe.Step, scopePath string, taskContext *plan.Task, runOnce func(attempt int, agentOverride string, errorContext *ErrorContext) (err error, preStepCommit string)) error {
+func (e *Engine) RunWithRetry(step *workflow.Step, scopePath string, taskContext *plan.Task, runOnce func(attempt int, agentOverride string, errorContext *ErrorContext) (err error, preStepCommit string)) error {
 	err, preCommit := runOnce(1, "", nil)
 	if err == nil {
 		e.emitStepCompletedFromLast()
@@ -39,16 +39,20 @@ func (e *Engine) RunWithRetry(step recipe.Step, scopePath string, taskContext *p
 	failCountsBySource := map[string]int{}
 	attempt := 1
 
+	of := step.OnFailureCompat()
 	for {
 		source := e.lastFailureSource
 		if source == "" {
 			source = "gate_fail"
 		}
-		action := step.OnFailure.ActionForFailureSource(source)
+		if of == nil {
+			break
+		}
+		action := of.ActionForFailureSource(source)
 		if action == nil {
 			break
 		}
-		isConditional := step.OnFailure != nil && step.OnFailure.IsConditionalForm()
+		isConditional := of.IsConditionalForm()
 		// Flat form keeps legacy behavior: retry is total attempts.
 		// Conditional form interprets retry as extra retries per source.
 		attemptLimit := action.Retry
@@ -65,7 +69,7 @@ func (e *Engine) RunWithRetry(step recipe.Step, scopePath string, taskContext *p
 		} else {
 			canRetry = failCountsBySource[source] < attemptLimit
 		}
-		expanded := recipe.ExpandStrategy(action.Strategy)
+		expanded := workflow.ExpandStrategy(action.Strategy)
 		if strings.TrimSpace(action.RestartFrom) != "" && len(expanded) == 0 {
 			// WHY: restart_from-only policy should jump immediately on each failure
 			// instead of burning local same-step retries first.
@@ -84,7 +88,7 @@ func (e *Engine) RunWithRetry(step recipe.Step, scopePath string, taskContext *p
 			break
 		}
 		if len(expanded) == 0 {
-			expanded = []recipe.StrategyEntry{{Type: "same", Count: 1}}
+			expanded = []workflow.StrategyEntryCompat{{Type: "same", Count: 1}}
 		}
 		idx := failCountsBySource[source] - 1
 		if idx >= len(expanded) {

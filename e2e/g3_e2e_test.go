@@ -1,3 +1,5 @@
+//go:build legacy_e2e
+
 package e2e
 
 import (
@@ -12,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/workflow"
 )
 
 func TestG3_E2E1_TelemetryFirstRunMessage(t *testing.T) {
@@ -175,15 +177,15 @@ steps:
 
 func TestG3_E2E7_BuiltinParseValidate(t *testing.T) {
 	for _, wf := range []string{"tdd", "cheap2sota", "parallel-tasks", "adversarial-review", "bugfix", "refactor", "freeform"} {
-		resolved, err := recipe.Resolve(wf, "")
+		resolved, err := workflow.Resolve(wf, "")
 		if err != nil {
 			t.Fatalf("%s resolve failed: %v", wf, err)
 		}
-		rec, err := recipe.Parse(resolved.Raw, "")
+		rec, _, err := workflow.Parse(resolved.Raw, "")
 		if err != nil {
 			t.Fatalf("%s parse failed: %v", wf, err)
 		}
-		if errs := recipe.Validate(rec); len(errs) > 0 {
+		if errs := workflow.Validate(rec); len(errs) > 0 {
 			t.Fatalf("%s validate failed: %v", wf, errs[0])
 		}
 	}

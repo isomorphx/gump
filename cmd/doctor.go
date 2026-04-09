@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/isomorphx/gump/internal/config"
-	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/workflow"
 	"github.com/spf13/cobra"
 )
 
@@ -62,12 +62,11 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 			fmt.Println("  config       ✓  (no project config)")
 		}
 	}
-	// Built-in recipes
-	n := len(recipe.BuiltinRecipes)
+	n := len(workflow.BuiltinWorkflows)
 	if n == 0 {
-		fmt.Println("  recipes      ✗  no built-in recipes loaded")
+		fmt.Println("  workflows    ✗  no built-in workflows loaded")
 	} else {
-		fmt.Printf("  recipes      ✓  %d built-in recipes loaded\n", n)
+		fmt.Printf("  workflows    ✓  %d built-in workflows loaded\n", n)
 	}
 	// Agent CLIs
 	fmt.Println()

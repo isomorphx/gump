@@ -9,7 +9,7 @@ import (
 
 	"github.com/isomorphx/gump/internal/brand"
 	"github.com/isomorphx/gump/internal/config"
-	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/workflow"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -47,7 +47,7 @@ func runCookbookList(cmd *cobra.Command, args []string) error {
 	projectRoot := config.ProjectRoot()
 	byName := make(map[string]recipeMeta)
 	// Built-in first so project/user can override.
-	for name, raw := range recipe.BuiltinRecipes {
+	for name, raw := range workflow.BuiltinWorkflows {
 		base := strings.TrimSuffix(name, ".yaml")
 		var r struct {
 			Name        string `yaml:"name"`
@@ -166,7 +166,7 @@ func runCookbookList(cmd *cobra.Command, args []string) error {
 func runCookbookShow(cmd *cobra.Command, args []string) error {
 	name := args[0]
 	projectRoot := config.ProjectRoot()
-	resolved, err := recipe.Resolve(name, projectRoot)
+	resolved, err := workflow.Resolve(name, projectRoot)
 	if err != nil {
 		return err
 	}

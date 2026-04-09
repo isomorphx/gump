@@ -3,12 +3,13 @@ package e2e
 import (
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	_ "github.com/isomorphx/gump/internal/builtin"
-	"github.com/isomorphx/gump/internal/recipe"
 	"github.com/isomorphx/gump/internal/template"
+	"github.com/isomorphx/gump/internal/workflow"
 )
 
 func captureStderr(t *testing.T, fn func()) string {
@@ -27,7 +28,7 @@ func captureStderr(t *testing.T, fn func()) string {
 	return string(out)
 }
 
-func gateHasType(g []recipe.Validator, typ string) bool {
+func gateHasType(g []workflow.GateEntry, typ string) bool {
 	for _, v := range g {
 		if v.Type == typ {
 			return true
@@ -37,89 +38,66 @@ func gateHasType(g []recipe.Validator, typ string) bool {
 }
 
 func TestM1_1_ParserV4_TDD(t *testing.T) {
-	raw := recipe.BuiltinRecipes["tdd.yaml"]
+	raw := workflow.BuiltinWorkflows["tdd.yaml"]
 	if len(raw) == 0 {
-		t.Fatal("missing builtin recipe tdd.yaml")
+		t.Fatal("missing builtin workflow tdd.yaml")
 	}
-	r, err := recipe.Parse(raw, "")
+	r, _, err := workflow.Parse(raw, "")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if errs := recipe.Validate(r); len(errs) != 0 {
+	if errs := workflow.Validate(r); len(errs) != 0 {
 		t.Fatalf("validate errs: %v", errs)
 	}
 
 	if r.Name != "tdd" {
-		t.Fatalf("Recipe.Name: got %q", r.Name)
+		t.Fatalf("Workflow.Name: got %q", r.Name)
 	}
-	if r.MaxBudget != 5.0 {
-		t.Fatalf("Recipe.MaxBudget: got %v", r.MaxBudget)
+	if len(r.Steps) != 2 {
+		t.Fatalf("len(Workflow.Steps): got %d", len(r.Steps))
 	}
-	if len(r.Steps) != 3 {
-		t.Fatalf("len(Recipe.Steps): got %d", len(r.Steps))
+	s0 := r.Steps[0]
+	if s0.Name != "build" || s0.Type != "split" || s0.Agent != "claude-opus" || !gateHasType(s0.Gate, "schema") || len(s0.Each) != 2 {
+		t.Fatalf("steps[0] split: got %+v", s0)
 	}
-	if r.Steps[0].Name != "decompose" || r.Steps[0].Output != "plan" || r.Steps[0].Agent != "claude-opus" {
-		t.Fatalf("steps[0]: got name=%q output=%q agent=%q", r.Steps[0].Name, r.Steps[0].Output, r.Steps[0].Agent)
-	}
-	if !gateHasType(r.Steps[0].Gate, "schema") {
-		t.Fatalf("steps[0].Gate missing schema: %+v", r.Steps[0].Gate)
-	}
-	if r.Steps[1].Name != "build" || r.Steps[1].Foreach != "decompose" {
-		t.Fatalf("steps[1]: got name=%q foreach=%q", r.Steps[1].Name, r.Steps[1].Foreach)
-	}
-	if r.Steps[1].Steps[0].Name != "tests" {
-		t.Fatalf("steps[1].Steps[0].Name: got %q", r.Steps[1].Steps[0].Name)
-	}
-	if r.Steps[1].Steps[0].OnFailure == nil || r.Steps[1].Steps[0].OnFailure.Retry != 2 {
-		t.Fatalf("steps[1].Steps[0].OnFailure.Retry: got %v", r.Steps[1].Steps[0].OnFailure)
-	}
-	if r.Steps[1].Steps[1].OnFailure == nil || r.Steps[1].Steps[1].OnFailure.RestartFrom != "tests" {
-		t.Fatalf("steps[1].Steps[1].OnFailure.RestartFrom: got %q", r.Steps[1].Steps[1].OnFailure.RestartFrom)
-	}
-	if r.Steps[2].Name != "quality" || !gateHasType(r.Steps[2].Gate, "compile") || !gateHasType(r.Steps[2].Gate, "lint") || !gateHasType(r.Steps[2].Gate, "test") {
-		t.Fatalf("steps[2] gate mismatch: %+v", r.Steps[2].Gate)
-	}
-	if r.Steps[2].Agent != "" {
-		t.Fatalf("steps[2].Agent: expected empty gate step, got %q", r.Steps[2].Agent)
+	if r.Steps[1].Name != "quality" || len(r.Steps[1].Gate) == 0 {
+		t.Fatalf("steps[1] quality gate: %+v", r.Steps[1])
 	}
 }
 
-func TestM1_2_ParserV4_AdversarialReview(t *testing.T) {
-	raw := recipe.BuiltinRecipes["adversarial-review.yaml"]
-	if len(raw) == 0 {
-		t.Fatal("missing builtin recipe adversarial-review.yaml")
-	}
-	r, err := recipe.Parse(raw, "")
+func TestM1_2_ParserV4_SplitParallelEach(t *testing.T) {
+	yaml := []byte(`name: parallel-demo
+steps:
+  - name: fan
+    type: split
+    parallel: true
+    agent: claude-opus
+    prompt: "Plan tasks for {spec}"
+    gate: [schema]
+    each:
+      - name: a
+        type: code
+        agent: claude-opus
+        prompt: "do a"
+      - name: b
+        type: code
+        agent: claude-opus
+        prompt: "do b"
+`)
+	r, _, err := workflow.Parse(yaml, "")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if errs := recipe.Validate(r); len(errs) != 0 {
+	if errs := workflow.Validate(r); len(errs) != 0 {
 		t.Fatalf("validate errs: %v", errs)
 	}
-
-	if len(r.Steps) < 2 {
-		t.Fatalf("unexpected steps length: %d", len(r.Steps))
-	}
-	// build step is steps[1]
-	build := r.Steps[1]
-	if build.Steps[1].Parallel != true {
-		t.Fatalf("build.Steps[1].Parallel: got %v", build.Steps[1].Parallel)
-	}
-	if build.Steps[1].Steps[0].Output != "review" || build.Steps[1].Steps[1].Output != "review" {
-		t.Fatalf("review step outputs: %q / %q", build.Steps[1].Steps[0].Output, build.Steps[1].Steps[1].Output)
-	}
-	if build.Steps[2].Output != "artifact" {
-		t.Fatalf("arbiter output: got %q", build.Steps[2].Output)
-	}
-	if build.OnFailure == nil {
-		t.Fatal("build.OnFailure is nil")
-	}
-	if build.OnFailure.RestartFrom != "impl" || build.OnFailure.Retry != 3 {
-		t.Fatalf("build.OnFailure: restart_from=%q retry=%d", build.OnFailure.RestartFrom, build.OnFailure.Retry)
+	fan := r.Steps[0]
+	if fan.Name != "fan" || !fan.Parallel || len(fan.Each) != 2 {
+		t.Fatalf("fan step: %+v", fan)
 	}
 }
 
-func TestM1_3_RejectV3Format(t *testing.T) {
+func TestM1_3_RejectV3ValidateAtStepLevel(t *testing.T) {
 	yaml := []byte(`name: bad
 steps:
   - name: s
@@ -129,7 +107,7 @@ steps:
       max_attempts: 2
       strategy: ["same"]
 `)
-	_, err := recipe.Parse(yaml, "")
+	_, _, err := workflow.Parse(yaml, "")
 	if err == nil {
 		t.Fatal("expected parse error")
 	}
@@ -143,17 +121,20 @@ func TestM1_4_RejectStepAmbiguousAgentAndSteps(t *testing.T) {
 	yaml := []byte(`name: x
 steps:
   - name: invalid
+    type: code
     agent: claude
+    prompt: "x"
     steps:
       - name: sub
+        type: code
         agent: claude
         prompt: "x"
 `)
-	r, err := recipe.Parse(yaml, "")
+	r, _, err := workflow.Parse(yaml, "")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	errs := recipe.Validate(r)
+	errs := workflow.Validate(r)
 	all := make([]string, 0, len(errs))
 	for _, e := range errs {
 		all = append(all, e.Error())
@@ -167,61 +148,49 @@ steps:
 	}
 }
 
-func TestM1_5_CycleDetectionRestartFrom(t *testing.T) {
+func TestM1_5_RetryRequiresExitCondition(t *testing.T) {
 	yaml := []byte(`name: x
 steps:
   - name: impl
+    type: code
     agent: claude
     prompt: "x"
-    on_failure:
-      retry: 1
-      strategy: ["same"]
-      restart_from: tests
-  - name: tests
-    agent: claude
-    prompt: "y"
-    on_failure:
-      retry: 1
-      strategy: ["same"]
-      restart_from: impl
+    retry:
+      - attempt: 2
+        agent: other
 `)
-	r, err := recipe.Parse(yaml, "")
+	r, _, err := workflow.Parse(yaml, "")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	errs := recipe.Validate(r)
+	errs := workflow.Validate(r)
 	combined := ""
 	for _, e := range errs {
 		combined += e.Error() + "\n"
 	}
-	if !strings.Contains(combined, "cycle detected in restart_from") {
-		t.Fatalf("expected cycle error, got: %s", combined)
+	if !strings.Contains(combined, "exit") {
+		t.Fatalf("expected exit-related validation, got: %s", combined)
 	}
 }
 
-func TestM1_6_RestartFromWithoutRetry(t *testing.T) {
+func TestM1_6_RetryDuplicateConditionsRejected(t *testing.T) {
 	yaml := []byte(`name: x
 steps:
   - name: impl
+    type: code
     agent: claude
     prompt: "x"
-    on_failure:
-      restart_from: tests
-  - name: tests
-    agent: claude
-    prompt: "y"
+    retry:
+      - attempt: 1
+        exit: 3
+        not: foo
 `)
-	r, err := recipe.Parse(yaml, "")
-	if err != nil {
-		t.Fatalf("parse: %v", err)
+	_, _, err := workflow.Parse(yaml, "")
+	if err == nil {
+		t.Fatal("expected parse error")
 	}
-	errs := recipe.Validate(r)
-	combined := ""
-	for _, e := range errs {
-		combined += e.Error() + "\n"
-	}
-	if !strings.Contains(combined, "restart_from without retry limit") {
-		t.Fatalf("expected restart_from without retry limit, got: %s", combined)
+	if !strings.Contains(err.Error(), "exactly one condition") {
+		t.Fatalf("unexpected: %v", err)
 	}
 }
 
@@ -256,20 +225,29 @@ func TestM1_9_DryRunFormatV4(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stdout)
 	}
-	for _, s := range []string{"Budget:", "$5.00", "gate=[schema]", "on_failure:", "restart_from=tests"} {
+	for _, s := range []string{"type=split", "gate=[schema]", "each:", "claude-opus"} {
 		if !strings.Contains(stdout, s) {
 			t.Errorf("stdout missing %q: %s", s, stdout)
 		}
-	}
-	if strings.Contains(stdout, "validate:") || strings.Contains(stdout, "retry:") {
-		t.Errorf("stdout must not contain validate/retry: %s", stdout)
 	}
 }
 
 func TestM1_10_DryRunStateBagResolutions(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "adversarial-review", "--dry-run"}, nil, dir)
+	os.MkdirAll(filepath.Join(dir, ".gump", "workflows"), 0755)
+	writeFile(t, dir, ".gump/workflows/statebag.yaml", `name: statebag
+steps:
+  - name: impl
+    type: code
+    agent: claude-opus
+    prompt: "build"
+  - name: next
+    type: code
+    agent: claude-opus
+    prompt: "Use {steps.impl.output}"
+`)
+	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "statebag", "--dry-run"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stdout)
 	}
@@ -286,21 +264,24 @@ func TestM1_11_ParserMaxBudget(t *testing.T) {
 max_budget: 5.00
 steps:
   - name: s
+    type: code
     agent: a
-    max_budget: 2.00
+    prompt: "x"
+    guard:
+      max_budget: 2.00
 `)
-	r, err := recipe.Parse(yaml, "")
+	r, _, err := workflow.Parse(yaml, "")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if errs := recipe.Validate(r); len(errs) != 0 {
+	if errs := workflow.Validate(r); len(errs) != 0 {
 		t.Fatalf("validate errs: %v", errs)
 	}
 	if r.MaxBudget != 5.0 {
-		t.Fatalf("Recipe.MaxBudget: got %v", r.MaxBudget)
+		t.Fatalf("Workflow.MaxBudget: got %v", r.MaxBudget)
 	}
-	if r.Steps[0].MaxBudget != 2.0 {
-		t.Fatalf("Step.MaxBudget: got %v", r.Steps[0].MaxBudget)
+	if r.Steps[0].Guard.MaxBudget != 2.0 {
+		t.Fatalf("Step.Guard.MaxBudget: got %v", r.Steps[0].Guard.MaxBudget)
 	}
 }
 
@@ -308,38 +289,44 @@ func TestM1_12_ParserHitl(t *testing.T) {
 	yaml := []byte(`name: x
 steps:
   - name: s
+    type: code
     agent: a
+    prompt: "p"
     hitl: true
 `)
-	r, err := recipe.Parse(yaml, "")
+	r, _, err := workflow.Parse(yaml, "")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if len(r.Steps) == 0 || !r.Steps[0].HITL {
-		t.Fatalf("Step.HITL: expected true, got %+v", r.Steps)
+	if len(r.Steps) == 0 || r.Steps[0].HITL != "before_gate" {
+		t.Fatalf("Step.HITL: expected before_gate, got %+v", r.Steps)
 	}
 }
 
-func TestM1_13_BuiltinRecipesParseAndValidate(t *testing.T) {
+func TestM1_13_BuiltinWorkflowsParseAndValidate(t *testing.T) {
 	names := []string{
 		"tdd.yaml",
+		"simple.yaml",
 		"cheap2sota.yaml",
 		"parallel-tasks.yaml",
-		"adversarial-review.yaml",
+		"implement-spec.yaml",
 		"bugfix.yaml",
 		"refactor.yaml",
 		"freeform.yaml",
 	}
 	for _, k := range names {
-		raw := recipe.BuiltinRecipes[k]
+		raw := workflow.BuiltinWorkflows[k]
 		if len(raw) == 0 {
-			t.Fatalf("missing builtin recipe %s", k)
+			t.Fatalf("missing builtin workflow %s", k)
 		}
-		r, err := recipe.Parse(raw, "")
+		r, warns, err := workflow.Parse(raw, "")
 		if err != nil {
 			t.Fatalf("parse %s: %v", k, err)
 		}
-		if errs := recipe.Validate(r); len(errs) != 0 {
+		if len(warns) != 0 {
+			t.Fatalf("builtin %s: expected 0 warnings, got %v", k, warns)
+		}
+		if errs := workflow.Validate(r); len(errs) != 0 {
 			t.Fatalf("validate %s: %v", k, errs)
 		}
 	}

@@ -13,7 +13,7 @@ import (
 	"github.com/isomorphx/gump/internal/diff"
 	"github.com/isomorphx/gump/internal/brand"
 	"github.com/isomorphx/gump/internal/ledger"
-	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/workflow"
 	"github.com/isomorphx/gump/internal/sandbox"
 )
 
@@ -21,7 +21,7 @@ import (
 // Ledger is the event log for this cook; it is created in NewCook and must be Closed by the caller when done.
 type Cook struct {
 	ID            string
-	Recipe        *recipe.Recipe
+	Recipe        *workflow.Workflow
 	RecipeName    string   // recipe name for merge message (set from Recipe.Name or context when loading)
 	SpecPath      string
 	SpecContent   string
@@ -38,7 +38,7 @@ type Cook struct {
 
 // NewCook creates a new cook: checks repo state, creates worktree and branch, and persists context snapshot.
 // recipeRaw is the YAML bytes (e.g. resolved.Raw) to store as workflow-snapshot.yaml.
-func NewCook(rec *recipe.Recipe, specPath string, repoRoot string, recipeRaw []byte) (*Cook, error) {
+func NewCook(rec *workflow.Workflow, specPath string, repoRoot string, recipeRaw []byte) (*Cook, error) {
 	root, err := sandbox.GitRepoRoot(repoRoot)
 	if err != nil {
 		return nil, fmt.Errorf("gump run must be executed inside a git repository")
@@ -125,7 +125,7 @@ func NewCook(rec *recipe.Recipe, specPath string, repoRoot string, recipeRaw []b
 }
 
 // NewCookForReplay creates a new cook for replay. If originalWorktreeDir is non-empty (HITL), that worktree is reused as-is; otherwise a new worktree is created at restoreCommit.
-func NewCookForReplay(rec *recipe.Recipe, specPath string, repoRoot string, recipeRaw []byte, restoreCommit string, originalWorktreeDir string) (*Cook, error) {
+func NewCookForReplay(rec *workflow.Workflow, specPath string, repoRoot string, recipeRaw []byte, restoreCommit string, originalWorktreeDir string) (*Cook, error) {
 	root, err := sandbox.GitRepoRoot(repoRoot)
 	if err != nil {
 		return nil, fmt.Errorf("gump run must be executed inside a git repository")

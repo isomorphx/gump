@@ -12,7 +12,7 @@ import (
 	"github.com/isomorphx/gump/internal/config"
 	"github.com/isomorphx/gump/internal/cook"
 	"github.com/isomorphx/gump/internal/ledger"
-	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/workflow"
 	"github.com/isomorphx/gump/internal/statebag"
 )
 
@@ -58,7 +58,7 @@ func FindLastFatalCook(repoRoot string, cookID string) (string, error) {
 }
 
 // fullPath returns the engine step path for a leaf (PathPrefix/Name or Name).
-func leafFullPath(l recipe.LeafStep) string {
+func leafFullPath(l workflow.LeafStep) string {
 	if l.PathPrefix == "" {
 		return l.Name
 	}
@@ -66,14 +66,14 @@ func leafFullPath(l recipe.LeafStep) string {
 }
 
 // ResolveFromStep resolves --from-step (short name or full path) against the recipe only. The manifest is not used for resolution (it may not contain the from-step if that step failed). Returns the full step path for the engine. The manifest is only used later for RestoreCommitBeforeStep.
-func ResolveFromStep(fromStep string, rec *recipe.Recipe) (string, error) {
+func ResolveFromStep(fromStep string, rec *workflow.Workflow) (string, error) {
 	fromStep = strings.TrimSpace(fromStep)
 	if fromStep == "" {
 		return "", fmt.Errorf("--from-step is required for replay")
 	}
 	recipeName := rec.Name
-	leaves := recipe.LeafSteps(rec)
-	// Full path (contains "/"): must match a leaf path in the recipe.
+	leaves := workflow.LeafSteps(rec)
+	// Full path (contains "/"): must match a leaf path in the workflow.
 	if strings.Contains(fromStep, "/") {
 		for _, l := range leaves {
 			if leafFullPath(l) == fromStep {
@@ -83,7 +83,7 @@ func ResolveFromStep(fromStep string, rec *recipe.Recipe) (string, error) {
 		return "", fmt.Errorf("step %q not found in recipe %q", fromStep, recipeName)
 	}
 	// Short name: resolve against recipe step names only.
-	var withName []recipe.LeafStep
+	var withName []workflow.LeafStep
 	for _, l := range leaves {
 		if l.Name == fromStep {
 			withName = append(withName, l)
@@ -103,7 +103,7 @@ func ResolveFromStep(fromStep string, rec *recipe.Recipe) (string, error) {
 }
 
 // RunReplay finds the fatal run, restores state bag, reuses the original run worktree (HITL), and runs the engine from fromStep. Returns the new run and steps count so the CLI can write status.
-func RunReplay(repoRoot, specPath, fromStep, cookID string, rec *recipe.Recipe, recipeRaw []byte, resolver agent.AdapterResolver, cfg *config.Config, agentsCLI map[string]string) (*cook.Cook, int, error) {
+func RunReplay(repoRoot, specPath, fromStep, cookID string, rec *workflow.Workflow, recipeRaw []byte, resolver agent.AdapterResolver, cfg *config.Config, agentsCLI map[string]string) (*cook.Cook, int, error) {
 	cookDir, err := FindLastFatalCook(repoRoot, cookID)
 	if err != nil {
 		return nil, 0, err

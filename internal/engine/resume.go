@@ -12,7 +12,7 @@ import (
 	"github.com/isomorphx/gump/internal/brand"
 	"github.com/isomorphx/gump/internal/config"
 	"github.com/isomorphx/gump/internal/cook"
-	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/workflow"
 	"github.com/isomorphx/gump/internal/statebag"
 )
 
@@ -167,11 +167,11 @@ func RunResume(repoRoot, runID string, resolver agent.AdapterResolver, cfg *conf
 	if err != nil {
 		return nil, 0, fmt.Errorf("read workflow snapshot: %w", err)
 	}
-	rec, err := recipe.Parse(workflowRaw, "")
+	rec, _, err := workflow.Parse(workflowRaw, "")
 	if err != nil {
 		return nil, 0, fmt.Errorf("parse workflow snapshot: %w", err)
 	}
-	if errs := recipe.Validate(rec); len(errs) > 0 {
+	if errs := workflow.Validate(rec); len(errs) > 0 {
 		return nil, 0, errs[0]
 	}
 	fatalStep, passed, err := parseManifestForResume(manifestPath)

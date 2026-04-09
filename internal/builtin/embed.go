@@ -4,26 +4,25 @@ import (
 	"embed"
 	"io/fs"
 
-	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/workflow"
 )
 
-// recipesFS embeds built-in YAML so users can run "gump run ... --workflow tdd" with zero setup.
-//go:embed recipes/*.yaml
-var recipesFS embed.FS
+//go:embed workflows/*.yaml
+var workflowsFS embed.FS
 
 func init() {
-	recipe.BuiltinRecipes = mustLoadRecipes()
+	workflow.BuiltinWorkflows = mustLoadWorkflows()
 }
 
-func mustLoadRecipes() map[string][]byte {
+func mustLoadWorkflows() map[string][]byte {
 	out := make(map[string][]byte)
-	dir, err := fs.Sub(recipesFS, "recipes")
+	dir, err := fs.Sub(workflowsFS, "workflows")
 	if err != nil {
-		panic("builtin recipes: " + err.Error())
+		panic("builtin workflows: " + err.Error())
 	}
 	entries, err := fs.ReadDir(dir, ".")
 	if err != nil {
-		panic("builtin recipes: " + err.Error())
+		panic("builtin workflows: " + err.Error())
 	}
 	for _, e := range entries {
 		if e.IsDir() {
@@ -32,7 +31,7 @@ func mustLoadRecipes() map[string][]byte {
 		name := e.Name()
 		data, err := fs.ReadFile(dir, name)
 		if err != nil {
-			panic("builtin recipes: " + name + ": " + err.Error())
+			panic("builtin workflows: " + name + ": " + err.Error())
 		}
 		out[name] = data
 	}

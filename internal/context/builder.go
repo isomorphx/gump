@@ -12,7 +12,7 @@ import (
 
 	"github.com/isomorphx/gump/internal/brand"
 	"github.com/isomorphx/gump/internal/config"
-	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/workflow"
 	"github.com/isomorphx/gump/internal/template"
 )
 
@@ -482,7 +482,7 @@ type BuildOptions struct {
 }
 
 // Build resolves recipe context sources, builds the v4 prompt, and writes the provider file in the worktree.
-func Build(outputMode string, prompt string, contextSources []recipe.ContextSource, worktreeDir string, cfg *config.Config, taskFiles []string, vars map[string]string, contextFile string, retry *RetrySection, opts *BuildOptions) error {
+func Build(outputMode string, prompt string, contextSources []workflow.ContextSource, worktreeDir string, cfg *config.Config, taskFiles []string, vars map[string]string, contextFile string, retry *RetrySection, opts *BuildOptions) error {
 	spec := ""
 	if vars != nil {
 		spec = vars["spec"]
@@ -545,11 +545,12 @@ func Build(outputMode string, prompt string, contextSources []recipe.ContextSour
 
 // resolveContextSources materializes recipe context: files are required; bash failures are dropped with a log line
 // so a flaky diagnostic command does not abort the whole cook.
-func resolveContextSources(contextSources []recipe.ContextSource, worktreeDir string, vars map[string]string) ([]ContextSourceResult, error) {
+func resolveContextSources(contextSources []workflow.ContextSource, worktreeDir string, vars map[string]string) ([]ContextSourceResult, error) {
 	var out []ContextSourceResult
 	for _, src := range contextSources {
-		if src.File != "" {
-			resolvedPath := template.Resolve(strings.TrimSpace(src.File), vars, nil, "")
+		switch src.Type {
+		case "file":
+			resolvedPath := template.Resolve(strings.TrimSpace(src.Value), vars, nil, "")
 			fullPath := filepath.Join(worktreeDir, resolvedPath)
 			data, err := os.ReadFile(fullPath)
 			if err != nil {
@@ -563,18 +564,17 @@ func resolveContextSources(contextSources []recipe.ContextSource, worktreeDir st
 				log.Printf("context file %s is large (estimated ~%dk tokens), may consume significant context window", resolvedPath, estTokens/1000)
 			}
 			out = append(out, ContextSourceResult{Type: "file", Label: resolvedPath, Content: string(data)})
-		}
-		if src.Bash != "" {
+		case "bash":
 			ctx, cancel := stdctx.WithTimeout(stdctx.Background(), bashContextTimeout)
 			defer cancel()
-			cmd := exec.CommandContext(ctx, "sh", "-c", src.Bash)
+			cmd := exec.CommandContext(ctx, "sh", "-c", src.Value)
 			cmd.Dir = worktreeDir
 			outBytes, err := cmd.Output()
 			if err != nil {
-				log.Printf("context bash failed (non-fatal): %s: %v", src.Bash, err)
+				log.Printf("context bash failed (non-fatal): %s: %v", src.Value, err)
 				continue
 			}
-			out = append(out, ContextSourceResult{Type: "bash", Label: src.Bash, Content: string(outBytes)})
+			out = append(out, ContextSourceResult{Type: "bash", Label: src.Value, Content: string(outBytes)})
 		}
 	}
 	return out, nil

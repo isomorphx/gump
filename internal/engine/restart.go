@@ -5,7 +5,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/workflow"
 )
 
 func joinStepPath(pathPrefix, name string) string {
@@ -15,7 +15,7 @@ func joinStepPath(pathPrefix, name string) string {
 	return pathPrefix + "/" + name
 }
 
-func findStepIndexByName(steps []recipe.Step, name string) int {
+func findStepIndexByName(steps []workflow.Step, name string) int {
 	for i := range steps {
 		if steps[i].Name == name {
 			return i

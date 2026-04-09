@@ -24,7 +24,7 @@ import (
 	"github.com/isomorphx/gump/internal/diff"
 	"github.com/isomorphx/gump/internal/ledger"
 	"github.com/isomorphx/gump/internal/plan"
-	"github.com/isomorphx/gump/internal/recipe"
+	"github.com/isomorphx/gump/internal/workflow"
 	"github.com/isomorphx/gump/internal/sandbox"
 	"github.com/isomorphx/gump/internal/statebag"
 	"github.com/isomorphx/gump/internal/template"
@@ -50,7 +50,7 @@ type lastStepOutcome struct {
 // AgentsCLI is set by the CLI so cook_started can record agent versions; stepCompletedCount, retryTriggeredCount, totalCostUSD, agentsUsed are accumulated for cook_completed and index.
 type Engine struct {
 	Cook                 *cook.Cook
-	Recipe               *recipe.Recipe
+	Recipe               *workflow.Workflow
 	Resolver             agent.AdapterResolver
 	Config               *config.Config
 	SpecContent          string
@@ -87,7 +87,7 @@ type Engine struct {
 }
 
 // New builds an engine with an empty State Bag and counters for ledger/index.
-func New(c *cook.Cook, rec *recipe.Recipe, r agent.AdapterResolver, cfg *config.Config, specContent string) *Engine {
+func New(c *cook.Cook, rec *workflow.Workflow, r agent.AdapterResolver, cfg *config.Config, specContent string) *Engine {
 	return &Engine{
 		Cook: c, Recipe: rec, Resolver: r, Config: cfg, SpecContent: specContent,
 		Steps: nil, StateBag: statebag.New(),
@@ -133,14 +133,14 @@ func (e *Engine) Run() error {
 		}
 	}
 	CookHeader(e.Cook.RecipeName, e.Cook.ID, filepath.Base(e.Cook.SpecPath))
-	err := e.executeSteps(e.Recipe.Steps, nil, "", make(map[string]string), recipe.SessionConfig{Mode: "fresh"}, "", nil)
+	err := e.executeSteps(e.Recipe.Steps, nil, "", make(map[string]string), workflow.SessionConfig{Mode: "fresh"}, "", nil)
 	e.finishCook(err)
 	return err
 }
 
 // executeSteps runs steps; composite (steps:) with optional foreach, atomic (agent:), or validation-only (gate:).
 // groupAgentOverride is set when we're inside a group retry with strategy "escalate"; atomic steps in this subtree use that agent.
-func (e *Engine) executeSteps(steps []recipe.Step, taskContext *plan.Task, pathPrefix string, lastSessionByAgent map[string]string, parentSession recipe.SessionConfig, groupAgentOverride string, inheritedVars map[string]string) error {
+func (e *Engine) executeSteps(steps []workflow.Step, taskContext *plan.Task, pathPrefix string, lastSessionByAgent map[string]string, parentSession workflow.SessionConfig, groupAgentOverride string, inheritedVars map[string]string) error {
 	groupBaseCommit, _ := PreStepCommit(e.Cook.WorktreeDir)
 	for i := 0; i < len(steps); i++ {
 		step := steps[i]
@@ -166,9 +166,14 @@ func (e *Engine) executeSteps(steps []recipe.Step, taskContext *plan.Task, pathP
 			continue
 		}
 
-		// Composite: has sub-steps or recipe reference (with optional foreach over a plan step's output).
-		if len(step.Steps) > 0 || step.Workflow != "" || step.Recipe != "" {
-			if step.Workflow != "" && strings.TrimSpace(step.Foreach) == "" && len(step.Steps) == 0 {
+		// Composite: parallel group, split+each, or nested workflow call (plan iteration uses the split step name as state-bag scope).
+		foreachRef := ""
+		if step.Type == "split" && len(step.Each) > 0 {
+			foreachRef = step.Name
+		}
+		isComposite := len(step.Steps) > 0 || step.Workflow != "" || (step.Type == "split" && len(step.Each) > 0)
+		if isComposite {
+			if step.Workflow != "" && foreachRef == "" && len(step.Steps) == 0 && len(step.Each) == 0 {
 				childRec, childVars, err := e.resolveWorkflow(&step, stepPath, taskContext, inheritedVars)
 				if err != nil {
 					return err
@@ -177,7 +182,7 @@ func (e *Engine) executeSteps(steps []recipe.Step, taskContext *plan.Task, pathP
 				childSB := statebag.New()
 				childSB.SetRunAll(parentSB.CloneRun())
 				e.StateBag = childSB
-				err = e.executeSteps(childRec.Steps, taskContext, "", make(map[string]string), recipe.SessionConfig{Mode: "fresh"}, "", childVars)
+				err = e.executeSteps(childRec.Steps, taskContext, "", make(map[string]string), workflow.SessionConfig{Mode: "fresh"}, "", childVars)
 				e.StateBag = parentSB
 				if err != nil {
 					return err
@@ -187,10 +192,17 @@ func (e *Engine) executeSteps(steps []recipe.Step, taskContext *plan.Task, pathP
 			}
 			var planTasks []plan.Task
 			taskCount := 0
-			if step.Foreach != "" {
-				planRaw := e.StateBag.Get(step.Foreach, stepPath, "output")
+			if foreachRef != "" {
+				planShortName := step.Name
+				planRaw := e.StateBag.Get(planShortName, stepPath, "output")
+				if planRaw == "" && strings.TrimSpace(step.Agent) != "" && strings.TrimSpace(step.Prompt) != "" {
+					if err := e.runAtomicStep(&step, stepPath, taskContext, lastSessionByAgent, parentSession, groupAgentOverride, inheritedVars); err != nil {
+						return err
+					}
+					planRaw = e.StateBag.Get(planShortName, stepPath, "output")
+				}
 				if planRaw == "" {
-					return fmt.Errorf("foreach references step %q but no plan output found in State Bag", step.Foreach)
+					return fmt.Errorf("split step %q has no plan output in State Bag (set agent: and prompt: on the split to run a planner, or pre-seed output)", step.Name)
 				}
 				var err error
 				planTasks, err = plan.ParsePlanOutput([]byte(planRaw))
@@ -204,7 +216,7 @@ func (e *Engine) executeSteps(steps []recipe.Step, taskContext *plan.Task, pathP
 				return err
 			}
 			if e.Cook.Ledger != nil {
-				_ = e.Cook.Ledger.Emit(ledger.GroupStarted{Step: stepPath, Foreach: step.Foreach, Parallel: step.Parallel, TaskCount: taskCount})
+				_ = e.Cook.Ledger.Emit(ledger.GroupStarted{Step: stepPath, Foreach: foreachRef, Parallel: step.Parallel, TaskCount: taskCount})
 			}
 			if taskCount > 0 {
 				e.stepTotalEstimate = e.stepRunIndex + taskCount*len(subSteps)
@@ -229,7 +241,7 @@ func (e *Engine) executeSteps(steps []recipe.Step, taskContext *plan.Task, pathP
 							taskPrefix = pathPrefix + "/" + taskPrefix
 						}
 						taskSession := make(map[string]string)
-						if step.Workflow != "" && len(step.Steps) == 0 {
+						if step.Workflow != "" && len(step.Steps) == 0 && len(step.Each) == 0 {
 							childRec, childVars, werr := e.resolveWorkflow(&step, taskPrefix, &task, inheritedVars)
 							if werr != nil {
 								return werr
@@ -247,12 +259,12 @@ func (e *Engine) executeSteps(steps []recipe.Step, taskContext *plan.Task, pathP
 				}
 				return e.executeSteps(subSteps, nil, stepPath, sessionMap, step.Session, agentOverride, inheritedVars)
 			}
-			if step.OnFailure != nil && step.MaxAttempts() > 1 {
+			if of := step.OnFailureCompat(); of != nil && step.MaxAttempts() > 1 {
 				preGroupCommit, _ := PreStepCommit(e.Cook.WorktreeDir)
 				maxAttempts := step.MaxAttempts()
-				expanded := recipe.ExpandStrategy(step.OnFailure.Strategy)
+				expanded := workflow.ExpandStrategy(of.Strategy)
 				if len(expanded) == 0 {
-					expanded = []recipe.StrategyEntry{{Type: "same", Count: 1}}
+					expanded = []workflow.StrategyEntryCompat{{Type: "same", Count: 1}}
 				}
 				sessionMap := make(map[string]string)
 				for groupAttempt := 1; groupAttempt <= maxAttempts; groupAttempt++ {
@@ -528,20 +540,14 @@ func taskContextName(t *plan.Task) string {
 }
 
 // sessionModeForLedger records the effective session strategy for white-glass tracing; v4 defaults to fresh when unset.
-func sessionModeForLedger(step *recipe.Step, parentSession recipe.SessionConfig) string {
-	eff := step.Session
-	if eff.Mode == "" {
-		eff = parentSession
-	}
-	if eff.Mode == "" {
-		return "fresh"
-	}
+func sessionModeForLedger(step *workflow.Step, parentSession workflow.SessionConfig) string {
+	eff := workflow.ResolveSessionForEngine(step, parentSession)
 	return eff.Mode
 }
 
-func (e *Engine) runAtomicStep(step *recipe.Step, stepPath string, taskContext *plan.Task, lastSessionByAgent map[string]string, parentSession recipe.SessionConfig, groupAgentOverride string, inheritedVars map[string]string) error {
+func (e *Engine) runAtomicStep(step *workflow.Step, stepPath string, taskContext *plan.Task, lastSessionByAgent map[string]string, parentSession workflow.SessionConfig, groupAgentOverride string, inheritedVars map[string]string) error {
 	if step.ShouldRunWithRetryLoop() {
-		return e.RunWithRetry(*step, stepPath, taskContext, func(attempt int, agentOverride string, errorContext *ErrorContext) (err error, preStepCommit string) {
+		return e.RunWithRetry(step, stepPath, taskContext, func(attempt int, agentOverride string, errorContext *ErrorContext) (err error, preStepCommit string) {
 			override := agentOverride
 			if override == "" && groupAgentOverride != "" {
 				override = groupAgentOverride
@@ -567,7 +573,7 @@ func (e *Engine) runAtomicStep(step *recipe.Step, stepPath string, taskContext *
 }
 
 // runAtomicStepOnce runs one attempt of an atomic step; returns (err, preStepCommit) so retry can reset. preStepCommit is captured at start.
-func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskContext *plan.Task, lastSessionByAgent map[string]string, parentSession recipe.SessionConfig, attempt int, agentOverride string, errorContext *ErrorContext, extraVars map[string]string, inheritedVars map[string]string) (err error, preStepCommit string) {
+func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskContext *plan.Task, lastSessionByAgent map[string]string, parentSession workflow.SessionConfig, attempt int, agentOverride string, errorContext *ErrorContext, extraVars map[string]string, inheritedVars map[string]string) (err error, preStepCommit string) {
 	e.lastFailureSource = ""
 	preStepCommit, _ = PreStepCommit(e.Cook.WorktreeDir)
 	maxGlobal := step.MaxAttempts()
@@ -587,45 +593,47 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 	e.globalStepAttempts[stepPath]++
 	e.writeEngineStepAttemptMarker(step.Name, e.globalStepAttempts[stepPath])
 	taskName := taskContextName(taskContext)
-	if step.MaxBudget > 0 && e.budgetTracker != nil {
-		e.budgetTracker.SetStepBudget(stepPath, step.MaxBudget)
-	}
 	vars := e.buildVars(taskContext, errorContext, extraVars, inheritedVars)
-	outputMode := step.Output
-	if outputMode == "" {
-		outputMode = "diff"
-	}
-	prompt := step.Prompt
+	outputMode := step.OutputMode()
+	prompt := step.EffectivePromptAt(attempt)
 	resolvedPrompt := template.Resolve(prompt, vars, e.StateBag, stepPath)
 
-	effectiveSession := step.Session
-	if effectiveSession.Mode == "" {
-		effectiveSession = parentSession
-	}
+	effectiveSession := workflow.ResolveSessionForEngine(step, parentSession)
 	sessionReuse := attempt == 1 && (effectiveSession.Mode == "reuse" || effectiveSession.Mode == "reuse-targeted")
 
 	var taskFiles []string
 	if taskContext != nil && len(taskContext.Files) > 0 {
 		taskFiles = taskContext.Files
 	}
-	agentToUse := step.Agent
+	agentToUse := step.EffectiveAgentAt(attempt, step.Agent)
 	if e.CookAgentOverride != "" {
 		agentToUse = e.CookAgentOverride
 	}
 	if agentOverride != "" {
 		agentToUse = agentOverride
 	}
-	adapter, err := e.Resolver.AdapterFor(agentToUse)
-	if err != nil {
-		return err, preStepCommit
+	if strings.TrimSpace(agentToUse) == "pass" {
+		agentToUse = "pass"
 	}
-	contextFile := agent.ContextFileForAgent(agentToUse)
+	var adapter agent.AgentAdapter
+	if agentToUse != "pass" {
+		var adaptErr error
+		adapter, adaptErr = e.Resolver.AdapterFor(agentToUse)
+		if adaptErr != nil {
+			return adaptErr, preStepCommit
+		}
+	}
+	agentForCtx := agentToUse
+	if agentForCtx == "pass" {
+		agentForCtx = "claude-sonnet"
+	}
+	contextFile := agent.ContextFileForAgent(agentForCtx)
 	agent.RemoveOtherContextFiles(e.Cook.WorktreeDir, contextFile)
 	if err := PrepareOutputDir(e.Cook.WorktreeDir); err != nil {
 		return fmt.Errorf("prepare output dir: %w", err), preStepCommit
 	}
 	var retrySection *pkgcontext.RetrySection
-	if errorContext != nil && step.OnFailure != nil && (attempt > 1 || errorContext.FromRestart) {
+	if errorContext != nil && step.OnFailureCompat() != nil && (attempt > 1 || errorContext.FromRestart) {
 		ra := attempt
 		maxA := step.MaxAttempts()
 		if errorContext.FromRestart && attempt == 1 {
@@ -659,11 +667,11 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 	}
 
 	timeout := time.Duration(0)
-	if step.Timeout != "" {
+	if step.Guard.MaxTime != "" {
 		var parseErr error
-		timeout, parseErr = time.ParseDuration(step.Timeout)
+		timeout, parseErr = time.ParseDuration(step.Guard.MaxTime)
 		if parseErr != nil {
-			return fmt.Errorf("step %s: invalid timeout %q: %w", step.Name, step.Timeout, parseErr), preStepCommit
+			return fmt.Errorf("step %s: invalid guard max_time %q: %w", step.Name, step.Guard.MaxTime, parseErr), preStepCommit
 		}
 	}
 
@@ -760,7 +768,7 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 		taskInfo = "[task " + taskContext.Name + "]"
 	}
 	retryInfo := ""
-	if step.OnFailure != nil && (attempt > 1 || (errorContext != nil && errorContext.FromRestart)) {
+	if step.OnFailureCompat() != nil && (attempt > 1 || (errorContext != nil && errorContext.FromRestart)) {
 		shAttempt := attempt
 		shMax := step.MaxAttempts()
 		if errorContext != nil && errorContext.FromRestart && attempt == 1 {
@@ -777,20 +785,81 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 	}
 	StepHeader(e.stepRunIndex, e.stepTotalEstimate, stepPath, agentToUse, taskInfo, retryInfo, sessionInfo)
 
-	promptHash := sha256.Sum256([]byte(promptForAgent))
-	ctx := context.Background()
+	maxTurns := step.Guard.MaxTurns
 	var proc *agent.Process
-	maxTurns := step.MaxTurns
-	if sessionID != "" {
+	var result *agent.RunResult
+	var guardRuntime *GuardRuntime
+	guardTriggered := false
+	guardName := ""
+	guardReason := ""
+	if agentToUse != "pass" {
+		promptHash := sha256.Sum256([]byte(promptForAgent))
+		ctx := context.Background()
+		if sessionID != "" {
+			var err error
+			proc, err = adapter.Resume(ctx, agent.ResumeRequest{
+				Worktree:  e.Cook.WorktreeDir,
+				Prompt:    promptForAgent,
+				AgentName: agentToUse,
+				SessionID: sessionID,
+				Timeout:   timeout,
+				MaxTurns:  maxTurns,
+			})
+			if err != nil {
+				exec.Status = StepFatal
+				exec.FinishedAt = time.Now()
+				e.Steps = append(e.Steps, exec)
+				e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), nil, outputMode, "", false)
+				fmt.Fprintf(os.Stderr, "[%s]\tfatal\tFATAL: %v\n", stepPath, err)
+				return fmt.Errorf("step %s: %w", step.Name, err), preStepCommit
+			}
+		} else {
+			var err error
+			proc, err = adapter.Launch(ctx, agent.LaunchRequest{
+				Worktree:  e.Cook.WorktreeDir,
+				Prompt:    promptForAgent,
+				AgentName: agentToUse,
+				Timeout:   timeout,
+				MaxTurns:  maxTurns,
+			})
+			if err != nil {
+				exec.Status = StepFatal
+				exec.FinishedAt = time.Now()
+				e.Steps = append(e.Steps, exec)
+				e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), nil, outputMode, "", false)
+				fmt.Fprintf(os.Stderr, "[%s]\tfatal\tFATAL: %v\n", stepPath, err)
+				return fmt.Errorf("step %s: %w", step.Name, err), preStepCommit
+			}
+		}
+		sessionSource := ""
+		if effectiveSession.Mode == "reuse-on-retry" && sessionID != "" {
+			sessionSource = "reuse-on-retry"
+		}
+		if e.Cook.Ledger != nil {
+			_ = e.Cook.Ledger.Emit(ledger.AgentLaunched{
+				Step: stepPath, CLI: adapter.LastLaunchCLI(), Worktree: e.Cook.WorktreeDir,
+				Agent: agentToUse, SessionID: sessionID, SessionSource: sessionSource,
+				PromptHash: hex.EncodeToString(promptHash[:]),
+			})
+		}
+		guardRuntime = NewGuardRuntime(step)
+		for ev := range adapter.Stream(proc) {
+			inDelta, outDelta, turnDelta := extractPartialUsage(ev.Raw)
+			proc.AddPartialMetrics(agent.RunResult{
+				InputTokens:  inDelta,
+				OutputTokens: outDelta,
+				NumTurns:     turnDelta,
+			})
+			if g, r, ok := guardRuntime.CheckEvent(ev.Raw); ok {
+				guardTriggered = true
+				guardName = g
+				guardReason = r
+				agent.Terminate(proc)
+			}
+			formatStreamEventToTerminal(ev, agentToUse)
+		}
 		var err error
-		proc, err = adapter.Resume(ctx, agent.ResumeRequest{
-			Worktree:  e.Cook.WorktreeDir,
-			Prompt:    promptForAgent,
-			AgentName: agentToUse,
-			SessionID: sessionID,
-			Timeout:   timeout,
-			MaxTurns:  maxTurns,
-		})
+		result, err = adapter.Wait(proc)
 		if err != nil {
 			exec.Status = StepFatal
 			exec.FinishedAt = time.Now()
@@ -800,61 +869,17 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 			return fmt.Errorf("step %s: %w", step.Name, err), preStepCommit
 		}
 	} else {
-		var err error
-		proc, err = adapter.Launch(ctx, agent.LaunchRequest{
-			Worktree:  e.Cook.WorktreeDir,
-			Prompt:    promptForAgent,
-			AgentName: agentToUse,
-			Timeout:   timeout,
-			MaxTurns:  maxTurns,
-		})
-		if err != nil {
-			exec.Status = StepFatal
-			exec.FinishedAt = time.Now()
-			e.Steps = append(e.Steps, exec)
-			e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), nil, outputMode, "", false)
-			fmt.Fprintf(os.Stderr, "[%s]\tfatal\tFATAL: %v\n", stepPath, err)
-			return fmt.Errorf("step %s: %w", step.Name, err), preStepCommit
+		result = &agent.RunResult{Result: "[agent pass]"}
+	}
+	if guardRuntime != nil {
+		guardRuntime.AddCost(result.CostUSD)
+		if !guardTriggered {
+			if g, r, ok := guardRuntime.CheckBudget(); ok {
+				guardTriggered = true
+				guardName = g
+				guardReason = r
+			}
 		}
-	}
-	sessionSource := ""
-	if effectiveSession.Mode == "reuse-on-retry" && sessionID != "" {
-		sessionSource = "reuse-on-retry"
-	}
-	if e.Cook.Ledger != nil {
-		_ = e.Cook.Ledger.Emit(ledger.AgentLaunched{
-			Step: stepPath, CLI: adapter.LastLaunchCLI(), Worktree: e.Cook.WorktreeDir,
-			Agent: agentToUse, SessionID: sessionID, SessionSource: sessionSource,
-			PromptHash: hex.EncodeToString(promptHash[:]),
-		})
-	}
-	guardRuntime := NewGuardRuntime(step)
-	guardTriggered := false
-	guardName := ""
-	guardReason := ""
-	for ev := range adapter.Stream(proc) {
-		inDelta, outDelta, turnDelta := extractPartialUsage(ev.Raw)
-		proc.AddPartialMetrics(agent.RunResult{
-			InputTokens:  inDelta,
-			OutputTokens: outDelta,
-			NumTurns:     turnDelta,
-		})
-		if g, r, ok := guardRuntime.CheckEvent(ev.Raw); ok {
-			guardTriggered = true
-			guardName = g
-			guardReason = r
-			agent.Terminate(proc)
-		}
-		formatStreamEventToTerminal(ev, agentToUse)
-	}
-	result, err := adapter.Wait(proc)
-	if err != nil {
-		exec.Status = StepFatal
-		exec.FinishedAt = time.Now()
-		e.Steps = append(e.Steps, exec)
-		e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), nil, outputMode, "", false)
-		fmt.Fprintf(os.Stderr, "[%s]\tfatal\tFATAL: %v\n", stepPath, err)
-		return fmt.Errorf("step %s: %w", step.Name, err), preStepCommit
 	}
 	runUsageApplied := false
 	applyRunUsage := func(cost float64, tokensIn int, tokensOut int, turns int, cacheRead int, cacheCreate int, durationMs int) {
@@ -905,7 +930,7 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 		return fmt.Errorf("step %s: guard %s triggered: %s", step.Name, guardName, guardReason), preStepCommit
 	}
 	isTimeoutError := result.IsError && (result.ExitCode == -1 || (proc != nil && proc.TimedOut))
-	if isTimeoutError {
+	if isTimeoutError && proc != nil {
 		partial := proc.PartialMetrics()
 		if partial.InputTokens == 0 && partial.OutputTokens == 0 && partial.NumTurns == 0 && partial.CostUSD == 0 {
 			partial = *result
@@ -1144,15 +1169,18 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 		_ = e.Cook.Ledger.Emit(ledger.StateBagUpdated{Key: stepPath + ".session_id", Artifact: ""})
 	}
 
-	// Apply task.files blast radius policy (enforce|warn|off), default enforce.
-	if taskContext != nil && len(taskContext.Files) > 0 {
+	if strings.TrimSpace(step.HITL) == "before_gate" && len(step.Gate) > 0 {
+		if err := e.hitlPauseAfterSuccess(step, stepPath, outputMode, dc.FilesChanged); err != nil {
+			return err, preStepCommit
+		}
+	}
+
+	// Apply task.files blast radius policy (v0.0.4: workflow-level blast_radius removed; always enforce when task.files is set).
+	blastMode := "enforce"
+	if blastMode != "off" && taskContext != nil && len(taskContext.Files) > 0 {
 		repoFiles := filterRepoFilesOnly(e.Cook.WorktreeDir, dc.FilesChanged)
 		violators, errMsg := checkBlastRadius(repoFiles, taskContext.Files)
 		if len(violators) > 0 {
-			blastMode := strings.TrimSpace(e.Recipe.BlastRadius)
-			if blastMode == "" {
-				blastMode = "enforce"
-			}
 			if blastMode == "warn" {
 				warnMsg := blastRadiusWarningMessage(violators, taskContext.Files)
 				if e.Cook.Ledger != nil {
@@ -1295,14 +1323,14 @@ func (e *Engine) runAtomicStepOnce(step *recipe.Step, stepPath string, taskConte
 }
 
 // runAtomicStepWithVars runs one atomic step with optional extra template vars (e.g. for replan sub-tasks). No retry.
-func (e *Engine) runAtomicStepWithVars(step *recipe.Step, stepPath string, taskContext *plan.Task, lastSessionByAgent map[string]string, parentSession recipe.SessionConfig, extraVars map[string]string) error {
+func (e *Engine) runAtomicStepWithVars(step *workflow.Step, stepPath string, taskContext *plan.Task, lastSessionByAgent map[string]string, parentSession workflow.SessionConfig, extraVars map[string]string) error {
 	err, _ := e.runAtomicStepOnce(step, stepPath, taskContext, lastSessionByAgent, parentSession, 1, "", nil, extraVars, nil)
 	e.emitStepCompletedFromLast()
 	return err
 }
 
-func (e *Engine) hitlPauseAfterSuccess(step *recipe.Step, stepPath string, outputMode string, filesChanged []string) error {
-	need := step.HITL
+func (e *Engine) hitlPauseAfterSuccess(step *workflow.Step, stepPath string, outputMode string, filesChanged []string) error {
+	need := strings.TrimSpace(step.HITL) == "after_gate"
 	if e.PauseAfterStep != "" && step.Name == e.PauseAfterStep {
 		need = true
 	}
@@ -1791,18 +1819,18 @@ func (e *Engine) buildVars(taskContext *plan.Task, errorContext *ErrorContext, e
 	return vars
 }
 
-func (e *Engine) resolveSubSteps(step *recipe.Step) ([]recipe.Step, error) {
+func (e *Engine) resolveSubSteps(step *workflow.Step) ([]workflow.Step, error) {
 	if len(step.Steps) > 0 {
 		return step.Steps, nil
 	}
+	if step.Type == "split" && len(step.Each) > 0 {
+		return step.Each, nil
+	}
 	workflowName := strings.TrimSpace(step.Workflow)
 	if workflowName == "" {
-		workflowName = strings.TrimSpace(step.Recipe)
+		return nil, fmt.Errorf("orchestration step has no child steps or workflow reference")
 	}
-	if workflowName == "" {
-		return nil, fmt.Errorf("foreach has no steps or workflow")
-	}
-	resolved, err := recipe.Resolve(workflowName, e.Cook.RepoRoot)
+	resolved, err := workflow.Resolve(workflowName, e.Cook.RepoRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -1810,22 +1838,22 @@ func (e *Engine) resolveSubSteps(step *recipe.Step) ([]recipe.Step, error) {
 	if resolved.Path != "" {
 		recipeDir = filepath.Dir(resolved.Path)
 	}
-	parsed, err := recipe.Parse(resolved.Raw, recipeDir)
+	parsed, _, err := workflow.Parse(resolved.Raw, recipeDir)
 	if err != nil {
 		return nil, err
 	}
-	if errs := recipe.Validate(parsed); len(errs) > 0 {
+	if errs := workflow.Validate(parsed); len(errs) > 0 {
 		return nil, errs[0]
 	}
 	return parsed.Steps, nil
 }
 
-func (e *Engine) resolveWorkflow(step *recipe.Step, stepPath string, taskContext *plan.Task, inheritedVars map[string]string) (*recipe.Recipe, map[string]string, error) {
+func (e *Engine) resolveWorkflow(step *workflow.Step, stepPath string, taskContext *plan.Task, inheritedVars map[string]string) (*workflow.Workflow, map[string]string, error) {
 	workflowName := strings.TrimSpace(step.Workflow)
 	if workflowName == "" {
-		workflowName = strings.TrimSpace(step.Recipe)
+		return nil, nil, fmt.Errorf("workflow: name is empty")
 	}
-	resolved, err := recipe.Resolve(workflowName, e.Cook.RepoRoot)
+	resolved, err := workflow.Resolve(workflowName, e.Cook.RepoRoot)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1833,34 +1861,17 @@ func (e *Engine) resolveWorkflow(step *recipe.Step, stepPath string, taskContext
 	if resolved.Path != "" {
 		recipeDir = filepath.Dir(resolved.Path)
 	}
-	parsed, err := recipe.Parse(resolved.Raw, recipeDir)
+	parsed, _, err := workflow.Parse(resolved.Raw, recipeDir)
 	if err != nil {
 		return nil, nil, err
 	}
-	if errs := recipe.Validate(parsed); len(errs) > 0 {
+	if errs := workflow.Validate(parsed); len(errs) > 0 {
 		return nil, nil, errs[0]
 	}
 	base := e.buildVars(taskContext, nil, nil, inheritedVars)
 	out := map[string]string{}
-	for k, def := range parsed.Inputs {
-		val := ""
-		if step.With != nil {
-			if raw, ok := step.With[k]; ok {
-				val = template.Resolve(raw, base, e.StateBag, stepPath)
-			}
-		}
-		if strings.TrimSpace(val) == "" {
-			val = def.Default
-		}
-		if strings.TrimSpace(val) == "" && def.Required {
-			return nil, nil, fmt.Errorf("workflow %q requires input %q", workflowName, k)
-		}
-		out[k] = val
-	}
-	for k, v := range step.With {
-		if _, ok := out[k]; !ok {
-			out[k] = template.Resolve(v, base, e.StateBag, stepPath)
-		}
+	for k, raw := range step.With {
+		out[k] = template.Resolve(raw, base, e.StateBag, stepPath)
 	}
 	return parsed, out, nil
 }
