@@ -156,9 +156,10 @@ func (BudgetExceeded) EventType() string { return "budget_exceeded" }
 
 // RetryTriggered is emitted when the retry engine decides to retry (before worktree reset).
 type RetryTriggered struct {
-	Step      string            `json:"step"`
-	Attempt   int               `json:"attempt"`
-	Overrides map[string]string `json:"overrides,omitempty"`
+	Step         string            `json:"step"`
+	Attempt      int               `json:"attempt"`
+	Overrides    map[string]string `json:"overrides"`
+	MatchedEntry *int              `json:"matched_entry,omitempty"`
 }
 
 func (RetryTriggered) EventType() string { return "retry_triggered" }

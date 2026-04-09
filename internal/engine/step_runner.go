@@ -22,9 +22,42 @@ import (
 	"github.com/isomorphx/gump/internal/ledger"
 	"github.com/isomorphx/gump/internal/plan"
 	"github.com/isomorphx/gump/internal/sandbox"
+	"github.com/isomorphx/gump/internal/state"
 	"github.com/isomorphx/gump/internal/template"
 	"github.com/isomorphx/gump/internal/workflow"
 )
+
+// retryEval is the retry policy object used in the atomic-step loop (live *RetryEvaluator or a test double).
+type retryEval interface {
+	Evaluate(attempt int, gateStates map[string]gatePassState, validator ValidatorInvoker, resolveCtx *state.ResolveContext) (*RetryDecision, error)
+}
+
+// retryEvalFactory builds retryEval for a step; tests replace it to inject mocks.
+var retryEvalFactory func(step *workflow.Step, stepPath string) retryEval
+
+// retryEvaluateHook wraps Evaluate in tests; when set, the hook decides the decision (may delegate to the real evaluator).
+var retryEvaluateHook func(real retryEval, attempt int, gateStates map[string]gatePassState, validator ValidatorInvoker, resolveCtx *state.ResolveContext) (*RetryDecision, error)
+
+func makeRetryEvalForStep(step *workflow.Step, stepPath string) retryEval {
+	if retryEvalFactory != nil {
+		return retryEvalFactory(step, stepPath)
+	}
+	return NewRetryEvaluator(step.Retry, stepPath, strings.TrimSpace(step.Agent))
+}
+
+func evaluateRetryAttempt(eval retryEval, attempt int, gateStates map[string]gatePassState, resolveCtx *state.ResolveContext) (*RetryDecision, error) {
+	if retryEvaluateHook != nil {
+		return retryEvaluateHook(eval, attempt, gateStates, nil, resolveCtx)
+	}
+	return eval.Evaluate(attempt, gateStates, nil, resolveCtx)
+}
+
+// atomicRetryApply carries R4 sticky overrides into GET/RUN for one retry attempt.
+type atomicRetryApply struct {
+	agent             string
+	promptTemplate    string
+	forceFreshSession bool
+}
 
 // lastStepOutcome holds the result of the last runAtomicStepOnce so we emit step_completed only once after the retry loop (not per attempt).
 type lastStepOutcome struct {
@@ -68,7 +101,7 @@ func (e *Engine) runAtomicStep(step *workflow.Step, stepPath string, taskContext
 			c.FromRestart = true
 			errCtx = c
 		}
-		err, _ := e.runAtomicStepOnce(step, stepPath, taskContext, lastSessionByAgent, parentSession, 1, override0, errCtx, nil, inheritedVars)
+		err, _ := e.runAtomicStepOnce(step, stepPath, taskContext, lastSessionByAgent, parentSession, 1, override0, errCtx, nil, inheritedVars, nil)
 		e.emitStepCompletedFromLast()
 		return err
 	}
@@ -78,7 +111,7 @@ func (e *Engine) runAtomicStep(step *workflow.Step, stepPath string, taskContext
 		c.FromRestart = true
 		errCtxStart = c
 	}
-	err, preCommit := e.runAtomicStepOnce(step, stepPath, taskContext, lastSessionByAgent, parentSession, 1, override0, errCtxStart, nil, inheritedVars)
+	err, preCommit := e.runAtomicStepOnce(step, stepPath, taskContext, lastSessionByAgent, parentSession, 1, override0, errCtxStart, nil, inheritedVars, nil)
 	if err == nil {
 		e.emitStepCompletedFromLast()
 		return nil
@@ -87,25 +120,67 @@ func (e *Engine) runAtomicStep(step *workflow.Step, stepPath string, taskContext
 	if errCtx != nil {
 		errCtx.Attempt = 1
 	}
-	for attempt := 2; attempt <= maxA; attempt++ {
-		if workflow.StepRetryWorktreeReset(step) {
+	eval := makeRetryEvalForStep(step, stepPath)
+	// WHY: Evaluate(maxA+1) must run after the last failed attempt so exit: caps match R3 without an extra agent run.
+	for attempt := 2; attempt <= maxA+1; attempt++ {
+		gateStates := GateStatesFromStep(e.State, stepPath, step.Gate)
+		resolveCtx := e.newTemplateCtx(stepPath, step, taskContext, errCtx, attempt, inheritedVars, nil)
+		decision, evalErr := evaluateRetryAttempt(eval, attempt, gateStates, resolveCtx)
+		if evalErr != nil {
+			if e.Run.Ledger != nil {
+				_ = e.Run.Ledger.Emit(ledger.CircuitBreaker{Step: stepPath, Scope: "step", Reason: evalErr.Error(), TotalAttempts: attempt - 1})
+			}
+			e.emitStepCompletedFromLast()
+			return fmt.Errorf("step %s: %w", step.Name, evalErr)
+		}
+		if decision.Action == "fatal" {
+			if e.Run.Ledger != nil {
+				_ = e.Run.Ledger.Emit(ledger.CircuitBreaker{Step: stepPath, Scope: "step", Reason: "all attempts exhausted", TotalAttempts: maxA})
+			}
+			e.emitStepCompletedFromLast()
+			fmt.Fprintf(os.Stderr, "        ✗ FATAL: all attempts exhausted (%d attempts)\n", maxA)
+			return fmt.Errorf("step %s: all attempts exhausted (%d attempts)", step.Name, maxA)
+		}
+		if attempt > maxA {
+			break
+		}
+		e.State.RotatePrev(stepPath)
+		if strings.EqualFold(strings.TrimSpace(decision.Worktree), "reset") {
 			if rerr := e.Run.ResetTo(preCommit); rerr != nil {
 				return fmt.Errorf("retry worktree reset: %w", rerr)
 			}
 		}
 		if e.Run.Ledger != nil {
-			_ = e.Run.Ledger.Emit(ledger.RetryTriggered{Step: stepPath, Attempt: attempt, Overrides: map[string]string{"retry": "minimal"}})
+			var mePtr *int
+			if decision.MatchedEntry >= 0 {
+				v := decision.MatchedEntry
+				mePtr = &v
+			}
+			ov := ledgerOverridesFromDecision(decision)
+			if ov == nil {
+				ov = map[string]string{}
+			}
+			_ = e.Run.Ledger.Emit(ledger.RetryTriggered{Step: stepPath, Attempt: attempt, Overrides: ov, MatchedEntry: mePtr})
 			e.retryTriggeredCount++
 			e.State.IncrementRunRetries()
 		}
-		RetryTriggerLine(fmt.Sprintf("retry attempt %d/%d (minimal)", attempt, maxA))
+		RetryTriggerLine(fmt.Sprintf("retry attempt %d/%d", attempt, maxA))
 		if errCtx != nil {
 			errCtx.Attempt = attempt
-			errCtx.Strategy = "minimal"
+			errCtx.Strategy = "retry"
+		}
+		var retryApply *atomicRetryApply
+		if strings.TrimSpace(decision.Agent) != "" || strings.TrimSpace(decision.Prompt) != "" ||
+			strings.EqualFold(strings.TrimSpace(decision.Session), "new") {
+			retryApply = &atomicRetryApply{
+				agent:             strings.TrimSpace(decision.Agent),
+				promptTemplate:    strings.TrimSpace(decision.Prompt),
+				forceFreshSession: strings.EqualFold(strings.TrimSpace(decision.Session), "new"),
+			}
 		}
 		prevForce := e.forceSessionReuse
 		e.forceSessionReuse = true
-		err, preCommit = e.runAtomicStepOnce(step, stepPath, taskContext, lastSessionByAgent, parentSession, attempt, override0, errCtx, nil, inheritedVars)
+		err, preCommit = e.runAtomicStepOnce(step, stepPath, taskContext, lastSessionByAgent, parentSession, attempt, override0, errCtx, nil, inheritedVars, retryApply)
 		e.forceSessionReuse = prevForce
 		if err == nil {
 			e.emitStepCompletedFromLast()
@@ -128,7 +203,7 @@ func (e *Engine) runAtomicStep(step *workflow.Step, stepPath string, taskContext
 }
 
 // runAtomicStepOnce runs one attempt of an atomic step; returns (err, preStepCommit) so retry can reset. preStepCommit is captured at start.
-func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskContext *plan.Task, lastSessionByAgent map[string]string, parentSession workflow.SessionConfig, attempt int, agentOverride string, errorContext *ErrorContext, extraVars map[string]string, inheritedVars map[string]string) (err error, preStepCommit string) {
+func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskContext *plan.Task, lastSessionByAgent map[string]string, parentSession workflow.SessionConfig, attempt int, agentOverride string, errorContext *ErrorContext, extraVars map[string]string, inheritedVars map[string]string, retry *atomicRetryApply) (err error, preStepCommit string) {
 	var guardContinueGate bool
 	var guardFailPrefix string
 	e.lastFailureSource = ""
@@ -149,9 +224,6 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 	}
 	e.globalStepAttempts[stepPath]++
 	e.writeEngineStepAttemptMarker(step.Name, e.globalStepAttempts[stepPath])
-	if attempt > 1 {
-		e.State.RotatePrev(stepPath)
-	}
 	agentWT := e.Run.WorktreeDir
 	gateWT := e.Run.WorktreeDir
 	worktreeNone := strings.EqualFold(strings.TrimSpace(step.Worktree), "none")
@@ -177,8 +249,11 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 	taskName := taskContextName(taskContext)
 	tctx := e.newTemplateCtx(stepPath, step, taskContext, errorContext, attempt, inheritedVars, extraVars)
 	outputMode := step.OutputMode()
-	prompt := step.EffectivePromptAt(attempt)
-	resolvedPrompt := template.Resolve(prompt, tctx)
+	promptSrc := step.Prompt
+	if retry != nil && strings.TrimSpace(retry.promptTemplate) != "" {
+		promptSrc = retry.promptTemplate
+	}
+	resolvedPrompt := template.Resolve(promptSrc, tctx)
 
 	effectiveSession := workflow.ResolveSessionForEngine(step, parentSession)
 	sessionReuse := attempt == 1 && (effectiveSession.Mode == "reuse" || effectiveSession.Mode == "reuse-targeted")
@@ -187,12 +262,15 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 	if taskContext != nil && len(taskContext.Files) > 0 {
 		taskFiles = taskContext.Files
 	}
-	agentToUse := step.EffectiveAgentAt(attempt, step.Agent)
+	agentToUse := strings.TrimSpace(step.Agent)
 	if e.CookAgentOverride != "" {
-		agentToUse = e.CookAgentOverride
+		agentToUse = strings.TrimSpace(e.CookAgentOverride)
 	}
-	if agentOverride != "" {
-		agentToUse = agentOverride
+	if strings.TrimSpace(agentOverride) != "" {
+		agentToUse = strings.TrimSpace(agentOverride)
+	}
+	if retry != nil && strings.TrimSpace(retry.agent) != "" {
+		agentToUse = strings.TrimSpace(retry.agent)
 	}
 	agentToUse = strings.TrimSpace(agentToUse)
 	if agentToUse != "pass" && agentToUse != "" {
@@ -229,18 +307,14 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 				maxA = 2
 			}
 		}
-		promptOverridden := false
-		for _, r := range step.Retry {
-			if r.Exit > 0 {
-				continue
-			}
-			if r.Attempt > 0 && ra >= r.Attempt && strings.TrimSpace(r.Prompt) != "" {
-				promptOverridden = true
-				break
-			}
-		}
+		promptOverridden := retry != nil && strings.TrimSpace(retry.promptTemplate) != ""
 		escFrom, escTo := "", ""
-		if agentOverride != "" {
+		if retry != nil {
+			if r := strings.TrimSpace(retry.agent); r != "" && r != strings.TrimSpace(step.Agent) {
+				escTo = r
+				escFrom = step.Agent
+			}
+		} else if agentOverride != "" {
 			escTo = agentOverride
 			escFrom = step.Agent
 		}
@@ -273,47 +347,50 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 	}
 
 	sessionID := ""
-	if e.forceSessionReuse {
-		if sid := e.lastSessionIDForStep(stepPath); sid != "" {
-			sessionID = sid
-		}
-		if sessionID == "" && lastSessionByAgent != nil {
-			if sid, ok := lastSessionByAgent[agent.AgentPrefix(agentToUse)]; ok {
+	// WHY: sticky session:new must not be undone by reuse-on-retry resolution in the same attempt.
+	if retry == nil || !retry.forceFreshSession {
+		if e.forceSessionReuse {
+			if sid := e.lastSessionIDForStep(stepPath); sid != "" {
 				sessionID = sid
 			}
-		}
-		if sessionID == "" {
-			sessionID = e.State.Get(stepPath + ".session_id")
-		}
-	}
-	if e.forceSessionReuse && sessionID != "" {
-		// retry same policy: force session reuse for this step/group attempt.
-	} else {
-		switch effectiveSession.Mode {
-		case "fresh":
-			sessionID = ""
-		case "reuse-on-retry":
-			if attempt > 1 {
-				sessionID = e.lastSessionIDForStep(stepPath)
-			} else if sid := e.State.PrevSessionID(stepPath); sid != "" {
-				// WHY: after restart_from, the prior session id lives in prev so attempt 1 can resume the review thread.
-				sessionID = sid
-			}
-		case "reuse":
-			if attempt == 1 && lastSessionByAgent != nil {
+			if sessionID == "" && lastSessionByAgent != nil {
 				if sid, ok := lastSessionByAgent[agent.AgentPrefix(agentToUse)]; ok {
 					sessionID = sid
 				}
-				if sessionID == "" {
-					// WHY: resume runs skip previously completed steps, so the in-memory map is empty.
-					sessionID = e.State.Get(stepPath + ".session_id")
-				}
 			}
-		case "reuse-targeted":
-			if attempt == 1 {
-				sessionID = e.resolveTargetedSession(effectiveSession.Target, agentToUse)
-				if sessionID == "" {
-					fmt.Fprintf(os.Stderr, "[%s] session: reuse: %s — target step not found or different agent, using fresh session\n", brand.Lower(), effectiveSession.Target)
+			if sessionID == "" {
+				sessionID = e.State.Get(stepPath + ".session_id")
+			}
+		}
+		if e.forceSessionReuse && sessionID != "" {
+			// retry same policy: force session reuse for this step/group attempt.
+		} else {
+			switch effectiveSession.Mode {
+			case "fresh":
+				sessionID = ""
+			case "reuse-on-retry":
+				if attempt > 1 {
+					sessionID = e.lastSessionIDForStep(stepPath)
+				} else if sid := e.State.PrevSessionID(stepPath); sid != "" {
+					// WHY: after restart_from, the prior session id lives in prev so attempt 1 can resume the review thread.
+					sessionID = sid
+				}
+			case "reuse":
+				if attempt == 1 && lastSessionByAgent != nil {
+					if sid, ok := lastSessionByAgent[agent.AgentPrefix(agentToUse)]; ok {
+						sessionID = sid
+					}
+					if sessionID == "" {
+						// WHY: resume runs skip previously completed steps, so the in-memory map is empty.
+						sessionID = e.State.Get(stepPath + ".session_id")
+					}
+				}
+			case "reuse-targeted":
+				if attempt == 1 {
+					sessionID = e.resolveTargetedSession(effectiveSession.Target, agentToUse)
+					if sessionID == "" {
+						fmt.Fprintf(os.Stderr, "[%s] session: reuse: %s — target step not found or different agent, using fresh session\n", brand.Lower(), effectiveSession.Target)
+					}
 				}
 			}
 		}
@@ -681,105 +758,105 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 	if guardContinueGate {
 		outputValue = ""
 	} else {
-	switch outputMode {
-	case "plan":
-		tasks, raw, err := ExtractPlanOutput(agentWT)
-		if err != nil {
-			exec.Status = StepFatal
-			exec.FinishedAt = time.Now()
-			e.Steps = append(e.Steps, exec)
-			e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), nil, outputMode, "", false)
-			fmt.Fprintf(os.Stderr, "[%s]\tfatal\tFATAL: %v\n", stepPath, err)
-			return fmt.Errorf("plan step failed: %w", err), preStepCommit
-		}
-		outputValue = raw
-		_ = tasks
-	case "artifact":
-		text, err := ExtractArtifactOutput(agentWT)
-		if err != nil {
-			exec.Status = StepFatal
-			exec.FinishedAt = time.Now()
-			e.Steps = append(e.Steps, exec)
-			e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), nil, outputMode, "", false)
-			fmt.Fprintf(os.Stderr, "[%s]\tfatal\tFATAL: %v\n", stepPath, err)
-			return fmt.Errorf("artifact step failed: %w", err), preStepCommit
-		}
-		outputValue = text
-	case "validate":
-		pass, boolStr, comments, raw, err := ParseValidateJSON(agentWT)
-		if err != nil {
-			dc, snapErr := e.snapshotForAtomicStep(worktreeNone, preStepCommit, step.Name, taskName, attempt)
-			if snapErr != nil {
+		switch outputMode {
+		case "plan":
+			tasks, raw, err := ExtractPlanOutput(agentWT)
+			if err != nil {
 				exec.Status = StepFatal
 				exec.FinishedAt = time.Now()
 				e.Steps = append(e.Steps, exec)
 				e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), nil, outputMode, "", false)
-				fmt.Fprintf(os.Stderr, "[%s]\tfatal\tFATAL: %v\n", stepPath, snapErr)
-				return fmt.Errorf("snapshot after invalid validate.json: %w", snapErr), preStepCommit
+				fmt.Fprintf(os.Stderr, "[%s]\tfatal\tFATAL: %v\n", stepPath, err)
+				return fmt.Errorf("plan step failed: %w", err), preStepCommit
 			}
-			errMsg := err.Error()
-			exec.ValidateError = errMsg
-			exec.ValidateDiff = dc.Patch
-			exec.Status = StepFatal
-			exec.FinishedAt = time.Now()
-			e.Steps = append(e.Steps, exec)
-			e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), dc, outputMode, raw, true)
-			e.lastFailureSource = "review_fail"
-			fmt.Fprintf(os.Stderr, "[%s]\tFAIL\t%s\n", stepPath, errMsg)
-			RetryValidationFailed(errMsg, "")
-			if raw != "" {
+			outputValue = raw
+			_ = tasks
+		case "artifact":
+			text, err := ExtractArtifactOutput(agentWT)
+			if err != nil {
+				exec.Status = StepFatal
+				exec.FinishedAt = time.Now()
+				e.Steps = append(e.Steps, exec)
+				e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), nil, outputMode, "", false)
+				fmt.Fprintf(os.Stderr, "[%s]\tfatal\tFATAL: %v\n", stepPath, err)
+				return fmt.Errorf("artifact step failed: %w", err), preStepCommit
+			}
+			outputValue = text
+		case "validate":
+			pass, boolStr, comments, raw, err := ParseValidateJSON(agentWT)
+			if err != nil {
+				dc, snapErr := e.snapshotForAtomicStep(worktreeNone, preStepCommit, step.Name, taskName, attempt)
+				if snapErr != nil {
+					exec.Status = StepFatal
+					exec.FinishedAt = time.Now()
+					e.Steps = append(e.Steps, exec)
+					e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), nil, outputMode, "", false)
+					fmt.Fprintf(os.Stderr, "[%s]\tfatal\tFATAL: %v\n", stepPath, snapErr)
+					return fmt.Errorf("snapshot after invalid validate.json: %w", snapErr), preStepCommit
+				}
+				errMsg := err.Error()
+				exec.ValidateError = errMsg
+				exec.ValidateDiff = dc.Patch
+				exec.Status = StepFatal
+				exec.FinishedAt = time.Now()
+				e.Steps = append(e.Steps, exec)
+				e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), dc, outputMode, raw, true)
+				e.lastFailureSource = "review_fail"
+				fmt.Fprintf(os.Stderr, "[%s]\tFAIL\t%s\n", stepPath, errMsg)
+				RetryValidationFailed(errMsg, "")
+				if raw != "" {
+					filesForBag := dc.FilesChanged
+					if list, err2 := gitDiffNameOnly(gateWT, dc.BaseCommit, dc.HeadCommit); err2 == nil {
+						filesForBag = list
+					}
+					e.State.Set(stepPath+".comments", "")
+					e.State.SetStepOutput(stepPath, "", dc.Patch, filesForBag, result.SessionID)
+				}
+				if e.globalStepAttempts[stepPath] > step.MaxAttempts() {
+					if e.Run.Ledger != nil {
+						_ = e.Run.Ledger.Emit(ledger.CircuitBreaker{Step: stepPath, Scope: "step", Reason: "budget exhausted after invalid validate.json", TotalAttempts: attempt})
+					}
+					return fmt.Errorf("step %s: all attempts exhausted", step.Name), preStepCommit
+				}
+				return fmt.Errorf("step %s: validate step failed: %w", step.Name, err), preStepCommit
+			}
+			e.State.Set(stepPath+".comments", comments)
+			outputValue = boolStr
+			if !pass {
+				dc, snapErr := e.snapshotForAtomicStep(worktreeNone, preStepCommit, step.Name, taskName, attempt)
+				if snapErr != nil {
+					exec.Status = StepFatal
+					exec.FinishedAt = time.Now()
+					e.Steps = append(e.Steps, exec)
+					e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), nil, outputMode, "", false)
+					fmt.Fprintf(os.Stderr, "[%s]\tfatal\tFATAL: %v\n", stepPath, snapErr)
+					return fmt.Errorf("snapshot after failed validate: %w", snapErr), preStepCommit
+				}
 				filesForBag := dc.FilesChanged
 				if list, err2 := gitDiffNameOnly(gateWT, dc.BaseCommit, dc.HeadCommit); err2 == nil {
 					filesForBag = list
 				}
-				e.State.Set(stepPath+".comments", "")
-				e.State.SetStepOutput(stepPath, "", dc.Patch, filesForBag, result.SessionID)
-			}
-			if e.globalStepAttempts[stepPath] > step.MaxAttempts() {
-				if e.Run.Ledger != nil {
-					_ = e.Run.Ledger.Emit(ledger.CircuitBreaker{Step: stepPath, Scope: "step", Reason: "budget exhausted after invalid validate.json", TotalAttempts: attempt})
-				}
-				return fmt.Errorf("step %s: all attempts exhausted", step.Name), preStepCommit
-			}
-			return fmt.Errorf("step %s: validate step failed: %w", step.Name, err), preStepCommit
-		}
-		e.State.Set(stepPath+".comments", comments)
-		outputValue = boolStr
-		if !pass {
-			dc, snapErr := e.snapshotForAtomicStep(worktreeNone, preStepCommit, step.Name, taskName, attempt)
-			if snapErr != nil {
+				e.State.SetStepOutput(stepPath, boolStr, dc.Patch, filesForBag, result.SessionID)
+				errMsg := fmt.Sprintf("validate did not pass: %s", comments)
+				exec.ValidateError = errMsg
+				exec.ValidateDiff = dc.Patch
+				exec.ReviewComment = comments
 				exec.Status = StepFatal
 				exec.FinishedAt = time.Now()
 				e.Steps = append(e.Steps, exec)
-				e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), nil, outputMode, "", false)
-				fmt.Fprintf(os.Stderr, "[%s]\tfatal\tFATAL: %v\n", stepPath, snapErr)
-				return fmt.Errorf("snapshot after failed validate: %w", snapErr), preStepCommit
-			}
-			filesForBag := dc.FilesChanged
-			if list, err2 := gitDiffNameOnly(gateWT, dc.BaseCommit, dc.HeadCommit); err2 == nil {
-				filesForBag = list
-			}
-			e.State.SetStepOutput(stepPath, boolStr, dc.Patch, filesForBag, result.SessionID)
-			errMsg := fmt.Sprintf("validate did not pass: %s", comments)
-			exec.ValidateError = errMsg
-			exec.ValidateDiff = dc.Patch
-			exec.ReviewComment = comments
-			exec.Status = StepFatal
-			exec.FinishedAt = time.Now()
-			e.Steps = append(e.Steps, exec)
-			e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), dc, outputMode, outputValue, true)
-			e.lastFailureSource = "review_fail"
-			fmt.Fprintf(os.Stderr, "[%s]\tFAIL\t%s\n", stepPath, errMsg)
-			RetryValidationFailed("validate did not pass", "")
-			if e.globalStepAttempts[stepPath] > step.MaxAttempts() {
-				if e.Run.Ledger != nil {
-					_ = e.Run.Ledger.Emit(ledger.CircuitBreaker{Step: stepPath, Scope: "step", Reason: "budget exhausted after failed validate", TotalAttempts: attempt})
+				e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), dc, outputMode, outputValue, true)
+				e.lastFailureSource = "review_fail"
+				fmt.Fprintf(os.Stderr, "[%s]\tFAIL\t%s\n", stepPath, errMsg)
+				RetryValidationFailed("validate did not pass", "")
+				if e.globalStepAttempts[stepPath] > step.MaxAttempts() {
+					if e.Run.Ledger != nil {
+						_ = e.Run.Ledger.Emit(ledger.CircuitBreaker{Step: stepPath, Scope: "step", Reason: "budget exhausted after failed validate", TotalAttempts: attempt})
+					}
+					return fmt.Errorf("step %s: all attempts exhausted", step.Name), preStepCommit
 				}
-				return fmt.Errorf("step %s: all attempts exhausted", step.Name), preStepCommit
+				return fmt.Errorf("step %s: validate did not pass", step.Name), preStepCommit
 			}
-			return fmt.Errorf("step %s: validate did not pass", step.Name), preStepCommit
 		}
-	}
 	}
 
 	dc, err := e.snapshotForAtomicStep(worktreeNone, preStepCommit, step.Name, taskName, attempt)
@@ -916,7 +993,7 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 
 // runAtomicStepWithVars runs one atomic step with optional extra template vars. No retry loop.
 func (e *Engine) runAtomicStepWithVars(step *workflow.Step, stepPath string, taskContext *plan.Task, lastSessionByAgent map[string]string, parentSession workflow.SessionConfig, extraVars map[string]string) error {
-	err, _ := e.runAtomicStepOnce(step, stepPath, taskContext, lastSessionByAgent, parentSession, 1, "", nil, extraVars, nil)
+	err, _ := e.runAtomicStepOnce(step, stepPath, taskContext, lastSessionByAgent, parentSession, 1, "", nil, extraVars, nil, nil)
 	e.emitStepCompletedFromLast()
 	return err
 }

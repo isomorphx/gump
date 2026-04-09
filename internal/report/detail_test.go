@@ -22,7 +22,7 @@ func TestBuildStepDetailAndRender(t *testing.T) {
 		`{"type":"step_started","step":"build/impl","agent":"claude-sonnet","step_type":"code","attempt":1}`,
 		`{"type":"agent_completed","step":"build/impl","duration_ms":1200,"tokens_in":1000,"tokens_out":200,"cost_usd":0.12}`,
 		`{"type":"gate_failed","step":"build/impl","reason":"tests failed"}`,
-		`{"type":"retry_triggered","step":"build/impl","attempt":1,"overrides":{"retry":"minimal"}}`,
+		`{"type":"retry_triggered","step":"build/impl","attempt":1,"overrides":{}}`,
 		`{"type":"step_started","step":"build/impl","agent":"claude-sonnet","step_type":"code","attempt":2}`,
 		`{"type":"agent_completed","step":"build/impl","duration_ms":900,"tokens_in":700,"tokens_out":150,"cost_usd":0.08}`,
 		`{"type":"step_completed","step":"build/impl","status":"pass"}`,
