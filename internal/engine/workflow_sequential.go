@@ -51,7 +51,17 @@ func (e *Engine) dispatchTopLevelStep(step *workflow.Step, stepPath string, last
 		return fmt.Errorf("parallel groups not yet implemented (R6)")
 	}
 	if strings.TrimSpace(step.Workflow) != "" {
-		return fmt.Errorf("workflow calls not yet implemented (R5)")
+		swr := &SubWorkflowRunner{ParentEngine: e}
+		resolveCtx := e.newTemplateCtx(stepPath, step, nil, nil, 1, nil, nil)
+		inputs := make(map[string]string, len(step.With))
+		for k, v := range step.With {
+			inputs[k] = v
+		}
+		childState, err := swr.RunSubWorkflow(step.Workflow, inputs, e.Run.WorktreeDir, stepPath, resolveCtx)
+		for _, k := range childState.Keys() {
+			e.State.Set(step.Name+".state."+k, childState.Get(k))
+		}
+		return err
 	}
 	if workflow.IsGateOnlyStep(step) {
 		return e.executeGateOnlyTopLevel(step, stepPath)

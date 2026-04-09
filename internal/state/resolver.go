@@ -83,6 +83,12 @@ func (ctx *ResolveContext) Resolve(varName string) string {
 			return v
 		}
 	}
+	// WHY: sub-workflow inputs from gate with: / RunSubWorkflow live as flat keys (e.g. agent, diff); templates must see them without step. prefixes (R5 / ADR-047).
+	if ctx.State != nil && !strings.Contains(varName, ".") {
+		if v := strings.TrimSpace(ctx.State.Get(varName)); v != "" {
+			return v
+		}
+	}
 	return ctx.resolveQualifiedStepVar(varName)
 }
 

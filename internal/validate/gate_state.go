@@ -16,6 +16,9 @@ func GateStateFieldName(gates []workflow.GateEntry, idx int) string {
 		return fmt.Sprintf("unknown_%d", idx)
 	}
 	g := gates[idx]
+	if g.Type == "validate" && strings.TrimSpace(g.Arg) != "" {
+		return workflow.ValidatorGateNameFromPath(g.Arg)
+	}
 	if g.Arg == "" {
 		for j := 0; j < idx; j++ {
 			if gates[j].Type == g.Type && gates[j].Arg == "" {
@@ -54,6 +57,16 @@ func ApplyGateResultsToState(st *state.State, stepPath string, gates []workflow.
 		g := gates[i]
 		if g.Type == "schema" && strings.TrimSpace(g.Arg) == schemaReviewArg {
 			if c := strings.TrimSpace(st.Get(stepPath + ".comments")); c != "" {
+				st.Set(prefix+".comments", c)
+			}
+		}
+		if g.Type == "validate" {
+			if passLike {
+				st.Set(prefix+".pass", "true")
+			} else {
+				st.Set(prefix+".pass", "false")
+			}
+			if c := strings.TrimSpace(r.Stdout); c != "" {
 				st.Set(prefix+".comments", c)
 			}
 		}

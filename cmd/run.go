@@ -38,6 +38,7 @@ var (
 	cookCookIDAlias string
 	cookVerbose     bool
 	cookPauseAfter  string
+	cookSet         []string
 )
 
 var cookCmd = &cobra.Command{
@@ -67,6 +68,7 @@ func init() {
 	_ = cookCmd.Flags().MarkDeprecated("cook", "use --run instead")
 	cookCmd.Flags().BoolVarP(&cookVerbose, "verbose", "v", false, "Full streaming output (no truncation)")
 	cookCmd.Flags().StringVar(&cookPauseAfter, "pause-after", "", "Inject HITL pause after the given step name; the step must exist in the recipe")
+	cookCmd.Flags().StringSliceVar(&cookSet, "set", nil, "Initial state key=value before the run (repeatable); same idea as sub-workflow with:")
 	rootCmd.AddCommand(cookCmd)
 }
 
@@ -144,6 +146,7 @@ func runCook(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	defer func() { workflow.ValidateProjectRoot = "" }()
 	workflow.ParseWarn = func(msg string) { fmt.Fprintln(os.Stderr, "warning:", msg) }
 	workflow.ValidateWarn = func(path, message string) {
 		if path != "" {
@@ -223,6 +226,7 @@ func runCook(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				return fmt.Errorf("%w\n(recipe loaded from %s)", err, resolved.Source)
 			}
+			workflow.ValidateProjectRoot = projectRoot
 			if errs := workflow.Validate(rec); len(errs) > 0 {
 				for _, e := range errs {
 					fmt.Fprintln(os.Stderr, e.Error())
@@ -268,6 +272,7 @@ func runCook(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("replay: parse workflow snapshot: %w", err)
 		}
+		workflow.ValidateProjectRoot = ctx.RepoRoot
 		if errs := workflow.Validate(rec); len(errs) > 0 {
 			for _, e := range errs {
 				fmt.Fprintln(os.Stderr, e.Error())
@@ -285,6 +290,7 @@ func runCook(cmd *cobra.Command, args []string) error {
 	}
 	specPath = args[0]
 	projectRoot := config.ProjectRoot()
+	workflow.ValidateProjectRoot = projectRoot
 	resolved, err = workflow.Resolve(cookRecipe, projectRoot)
 	if err != nil {
 		return err
@@ -312,6 +318,9 @@ func runCook(cmd *cobra.Command, args []string) error {
 			fmt.Fprintln(os.Stderr, e.Error())
 		}
 		os.Exit(1)
+	}
+	if cookDryRun {
+		workflow.EmitDryRunSubworkflowInputWarnings(rec, projectRoot)
 	}
 	specInfo, err := os.Stat(specPath)
 	if err != nil {
@@ -387,6 +396,17 @@ func runCook(cmd *cobra.Command, args []string) error {
 	eng := engine.New(c, rec, resolver, cfg, string(specContent))
 	eng.AgentsCLI = agentsCLIFromRecipe(rec, cookAgentStub)
 	eng.CookAgentOverride = cookAgent
+	for _, kv := range cookSet {
+		kv = strings.TrimSpace(kv)
+		if kv == "" {
+			continue
+		}
+		i := strings.IndexByte(kv, '=')
+		if i <= 0 {
+			return fmt.Errorf("--set %q: expected key=value", kv)
+		}
+		eng.State.Set(strings.TrimSpace(kv[:i]), strings.TrimSpace(kv[i+1:]))
+	}
 	if cmd.Flags().Changed("verbose") {
 		engine.Verbose = cookVerbose
 	} else {

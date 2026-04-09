@@ -44,7 +44,7 @@ func TestEvaluateRetryAttempt_HookOverridesDecision(t *testing.T) {
 		return real.Evaluate(attempt, gateStates, validator, resolveCtx)
 	}
 	ctx := &state.ResolveContext{State: state.New(), StepPath: "s"}
-	d, err := evaluateRetryAttempt(eval, 2, nil, ctx)
+	d, err := evaluateRetryAttempt(eval, 2, nil, nil, ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

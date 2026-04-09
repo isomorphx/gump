@@ -11,22 +11,30 @@ type Workflow struct {
 
 // Step is one unit in the workflow graph: code execution, split orchestration, validate, gate-only, parallel group, or workflow call.
 type Step struct {
-	Name     string
-	Type     string
-	Prompt   string
-	Context  []ContextSource
-	Worktree string
-	Session  SessionConfig
-	Agent    string
-	Guard    Guard
-	HITL     string
-	Gate     []GateEntry
-	Retry    []RetryEntry
-	Each     []Step
-	Parallel bool
-	Steps    []Step
-	Workflow string
-	With     map[string]string
+	Name        string
+	Type        string
+	Prompt      string
+	Context     []ContextSource
+	Worktree    string
+	Session     SessionConfig
+	Agent       string
+	Guard       Guard
+	HITL        string
+	Gate        []GateEntry
+	Retry       []RetryEntry
+	Each        []Step
+	Parallel    bool
+	Steps       []Step
+	Workflow    string
+	With        map[string]string
+	GetWorkflow *GetWorkflowSpec
+}
+
+// GetWorkflowSpec is a nested workflow run during GET (R5); state is grafted under Name for prompt resolution.
+type GetWorkflowSpec struct {
+	Name string
+	Path string
+	With map[string]string
 }
 
 // SessionConfig selects whether the agent starts clean or continues another step’s session.

@@ -8,7 +8,6 @@ import (
 
 	"github.com/isomorphx/gump/internal/brand"
 	"github.com/isomorphx/gump/internal/state"
-	"github.com/isomorphx/gump/internal/template"
 	"github.com/isomorphx/gump/internal/validate"
 	"github.com/isomorphx/gump/internal/workflow"
 )
@@ -192,9 +191,10 @@ func (re *RetryEvaluator) entryMatches(e *workflow.RetryEntry, attempt int, gate
 		if validator == nil {
 			return false, ErrRetryValidateNeedsR5
 		}
-		inputs := make(map[string]string)
+		// WHY: InvokeValidator performs a single template.Resolve pass; resolving here too would re-interpret literals like "{...}" from error text (R5).
+		inputs := make(map[string]string, len(e.With))
 		for k, v := range e.With {
-			inputs[k] = template.Resolve(v, resolveCtx)
+			inputs[k] = v
 		}
 		pass, err := validator.InvokeValidator(strings.TrimSpace(e.Validate), inputs)
 		if err != nil {

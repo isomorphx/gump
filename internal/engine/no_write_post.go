@@ -69,6 +69,10 @@ func checkGitWorktreeNoWrite(worktree, baseCommit string) error {
 		if isProviderContextFileLine(line) {
 			continue
 		}
+		// WHY: compile/test gates produce module-root binaries and legacy e2e artefacts; read-only validate steps must not fail on those paths.
+		if len(filterRepoFilesOnly(worktree, []string{line})) == 0 {
+			continue
+		}
 		bad = append(bad, line)
 	}
 	if len(bad) > 0 {
@@ -112,6 +116,9 @@ func checkNonGitDirNoWrite(root string) error {
 }
 
 func (e *Engine) maybeCheckNoWritePostStep(_ *workflow.Step, gr *GuardRuntime, baseCommit, agentWT, _ string) error {
+	if e != nil && e.SkipNoWritePost {
+		return nil
+	}
 	if gr == nil || gr.cfg.NoWrite == nil || !*gr.cfg.NoWrite {
 		return nil
 	}

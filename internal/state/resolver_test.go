@@ -32,3 +32,25 @@ func TestResolveContext_fullStack(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveContext_flatStateKeyForSubworkflowInputs(t *testing.T) {
+	st := New()
+	st.Set("agent", "claude-opus")
+	st.Set("query", "q")
+	ctx := &ResolveContext{State: st, StepPath: "analyze", Spec: "S"}
+	if ctx.Resolve("agent") != "claude-opus" {
+		t.Fatalf("agent: %q", ctx.Resolve("agent"))
+	}
+	if ctx.Resolve("query") != "q" {
+		t.Fatalf("query: %q", ctx.Resolve("query"))
+	}
+}
+
+func TestResolveContext_extraOverridesFlatState(t *testing.T) {
+	st := New()
+	st.Set("agent", "from-state")
+	ctx := &ResolveContext{State: st, StepPath: "x", Extra: map[string]string{"agent": "from-extra"}}
+	if ctx.Resolve("agent") != "from-extra" {
+		t.Fatalf("got %q", ctx.Resolve("agent"))
+	}
+}

@@ -61,6 +61,10 @@ type Engine struct {
 	lastFailureSource  string
 	// PauseAfterStep is set by CLI --pause-after to force HITL on that step name (in-memory only).
 	PauseAfterStep string
+	// LedgerStepPrefix qualifies ledger/artifact step ids for nested runs (gate validators, sub-workflows) so one manifest stays coherent.
+	LedgerStepPrefix string
+	// SkipNoWritePost skips post-agent no_write checks for nested engines (stub/scenario touches the worktree while the parent owns the blast radius).
+	SkipNoWritePost bool
 	// forceSessionReuse is enabled for retry same policies (step/group) so retries
 	// resume the previous session even when step session mode is fresh.
 	forceSessionReuse bool
@@ -195,20 +199,19 @@ func (e *Engine) executeSteps(steps []workflow.Step, taskContext *plan.Task, pat
 		isComposite := len(step.Steps) > 0 || step.Workflow != "" || (step.Type == "split" && len(step.Each) > 0)
 		if isComposite {
 			if step.Workflow != "" && foreachRef == "" && len(step.Steps) == 0 && len(step.Each) == 0 {
-				childRec, childVars, err := e.resolveWorkflow(&step, stepPath, taskContext, inheritedVars)
+				swr := &SubWorkflowRunner{ParentEngine: e}
+				resolveCtx := e.newTemplateCtx(stepPath, &step, taskContext, nil, 1, inheritedVars, nil)
+				inputs := make(map[string]string, len(step.With))
+				for k, v := range step.With {
+					inputs[k] = v
+				}
+				childState, err := swr.RunSubWorkflow(step.Workflow, inputs, e.Run.WorktreeDir, stepPath, resolveCtx)
+				for _, k := range childState.Keys() {
+					e.State.Set(step.Name+".state."+k, childState.Get(k))
+				}
 				if err != nil {
 					return err
 				}
-				parentSB := e.State
-				childSB := state.New()
-				childSB.SetRunAll(parentSB.CloneRun())
-				e.State = childSB
-				err = e.executeSteps(childRec.Steps, taskContext, "", make(map[string]string), workflow.SessionConfig{Mode: "fresh"}, "", childVars)
-				e.State = parentSB
-				if err != nil {
-					return err
-				}
-				e.State.Graft(stepPath, childSB)
 				continue
 			}
 			var planTasks []plan.Task
@@ -261,11 +264,17 @@ func (e *Engine) executeSteps(steps []workflow.Step, taskContext *plan.Task, pat
 						}
 						taskSession := make(map[string]string)
 						if step.Workflow != "" && len(step.Steps) == 0 && len(step.Each) == 0 {
-							childRec, childVars, werr := e.resolveWorkflow(&step, taskPrefix, &task, inheritedVars)
-							if werr != nil {
-								return werr
+							swr := &SubWorkflowRunner{ParentEngine: e}
+							resolveCtx := e.newTemplateCtx(taskPrefix, &step, &task, nil, 1, inheritedVars, nil)
+							inputs := make(map[string]string, len(step.With))
+							for k, v := range step.With {
+								inputs[k] = v
 							}
-							if werr = e.executeSteps(childRec.Steps, &task, taskPrefix, taskSession, step.Session, agentOverride, childVars); werr != nil {
+							childState, werr := swr.RunSubWorkflow(step.Workflow, inputs, e.Run.WorktreeDir, taskPrefix, resolveCtx)
+							for _, k := range childState.Keys() {
+								e.State.Set(step.Name+".state."+k, childState.Get(k))
+							}
+							if werr != nil {
 								return werr
 							}
 						} else {

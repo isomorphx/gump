@@ -13,9 +13,82 @@ import (
 	"github.com/isomorphx/gump/internal/ledger"
 	"github.com/isomorphx/gump/internal/plan"
 	"github.com/isomorphx/gump/internal/sandbox"
+	"github.com/isomorphx/gump/internal/state"
 	"github.com/isomorphx/gump/internal/validate"
 	"github.com/isomorphx/gump/internal/workflow"
 )
+
+func (e *Engine) runWorkflowValidateGate(v workflow.GateEntry, stepPath string, gateWT string, resolveCtx *state.ResolveContext) *validate.SingleResult {
+	label := "validate:" + strings.TrimSpace(v.Arg)
+	if resolveCtx == nil {
+		resolveCtx = &state.ResolveContext{
+			State: e.State, StepPath: stepPath, Spec: e.SpecContent,
+			GateResults: map[string]string{}, GateMeta: map[string]map[string]string{},
+		}
+	}
+	swr := &SubWorkflowRunner{ParentEngine: e}
+	inputs := make(map[string]string, len(v.With))
+	for k, val := range v.With {
+		inputs[k] = val
+	}
+	ns := stepPath + ".gate." + workflow.ValidatorGateNameFromPath(v.Arg)
+	pass, comments, _, err := swr.RunValidator(v.Arg, inputs, ns, gateWT, resolveCtx)
+	if err != nil {
+		return &validate.SingleResult{Validator: label, Pass: false, Stderr: err.Error()}
+	}
+	if pass {
+		return &validate.SingleResult{Validator: label, Pass: true, Stdout: comments}
+	}
+	msg := comments
+	if msg == "" {
+		msg = "validator returned pass=false"
+	}
+	return &validate.SingleResult{Validator: label, Pass: false, Stdout: comments, Stderr: msg}
+}
+
+func (e *Engine) runOneGateEntry(v workflow.GateEntry, stepPath string, gateWT string, dc *diff.DiffContract, resolveCtx *state.ResolveContext) validate.SingleResult {
+	switch v.Type {
+	case "validate":
+		return *e.runWorkflowValidateGate(v, stepPath, gateWT, resolveCtx)
+	case "compile":
+		return *validate.RunCompileValidator(e.Config, gateWT)
+	case "test":
+		return *validate.RunTestValidator(e.Config, gateWT)
+	case "lint":
+		return *validate.RunLintValidator(e.Config, gateWT)
+	case "bash":
+		return *validate.RunBashValidator(v, gateWT, e.Config)
+	case "schema":
+		return *validate.RunSchemaValidatorWithArg(stepPath, e.State, v.Arg)
+	case "touched":
+		return *validate.RunTouchedValidator(v.Arg, dc)
+	case "untouched":
+		return *validate.RunUntouchedValidator(v.Arg, dc)
+	case "tests_found":
+		return *validate.RunTestsFoundValidator(e.Config, gateWT)
+	case "coverage":
+		return *validate.RunCoverageValidator(v.Arg, e.Config, gateWT)
+	default:
+		return validate.SingleResult{Validator: v.Type, Pass: false, Stderr: "unknown validator type: " + v.Type}
+	}
+}
+
+func (e *Engine) runAllGateValidators(gates []workflow.GateEntry, stepPath string, gateWT string, dc *diff.DiffContract, resolveCtx *state.ResolveContext) *validate.ValidationResult {
+	out := &validate.ValidationResult{Results: make([]validate.SingleResult, 0, len(gates))}
+	for _, v := range gates {
+		r := e.runOneGateEntry(v, stepPath, gateWT, dc, resolveCtx)
+		out.Results = append(out.Results, r)
+	}
+	allPass := true
+	for i := range out.Results {
+		if !out.Results[i].Pass {
+			allPass = false
+			break
+		}
+	}
+	out.Pass = allPass
+	return out
+}
 
 func gateCheckLabels(gate []workflow.GateEntry) []string {
 	checks := make([]string, 0, len(gate))
@@ -53,10 +126,11 @@ func (e *Engine) executeValidationWithoutAgent(step *workflow.Step, stepPath str
 	if sessionMode == "" {
 		sessionMode = sessionModeForLedger(step, parentSession)
 	}
+	lp := e.ledgerStepPath(stepPath)
 	if e.Run.Ledger != nil {
 		checks := gateCheckLabels(step.Gate)
-		_ = e.Run.Ledger.Emit(ledger.StepStarted{Step: stepPath, Agent: "", StepType: stepLedgerType(step), Item: taskContextName(taskContext), Attempt: 1, SessionMode: sessionMode})
-		_ = e.Run.Ledger.Emit(ledger.GateStarted{Step: stepPath, Checks: checks})
+		_ = e.Run.Ledger.Emit(ledger.StepStarted{Step: lp, Agent: "", StepType: stepLedgerType(step), Item: taskContextName(taskContext), Attempt: 1, SessionMode: sessionMode})
+		_ = e.Run.Ledger.Emit(ledger.GateStarted{Step: lp, Checks: checks})
 	}
 	dc, err := e.Run.FinalDiff()
 	if err != nil {
@@ -69,15 +143,16 @@ func (e *Engine) executeValidationWithoutAgent(step *workflow.Step, stepPath str
 		}
 		return fmt.Errorf("final diff for %s step: %w", opts.finalDiffErrLabel, err)
 	}
-	vr := validate.RunValidators(step.Gate, e.Config, e.Run.WorktreeDir, dc, e.State, stepPath)
+	resolveCtx := e.newTemplateCtx(stepPath, step, taskContext, nil, 1, nil, nil)
+	vr := e.runAllGateValidators(step.Gate, stepPath, e.Run.WorktreeDir, dc, resolveCtx)
 	validate.ApplyGateResultsToState(e.Run.State, stepPath, step.Gate, vr)
-	writeValidationArtifact(e.Run.RunDir, stepPath, 1, vr)
-	validationArtifactRel := filepath.Join("artifacts", ledger.ArtifactName(stepPath, 1, "validation", "json"))
+	writeValidationArtifact(e.Run.RunDir, lp, 1, vr)
+	validationArtifactRel := filepath.Join("artifacts", ledger.ArtifactName(lp, 1, "validation", "json"))
 	if vr.Pass {
 		if e.Run.Ledger != nil {
-			_ = e.Run.Ledger.Emit(ledger.GatePassed{Step: stepPath, Artifact: validationArtifactRel})
+			_ = e.Run.Ledger.Emit(ledger.GatePassed{Step: lp, Artifact: validationArtifactRel})
 			commit, _ := sandbox.HeadCommit(e.Run.WorktreeDir)
-			_ = e.Run.Ledger.Emit(ledger.StepCompleted{Step: stepPath, Status: "pass", DurationMs: int(time.Since(startedAt).Milliseconds()), Commit: commit})
+			_ = e.Run.Ledger.Emit(ledger.StepCompleted{Step: lp, Status: "pass", DurationMs: int(time.Since(startedAt).Milliseconds()), Commit: commit})
 			e.stepCompletedCount++
 		}
 		e.printCookTotal()
@@ -123,9 +198,9 @@ func (e *Engine) executeValidationWithoutAgent(step *workflow.Step, stepPath str
 				break
 			}
 		}
-		_ = e.Run.Ledger.Emit(ledger.GateFailed{Step: stepPath, Reason: reason, Artifact: validationArtifactRel})
+		_ = e.Run.Ledger.Emit(ledger.GateFailed{Step: lp, Reason: reason, Artifact: validationArtifactRel})
 		commit, _ := sandbox.HeadCommit(e.Run.WorktreeDir)
-		_ = e.Run.Ledger.Emit(ledger.StepCompleted{Step: stepPath, Status: "fatal", DurationMs: int(time.Since(startedAt).Milliseconds()), Commit: commit})
+		_ = e.Run.Ledger.Emit(ledger.StepCompleted{Step: lp, Status: "fatal", DurationMs: int(time.Since(startedAt).Milliseconds()), Commit: commit})
 		e.stepCompletedCount++
 		e.printCookTotal()
 	}
@@ -152,16 +227,18 @@ func (e *Engine) executeGateOnlyTopLevel(step *workflow.Step, stepPath string) e
 // runStepGateAfterAgent runs validators when the step defines gates, after a successful agent run and diff snapshot.
 // retPre is the pre-step commit to return to the caller when non-empty (HITL paths).
 func (e *Engine) runStepGateAfterAgent(step *workflow.Step, stepPath string, attempt int, exec *StepExecution, gateWT string, dc *diff.DiffContract, outputMode, outputValue string, preStepCommit string, guardPrelude string) (err error, retPre string) {
+	lp := e.ledgerStepPath(stepPath)
 	if e.Run.Ledger != nil {
-		_ = e.Run.Ledger.Emit(ledger.GateStarted{Step: stepPath, Checks: gateCheckLabels(step.Gate)})
+		_ = e.Run.Ledger.Emit(ledger.GateStarted{Step: lp, Checks: gateCheckLabels(step.Gate)})
 	}
-	vr := validate.RunValidators(step.Gate, e.Config, gateWT, dc, e.State, stepPath)
+	resolveCtx := e.newTemplateCtx(stepPath, step, nil, nil, attempt, nil, nil)
+	vr := e.runAllGateValidators(step.Gate, stepPath, gateWT, dc, resolveCtx)
 	validate.ApplyGateResultsToState(e.State, stepPath, step.Gate, vr)
-	writeValidationArtifact(e.Run.RunDir, stepPath, attempt, vr)
-	validationArtifactRel := filepath.Join("artifacts", ledger.ArtifactName(stepPath, attempt, "validation", "json"))
+	writeValidationArtifact(e.Run.RunDir, lp, attempt, vr)
+	validationArtifactRel := filepath.Join("artifacts", ledger.ArtifactName(lp, attempt, "validation", "json"))
 	if vr.Pass {
 		if e.Run.Ledger != nil {
-			_ = e.Run.Ledger.Emit(ledger.GatePassed{Step: stepPath, Artifact: validationArtifactRel})
+			_ = e.Run.Ledger.Emit(ledger.GatePassed{Step: lp, Artifact: validationArtifactRel})
 		}
 		exec.Status = StepPass
 		exec.CommitHash = dc.HeadCommit
@@ -201,7 +278,7 @@ func (e *Engine) runStepGateAfterAgent(step *workflow.Step, stepPath string, att
 				break
 			}
 		}
-		_ = e.Run.Ledger.Emit(ledger.GateFailed{Step: stepPath, Reason: reason, Artifact: validationArtifactRel})
+		_ = e.Run.Ledger.Emit(ledger.GateFailed{Step: lp, Reason: reason, Artifact: validationArtifactRel})
 	}
 	msg := strings.Join(errParts, "\n---\n")
 	if strings.TrimSpace(guardPrelude) != "" {

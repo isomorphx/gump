@@ -79,7 +79,7 @@ func parseStep(raw map[string]interface{}, workflowDir string) (Step, []Warning,
 		return Step{}, w, fmt.Errorf("step %q: 'validate:' at step level was removed — replaced by 'gate:' (e.g. gate: [compile])", name)
 	}
 
-	getKeys := []string{"prompt", "context", "worktree", "session"}
+	getKeys := []string{"prompt", "context", "worktree", "session", "workflow"}
 	runKeys := []string{"agent", "guard", "hitl"}
 
 	var getMap, runMap map[string]interface{}
@@ -197,6 +197,29 @@ func parseStep(raw map[string]interface{}, workflowDir string) (Step, []Warning,
 		step.Session = sc
 	} else {
 		step.Session = SessionConfig{Mode: "new"}
+	}
+
+	if getMap != nil {
+		if wv, ok := getMap["workflow"]; ok && wv != nil {
+			wp := strings.TrimSpace(fmt.Sprint(wv))
+			if wp == "" {
+				return Step{}, w, fmt.Errorf("step %q: get.workflow requires a non-empty path", name)
+			}
+			wm := make(map[string]string)
+			for k2, v2 := range getMap {
+				switch k2 {
+				case "prompt", "context", "worktree", "session", "workflow":
+					continue
+				default:
+					wm[k2] = strings.TrimSpace(fmt.Sprint(v2))
+				}
+			}
+			step.GetWorkflow = &GetWorkflowSpec{
+				Name: WorkflowRefLastSegment(wp),
+				Path: wp,
+				With: wm,
+			}
+		}
 	}
 
 	if v, ok := lookup("guard"); ok {

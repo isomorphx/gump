@@ -27,6 +27,16 @@ import (
 	"github.com/isomorphx/gump/internal/workflow"
 )
 
+// buildRetryValidatorInvoker is used so retry validate: conditions can run nested workflows without duplicating runner wiring (R5).
+func (e *Engine) buildRetryValidatorInvoker(stepPath string, resolveCtx *state.ResolveContext) ValidatorInvoker {
+	return &ValidatorInvokerImpl{
+		SubRunner:   &SubWorkflowRunner{ParentEngine: e},
+		StepPath:    stepPath,
+		WorktreeDir: e.Run.WorktreeDir,
+		ResolveCtx:  resolveCtx,
+	}
+}
+
 // retryEval is the retry policy object used in the atomic-step loop (live *RetryEvaluator or a test double).
 type retryEval interface {
 	Evaluate(attempt int, gateStates map[string]gatePassState, validator ValidatorInvoker, resolveCtx *state.ResolveContext) (*RetryDecision, error)
@@ -45,11 +55,11 @@ func makeRetryEvalForStep(step *workflow.Step, stepPath string) retryEval {
 	return NewRetryEvaluator(step.Retry, stepPath, strings.TrimSpace(step.Agent))
 }
 
-func evaluateRetryAttempt(eval retryEval, attempt int, gateStates map[string]gatePassState, resolveCtx *state.ResolveContext) (*RetryDecision, error) {
+func evaluateRetryAttempt(eval retryEval, attempt int, gateStates map[string]gatePassState, inv ValidatorInvoker, resolveCtx *state.ResolveContext) (*RetryDecision, error) {
 	if retryEvaluateHook != nil {
-		return retryEvaluateHook(eval, attempt, gateStates, nil, resolveCtx)
+		return retryEvaluateHook(eval, attempt, gateStates, inv, resolveCtx)
 	}
-	return eval.Evaluate(attempt, gateStates, nil, resolveCtx)
+	return eval.Evaluate(attempt, gateStates, inv, resolveCtx)
 }
 
 // atomicRetryApply carries R4 sticky overrides into GET/RUN for one retry attempt.
@@ -125,17 +135,17 @@ func (e *Engine) runAtomicStep(step *workflow.Step, stepPath string, taskContext
 	for attempt := 2; attempt <= maxA+1; attempt++ {
 		gateStates := GateStatesFromStep(e.State, stepPath, step.Gate)
 		resolveCtx := e.newTemplateCtx(stepPath, step, taskContext, errCtx, attempt, inheritedVars, nil)
-		decision, evalErr := evaluateRetryAttempt(eval, attempt, gateStates, resolveCtx)
+		decision, evalErr := evaluateRetryAttempt(eval, attempt, gateStates, e.buildRetryValidatorInvoker(stepPath, resolveCtx), resolveCtx)
 		if evalErr != nil {
 			if e.Run.Ledger != nil {
-				_ = e.Run.Ledger.Emit(ledger.CircuitBreaker{Step: stepPath, Scope: "step", Reason: evalErr.Error(), TotalAttempts: attempt - 1})
+				_ = e.Run.Ledger.Emit(ledger.CircuitBreaker{Step: e.ledgerStepPath(stepPath), Scope: "step", Reason: evalErr.Error(), TotalAttempts: attempt - 1})
 			}
 			e.emitStepCompletedFromLast()
 			return fmt.Errorf("step %s: %w", step.Name, evalErr)
 		}
 		if decision.Action == "fatal" {
 			if e.Run.Ledger != nil {
-				_ = e.Run.Ledger.Emit(ledger.CircuitBreaker{Step: stepPath, Scope: "step", Reason: "all attempts exhausted", TotalAttempts: maxA})
+				_ = e.Run.Ledger.Emit(ledger.CircuitBreaker{Step: e.ledgerStepPath(stepPath), Scope: "step", Reason: "all attempts exhausted", TotalAttempts: maxA})
 			}
 			e.emitStepCompletedFromLast()
 			fmt.Fprintf(os.Stderr, "        ✗ FATAL: all attempts exhausted (%d attempts)\n", maxA)
@@ -160,7 +170,7 @@ func (e *Engine) runAtomicStep(step *workflow.Step, stepPath string, taskContext
 			if ov == nil {
 				ov = map[string]string{}
 			}
-			_ = e.Run.Ledger.Emit(ledger.RetryTriggered{Step: stepPath, Attempt: attempt, Overrides: ov, MatchedEntry: mePtr})
+			_ = e.Run.Ledger.Emit(ledger.RetryTriggered{Step: e.ledgerStepPath(stepPath), Attempt: attempt, Overrides: ov, MatchedEntry: mePtr})
 			e.retryTriggeredCount++
 			e.State.IncrementRunRetries()
 		}
@@ -195,7 +205,7 @@ func (e *Engine) runAtomicStep(step *workflow.Step, stepPath string, taskContext
 		}
 	}
 	if e.Run.Ledger != nil {
-		_ = e.Run.Ledger.Emit(ledger.CircuitBreaker{Step: stepPath, Scope: "step", Reason: "all attempts exhausted", TotalAttempts: maxA})
+		_ = e.Run.Ledger.Emit(ledger.CircuitBreaker{Step: e.ledgerStepPath(stepPath), Scope: "step", Reason: "all attempts exhausted", TotalAttempts: maxA})
 	}
 	e.emitStepCompletedFromLast()
 	fmt.Fprintf(os.Stderr, "        ✗ FATAL: all attempts exhausted (%d attempts)\n", maxA)
@@ -216,7 +226,7 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 	if cur >= maxGlobal {
 		if e.Run.Ledger != nil {
 			_ = e.Run.Ledger.Emit(ledger.CircuitBreaker{
-				Step: stepPath, Scope: "step", Reason: "global step attempts exhausted before agent run", TotalAttempts: cur,
+				Step: e.ledgerStepPath(stepPath), Scope: "step", Reason: "global step attempts exhausted before agent run", TotalAttempts: cur,
 			})
 		}
 		fmt.Fprintf(os.Stderr, "        ✗ FATAL: global step attempts exhausted for %s (%d/%d)\n", stepPath, cur, maxGlobal)
@@ -248,6 +258,34 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 	}
 	taskName := taskContextName(taskContext)
 	tctx := e.newTemplateCtx(stepPath, step, taskContext, errorContext, attempt, inheritedVars, extraVars)
+	if step.GetWorkflow != nil {
+		gw := step.GetWorkflow
+		inputs := make(map[string]string, len(gw.With))
+		for k, v := range gw.With {
+			inputs[k] = v
+		}
+		swr := &SubWorkflowRunner{ParentEngine: e}
+		ledgerP := stepPath + "/" + gw.Name
+		childState, gerr := swr.RunSubWorkflow(gw.Path, inputs, agentWT, ledgerP, tctx)
+		if gerr != nil {
+			return fmt.Errorf("get workflow %q: %w", gw.Path, gerr), preStepCommit
+		}
+		var lastStepName string
+		if resolved, rerr := workflow.Resolve(gw.Path, e.Run.RepoRoot); rerr == nil {
+			rd := filepath.Dir(resolved.Path)
+			if cw, _, perr := workflow.Parse(resolved.Raw, rd); perr == nil && len(cw.Steps) > 0 {
+				lastStepName = cw.Steps[len(cw.Steps)-1].Name
+			}
+		}
+		lo := ""
+		if lastStepName != "" {
+			lo = childState.Get(lastStepName + ".output")
+		}
+		e.State.Set(gw.Name+".output", lo)
+		for _, k := range childState.Keys() {
+			e.State.Set(gw.Name+".state."+k, childState.Get(k))
+		}
+	}
 	outputMode := step.OutputMode()
 	promptSrc := step.Prompt
 	if retry != nil && strings.TrimSpace(retry.promptTemplate) != "" {
@@ -438,7 +476,7 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 	}
 	if e.Run.Ledger != nil {
 		_ = e.Run.Ledger.Emit(ledger.StepStarted{
-			Step: stepPath, Agent: agentToUse, StepType: stepLedgerType(step), Item: taskName, Attempt: attempt,
+			Step: e.ledgerStepPath(stepPath), Agent: agentToUse, StepType: stepLedgerType(step), Item: taskName, Attempt: attempt,
 			SessionMode: sessionModeForLedger(step, parentSession),
 		})
 		if agentToUse != "" {
@@ -520,7 +558,7 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 		}
 		if e.Run.Ledger != nil {
 			_ = e.Run.Ledger.Emit(ledger.AgentLaunched{
-				Step: stepPath, CLI: adapter.LastLaunchCLI(), Worktree: agentWT,
+				Step: e.ledgerStepPath(stepPath), CLI: adapter.LastLaunchCLI(), Worktree: agentWT,
 				Agent: agentToUse, SessionID: sessionID, SessionSource: sessionSource,
 				PromptHash: hex.EncodeToString(promptHash[:]),
 			})
@@ -624,9 +662,9 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 		guardFailPrefix = fmt.Sprintf("guard %s triggered: %s", guardName, guardReason)
 		interruptActiveTurn()
 		if e.Run.Ledger != nil {
-			_ = e.Run.Ledger.Emit(ledger.GuardTriggered{Step: stepPath, Guard: guardName, Reason: guardReason})
+			_ = e.Run.Ledger.Emit(ledger.GuardTriggered{Step: e.ledgerStepPath(stepPath), Guard: guardName, Reason: guardReason})
 			_ = e.Run.Ledger.Emit(ledger.AgentKilled{
-				Step:         stepPath,
+				Step:         e.ledgerStepPath(stepPath),
 				Reason:       "guard:" + guardName,
 				DurationMs:   int(time.Since(exec.StartedAt).Milliseconds()),
 				InputTokens:  partial.InputTokens,
@@ -646,7 +684,7 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 		applyRunUsage(partial.CostUSD, partial.InputTokens, partial.OutputTokens, partial.NumTurns, partial.CacheReadTokens, partial.CacheCreationTokens, int(time.Since(exec.StartedAt).Milliseconds()))
 		if e.Run.Ledger != nil {
 			_ = e.Run.Ledger.Emit(ledger.AgentKilled{
-				Step:         stepPath,
+				Step:         e.ledgerStepPath(stepPath),
 				Reason:       "timeout",
 				DurationMs:   int(time.Since(exec.StartedAt).Milliseconds()),
 				InputTokens:  partial.InputTokens,
@@ -679,7 +717,7 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 			e.setLastStepOutcome(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), nil, outputMode, "", false)
 			fmt.Fprintf(os.Stderr, "[%s]\tfatal\tFATAL: %v\n", stepPath, err)
 			if e.Run.Ledger != nil {
-				_ = e.Run.Ledger.Emit(ledger.CircuitBreaker{Step: stepPath, Scope: "step", Reason: err.Error(), TotalAttempts: attempt})
+				_ = e.Run.Ledger.Emit(ledger.CircuitBreaker{Step: e.ledgerStepPath(stepPath), Scope: "step", Reason: err.Error(), TotalAttempts: attempt})
 			}
 			return fmt.Errorf("step %s: %w", step.Name, err), preStepCommit
 		}
@@ -703,8 +741,8 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 		AgentSummaryLine(step.Name, float64(result.DurationMs)/1000, result.CostUSD, ctxStr, result.NumTurns)
 		agentArtifacts := make(map[string]string)
 		if e.Run.Ledger != nil && proc != nil && !isTimeoutError {
-			stdoutName := ledger.ArtifactName(stepPath, attempt, "stdout", "log")
-			stderrName := ledger.ArtifactName(stepPath, attempt, "stderr", "log")
+			stdoutName := ledger.ArtifactName(e.ledgerStepPath(stepPath), attempt, "stdout", "log")
+			stderrName := ledger.ArtifactName(e.ledgerStepPath(stepPath), attempt, "stderr", "log")
 			if b, _ := os.ReadFile(proc.StdoutFile); len(b) > 0 {
 				if rel, _ := e.Run.Ledger.WriteArtifact(stdoutName, b); rel != "" {
 					agentArtifacts["stdout"] = rel
@@ -716,7 +754,7 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 				}
 			}
 			_ = e.Run.Ledger.Emit(ledger.AgentCompleted{
-				Step: stepPath, ExitCode: result.ExitCode, DurationMs: result.DurationMs,
+				Step: e.ledgerStepPath(stepPath), ExitCode: result.ExitCode, DurationMs: result.DurationMs,
 				TokensIn: result.InputTokens, TokensOut: result.OutputTokens, CostUSD: result.CostUSD,
 				SessionID: result.SessionID, IsError: result.IsError, Artifacts: agentArtifacts,
 			})
@@ -731,7 +769,7 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 			e.lastFailureSource = "guard_fail"
 			fmt.Fprintf(os.Stderr, "[%s]\tfail\t%v\n", stepPath, err)
 			if e.Run.Ledger != nil {
-				_ = e.Run.Ledger.Emit(ledger.GuardTriggered{Step: stepPath, Guard: "no_write", Reason: err.Error()})
+				_ = e.Run.Ledger.Emit(ledger.GuardTriggered{Step: e.ledgerStepPath(stepPath), Guard: "no_write", Reason: err.Error()})
 			}
 			return fmt.Errorf("step %s: %w", step.Name, err), preStepCommit
 		}
@@ -814,7 +852,7 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 				}
 				if e.globalStepAttempts[stepPath] > step.MaxAttempts() {
 					if e.Run.Ledger != nil {
-						_ = e.Run.Ledger.Emit(ledger.CircuitBreaker{Step: stepPath, Scope: "step", Reason: "budget exhausted after invalid validate.json", TotalAttempts: attempt})
+						_ = e.Run.Ledger.Emit(ledger.CircuitBreaker{Step: e.ledgerStepPath(stepPath), Scope: "step", Reason: "budget exhausted after invalid validate.json", TotalAttempts: attempt})
 					}
 					return fmt.Errorf("step %s: all attempts exhausted", step.Name), preStepCommit
 				}
@@ -850,7 +888,7 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 				RetryValidationFailed("validate did not pass", "")
 				if e.globalStepAttempts[stepPath] > step.MaxAttempts() {
 					if e.Run.Ledger != nil {
-						_ = e.Run.Ledger.Emit(ledger.CircuitBreaker{Step: stepPath, Scope: "step", Reason: "budget exhausted after failed validate", TotalAttempts: attempt})
+						_ = e.Run.Ledger.Emit(ledger.CircuitBreaker{Step: e.ledgerStepPath(stepPath), Scope: "step", Reason: "budget exhausted after failed validate", TotalAttempts: attempt})
 					}
 					return fmt.Errorf("step %s: all attempts exhausted", step.Name), preStepCommit
 				}
@@ -879,9 +917,9 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 		keyOut := stepPath + ".output"
 		artifactRel := ""
 		if len(outputValue) >= 1024 {
-			name := ledger.ArtifactName(stepPath, attempt, "output", "json")
+			name := ledger.ArtifactName(e.ledgerStepPath(stepPath), attempt, "output", "json")
 			if outputMode == "artifact" {
-				name = ledger.ArtifactName(stepPath, attempt, "output", "txt")
+				name = ledger.ArtifactName(e.ledgerStepPath(stepPath), attempt, "output", "txt")
 			}
 			if rel, _ := e.Run.Ledger.WriteArtifact(name, []byte(outputValue)); rel != "" {
 				artifactRel = rel
@@ -891,7 +929,7 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 		keyFiles := stepPath + ".files"
 		artifactFiles := ""
 		if len(filesJoined) >= 1024 {
-			name := ledger.ArtifactName(stepPath, attempt, "files", "txt")
+			name := ledger.ArtifactName(e.ledgerStepPath(stepPath), attempt, "files", "txt")
 			if rel, _ := e.Run.Ledger.WriteArtifact(name, []byte(filesJoined)); rel != "" {
 				artifactFiles = rel
 			}
@@ -916,12 +954,12 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 			if blastMode == "warn" {
 				warnMsg := blastRadiusWarningMessage(violators, taskContext.Files)
 				if e.Run.Ledger != nil {
-					_ = e.Run.Ledger.Emit(ledger.BlastRadiusWarning{Step: stepPath, Violators: violators, Allowed: taskContext.Files})
+					_ = e.Run.Ledger.Emit(ledger.BlastRadiusWarning{Step: e.ledgerStepPath(stepPath), Violators: violators, Allowed: taskContext.Files})
 				}
 				fmt.Fprintln(os.Stderr, warnMsg)
 			} else if blastMode == "enforce" {
 				if e.Run.Ledger != nil {
-					_ = e.Run.Ledger.Emit(ledger.GateFailed{Step: stepPath, Reason: errMsg, Artifact: ""})
+					_ = e.Run.Ledger.Emit(ledger.GateFailed{Step: e.ledgerStepPath(stepPath), Reason: errMsg, Artifact: ""})
 					e.emitStepCompleted(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), dc, outputMode, outputValue, true)
 					e.stepCompletedCount++
 					e.printCookTotal()
@@ -1008,8 +1046,8 @@ func (e *Engine) needsHITLBeforeGate(step *workflow.Step) bool {
 func (e *Engine) hitlPauseStep(stepPath, position, outputMode string, filesChanged []string) error {
 	if strings.TrimSpace(os.Getenv("GUMP_E2E_AUTO_HITL_CONTINUE")) == "1" {
 		if e.Run.Ledger != nil {
-			_ = e.Run.Ledger.Emit(ledger.HITLPaused{Step: stepPath, Position: position})
-			_ = e.Run.Ledger.Emit(ledger.HITLResumed{Step: stepPath, Action: "continue"})
+			_ = e.Run.Ledger.Emit(ledger.HITLPaused{Step: e.ledgerStepPath(stepPath), Position: position})
+			_ = e.Run.Ledger.Emit(ledger.HITLResumed{Step: e.ledgerStepPath(stepPath), Action: "continue"})
 		}
 		return nil
 	}
@@ -1020,7 +1058,7 @@ func (e *Engine) hitlPauseStep(stepPath, position, outputMode string, filesChang
 	fstr := strings.Join(filterRepoFilesOnly(e.Run.WorktreeDir, filesChanged), ", ")
 	fmt.Fprintf(os.Stderr, "[%s] HITL pause (%s) on step '%s'\n\nResult:\n  Mode:    %s\n  Files:   %s\n\n  Worktree: %s\n  Press Enter to continue, Ctrl+C to abort.\n", brand.Lower(), position, stepPath, mode, fstr, e.Run.WorktreeDir)
 	if e.Run.Ledger != nil {
-		_ = e.Run.Ledger.Emit(ledger.HITLPaused{Step: stepPath, Position: position})
+		_ = e.Run.Ledger.Emit(ledger.HITLPaused{Step: e.ledgerStepPath(stepPath), Position: position})
 	}
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt)
@@ -1033,7 +1071,7 @@ func (e *Engine) hitlPauseStep(stepPath, position, outputMode string, filesChang
 	select {
 	case <-sigCh:
 		if e.Run.Ledger != nil {
-			_ = e.Run.Ledger.Emit(ledger.HITLResumed{Step: stepPath, Action: "abort"})
+			_ = e.Run.Ledger.Emit(ledger.HITLResumed{Step: e.ledgerStepPath(stepPath), Action: "abort"})
 		}
 		return ErrCookAborted
 	case err := <-readCh:
@@ -1042,7 +1080,7 @@ func (e *Engine) hitlPauseStep(stepPath, position, outputMode string, filesChang
 		}
 	}
 	if e.Run.Ledger != nil {
-		_ = e.Run.Ledger.Emit(ledger.HITLResumed{Step: stepPath, Action: "continue"})
+		_ = e.Run.Ledger.Emit(ledger.HITLResumed{Step: e.ledgerStepPath(stepPath), Action: "continue"})
 	}
 	return nil
 }
@@ -1102,8 +1140,9 @@ func (e *Engine) emitStepCompletedFromLast() {
 	e.State.SetRunMetric("status", stepStatus)
 
 	artifacts := make(map[string]string)
+	lp := e.ledgerStepPath(o.stepPath)
 	if o.patch != "" && o.outputMode == "diff" {
-		name := ledger.ArtifactName(o.stepPath, o.attempt, "diff", "patch")
+		name := ledger.ArtifactName(lp, o.attempt, "diff", "patch")
 		if rel, _ := e.Run.Ledger.WriteArtifact(name, []byte(o.patch)); rel != "" {
 			artifacts["diff"] = rel
 		}
@@ -1113,16 +1152,16 @@ func (e *Engine) emitStepCompletedFromLast() {
 		if o.outputMode == "artifact" {
 			ext = "txt"
 		}
-		name := ledger.ArtifactName(o.stepPath, o.attempt, "output", ext)
+		name := ledger.ArtifactName(lp, o.attempt, "output", ext)
 		if rel, _ := e.Run.Ledger.WriteArtifact(name, []byte(o.outputValue)); rel != "" {
 			artifacts["output"] = rel
 		}
 	}
 	if o.hasValidation {
-		artifacts["validation"] = filepath.Join("artifacts", ledger.ArtifactName(o.stepPath, o.attempt, "validation", "json"))
+		artifacts["validation"] = filepath.Join("artifacts", ledger.ArtifactName(lp, o.attempt, "validation", "json"))
 	}
 	commit, _ := sandbox.HeadCommit(e.Run.WorktreeDir)
-	_ = e.Run.Ledger.Emit(ledger.StepCompleted{Step: o.stepPath, Status: o.status, DurationMs: o.durationMs, Commit: commit})
+	_ = e.Run.Ledger.Emit(ledger.StepCompleted{Step: lp, Status: o.status, DurationMs: o.durationMs, Commit: commit})
 	e.stepCompletedCount++
 	e.printCookTotal()
 }
@@ -1154,8 +1193,9 @@ func (e *Engine) emitStepCompleted(stepPath string, attempt int, status string, 
 	e.State.SetRunMetric("status", stepStatus)
 
 	artifacts := make(map[string]string)
+	lp := e.ledgerStepPath(stepPath)
 	if dc != nil && dc.Patch != "" && outputMode == "diff" {
-		name := ledger.ArtifactName(stepPath, attempt, "diff", "patch")
+		name := ledger.ArtifactName(lp, attempt, "diff", "patch")
 		if rel, _ := e.Run.Ledger.WriteArtifact(name, []byte(dc.Patch)); rel != "" {
 			artifacts["diff"] = rel
 		}
@@ -1165,16 +1205,16 @@ func (e *Engine) emitStepCompleted(stepPath string, attempt int, status string, 
 		if outputMode == "artifact" {
 			ext = "txt"
 		}
-		name := ledger.ArtifactName(stepPath, attempt, "output", ext)
+		name := ledger.ArtifactName(lp, attempt, "output", ext)
 		if rel, _ := e.Run.Ledger.WriteArtifact(name, []byte(outputValue)); rel != "" {
 			artifacts["output"] = rel
 		}
 	}
 	if hasValidation {
-		artifacts["validation"] = filepath.Join("artifacts", ledger.ArtifactName(stepPath, attempt, "validation", "json"))
+		artifacts["validation"] = filepath.Join("artifacts", ledger.ArtifactName(lp, attempt, "validation", "json"))
 	}
 	commit, _ := sandbox.HeadCommit(e.Run.WorktreeDir)
-	_ = e.Run.Ledger.Emit(ledger.StepCompleted{Step: stepPath, Status: status, DurationMs: durationMs, Commit: commit})
+	_ = e.Run.Ledger.Emit(ledger.StepCompleted{Step: lp, Status: status, DurationMs: durationMs, Commit: commit})
 	e.stepCompletedCount++
 	e.printCookTotal()
 }

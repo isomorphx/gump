@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -9,6 +10,9 @@ import (
 
 // ValidateWarn is invoked for non-fatal validation issues (dead code after exit, etc.).
 var ValidateWarn func(path, message string)
+
+// ValidateProjectRoot is set by the CLI so validate: gate entries can verify nested workflow files exist on disk.
+var ValidateProjectRoot string
 
 // ValidationError is one structural problem with a stable path for authors.
 type ValidationError struct {
@@ -263,6 +267,14 @@ func validateStep(s *Step, path, scopePath string, seenNames map[string]bool, st
 		errs = append(errs, ValidationError{Path: path, Message: "with: requires workflow:"})
 	}
 
+	if s.GetWorkflow != nil {
+		if strings.TrimSpace(ValidateProjectRoot) != "" {
+			if _, err := Resolve(strings.TrimSpace(s.GetWorkflow.Path), ValidateProjectRoot); err != nil {
+				errs = append(errs, ValidationError{Path: path + ".get.workflow", Message: fmt.Sprintf("workflow not found: %v", err)})
+			}
+		}
+	}
+
 	h := strings.TrimSpace(s.HITL)
 	if h != "" && !validHitl[h] {
 		errs = append(errs, ValidationError{Path: path + ".hitl", Message: "hitl must be true, before_gate, or after_gate"})
@@ -280,8 +292,13 @@ func validateStep(s *Step, path, scopePath string, seenNames map[string]bool, st
 			continue
 		}
 		if g.Type == "validate" {
-			if strings.TrimSpace(g.Arg) == "" {
+			arg := strings.TrimSpace(g.Arg)
+			if arg == "" {
 				errs = append(errs, ValidationError{Path: gp, Message: "validate: requires a workflow path"})
+			} else if strings.TrimSpace(ValidateProjectRoot) != "" {
+				if _, err := Resolve(arg, ValidateProjectRoot); err != nil {
+					errs = append(errs, ValidationError{Path: gp, Message: fmt.Sprintf("validate workflow not found: %v", err)})
+				}
 			}
 			if a, ok := g.With["agent"]; ok && strings.TrimSpace(a) == "" {
 				if ValidateWarn != nil {
@@ -377,6 +394,48 @@ func isNumeric(s string) bool {
 		}
 	}
 	return len(s) > 0
+}
+
+// EmitDryRunSubworkflowInputWarnings flags callee variables that are not covered by with: (R5 dry-run / ADR-047).
+func EmitDryRunSubworkflowInputWarnings(wf *Workflow, projectRoot string) {
+	if wf == nil || strings.TrimSpace(projectRoot) == "" || ValidateWarn == nil {
+		return
+	}
+	var walk func(steps []Step)
+	walk = func(steps []Step) {
+		for i := range steps {
+			s := &steps[i]
+			path := strings.TrimSpace(s.Workflow)
+			if path != "" {
+				resolved, err := Resolve(path, projectRoot)
+				if err == nil {
+					rd := ""
+					if resolved.Path != "" {
+						rd = filepath.Dir(resolved.Path)
+					}
+					if child, _, perr := Parse(resolved.Raw, rd); perr == nil {
+						wants := CollectReferencedVars(child)
+						explicit := make(map[string]bool)
+						for k := range s.With {
+							explicit[k] = true
+						}
+						for _, name := range wants {
+							if name == "spec" {
+								continue
+							}
+							if explicit[name] {
+								continue
+							}
+							ValidateWarn("steps."+s.Name, fmt.Sprintf("workflow %q uses variable %q which may not be available", path, name))
+						}
+					}
+				}
+			}
+			walk(s.Steps)
+			walk(s.Each)
+		}
+	}
+	walk(wf.Steps)
 }
 
 // FindStepByName returns the first step with the given name in a depth-first walk.
