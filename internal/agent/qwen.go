@@ -121,9 +121,6 @@ func qwenBinary() string {
 	if p := os.Getenv("GUMP_E2E_QWEN_BIN"); p != "" {
 		return p
 	}
-	if p := os.Getenv("PUDDING_E2E_QWEN_BIN"); p != "" {
-		return p
-	}
 	return qwenBin
 }
 
@@ -131,12 +128,8 @@ func (a *QwenAdapter) start(ctx context.Context, worktree string, timeout time.D
 	bin := qwenBinary()
 	cmd := exec.CommandContext(ctx, bin, args...)
 	// E2E: stub needs worktree path to write sentinel (cwd can differ on some platforms).
-	if os.Getenv("GUMP_E2E_QWEN_BIN") != "" || os.Getenv("PUDDING_E2E_QWEN_BIN") != "" {
-		cmd.Env = append(
-			os.Environ(),
-			"GUMP_WORKTREE="+worktree,
-			"PUDDING_WORKTREE="+worktree,
-		)
+	if os.Getenv("GUMP_E2E_QWEN_BIN") != "" {
+		cmd.Env = append(os.Environ(), "GUMP_WORKTREE="+worktree)
 	}
 	artefactDir := filepath.Join(worktree, brand.StateDir(), "artefacts")
 	_ = os.MkdirAll(artefactDir, 0755)

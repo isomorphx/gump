@@ -65,7 +65,7 @@ func g5LastAgentLaunchedCLIForStep(manifest, step string) string {
 
 func TestG5_E2E_1_VerboseFlag(t *testing.T) {
 	dir := setupGoRepo(t)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "files": {"main.go": "package main\n\nfunc main() {}\n"},
   "stdout_extra_json_lines": [
     "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Read\",\"input\":{\"path\":\"go.mod\"}}]}}",
@@ -74,7 +74,7 @@ func TestG5_E2E_1_VerboseFlag(t *testing.T) {
 }`)
 	writeFile(t, dir, "spec.md", "hello")
 	gitCommitAll(t, dir, "setup")
-	_, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub", "--verbose"}, nil, dir)
+	_, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub", "--verbose"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
@@ -86,7 +86,7 @@ func TestG5_E2E_1_VerboseFlag(t *testing.T) {
 func TestG5_E2E_2_VerboseViaConfig(t *testing.T) {
 	dir := setupGoRepo(t)
 	home := t.TempDir()
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "files": {"main.go": "package main\n\nfunc main() {}\n"},
   "stdout_extra_json_lines": [
     "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Read\",\"input\":{\"path\":\"main.go\"}}]}}",
@@ -99,18 +99,18 @@ func TestG5_E2E_2_VerboseViaConfig(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, ".gump"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	_, _, c1 := runPudding(t, []string{"config", "set", "verbose", "true"}, env, dir)
+	_, _, c1 := runGump(t, []string{"config", "set", "verbose", "true"}, env, dir)
 	if c1 != 0 {
 		t.Fatalf("config set exit %d", c1)
 	}
-	_, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, env, dir)
+	_, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, env, dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
 	if !strings.Contains(stderr, "Read") || !strings.Contains(stderr, "main.go") {
 		t.Fatalf("expected verbose Read + path in stderr, got: %s", stderr)
 	}
-	_, _, _ = runPudding(t, []string{"config", "set", "verbose", "false"}, env, dir)
+	_, _, _ = runGump(t, []string{"config", "set", "verbose", "false"}, env, dir)
 }
 
 func TestG5_E2E_3_ResumeHappyPath(t *testing.T) {
@@ -128,7 +128,7 @@ steps:
     prompt: "x"
     gate: [compile]
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "files": {"main.go": "package main\n\nfunc main() {}\n"},
   "by_attempt": {
     "2": {"files": {"bad.go": "package main\n\nfunc X() { SYNTAXERROR }\n"}},
@@ -137,16 +137,16 @@ steps:
 }`)
 	writeFile(t, dir, "spec.md", "x")
 	gitCommitAll(t, dir, "setup")
-	stdout1, stderr1, code1 := runPudding(t, []string{"run", "spec.md", "--workflow", "g5-resume", "--agent-stub"}, nil, dir)
+	stdout1, stderr1, code1 := runGump(t, []string{"run", "spec.md", "--workflow", "g5-resume", "--agent-stub"}, nil, dir)
 	if code1 == 0 {
 		t.Fatalf("expected first run fatal, exit 0 stdout=%s stderr=%s", stdout1, stderr1)
 	}
-	stdout2, stderr2, code2 := runPudding(t, []string{"run", "--resume", "--agent-stub"}, nil, dir)
+	stdout2, stderr2, code2 := runGump(t, []string{"run", "--resume", "--agent-stub"}, nil, dir)
 	if code2 != 0 {
 		t.Fatalf("resume exit %d stdout=%s stderr=%s", code2, stdout2, stderr2)
 	}
-	cookDir := latestCookDir(t, dir)
-	manifest := readFile(t, filepath.Join(cookDir, "manifest.ndjson"))
+	runDir := latestRunDir(t, dir)
+	manifest := readFile(t, filepath.Join(runDir, "manifest.ndjson"))
 	if !strings.Contains(manifest, `"type":"run_resumed"`) {
 		t.Fatalf("manifest should contain run_resumed: %s", manifest)
 	}
@@ -162,7 +162,7 @@ steps:
     prompt: "x"
     gate: [compile]
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "files": {"main.go": "package main\n\nfunc main() {}\n"},
   "by_attempt": {
     "1": {"files": {"marker_resume.txt": "v1\n", "x.go": "package main\n\nfunc X() { !!! }\n"}},
@@ -171,7 +171,7 @@ steps:
 }`)
 	writeFile(t, dir, "spec.md", "x")
 	gitCommitAll(t, dir, "setup")
-	stdout1, _, code1 := runPudding(t, []string{"run", "spec.md", "--workflow", "g5-wt", "--agent-stub"}, nil, dir)
+	stdout1, _, code1 := runGump(t, []string{"run", "spec.md", "--workflow", "g5-wt", "--agent-stub"}, nil, dir)
 	if code1 == 0 {
 		t.Fatal("expected fatal first run")
 	}
@@ -185,7 +185,7 @@ steps:
 	if err != nil || string(b1) != "v1\n" {
 		t.Fatalf("expected v1 marker in worktree before resume: %v %q", err, string(b1))
 	}
-	_, _, code2 := runPudding(t, []string{"run", "--resume", "--agent-stub"}, nil, dir)
+	_, _, code2 := runGump(t, []string{"run", "--resume", "--agent-stub"}, nil, dir)
 	if code2 != 0 {
 		t.Fatal("resume should pass")
 	}
@@ -212,7 +212,7 @@ steps:
     prompt: "x"
     gate: [compile]
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "files": {"main.go": "package main\n\nfunc main() {}\n"},
   "session_id_by_step": {"tests": "sess-from-tests"},
   "by_attempt": {
@@ -222,16 +222,16 @@ steps:
 }`)
 	writeFile(t, dir, "spec.md", "x")
 	gitCommitAll(t, dir, "setup")
-	stdout1, _, code1 := runPudding(t, []string{"run", "spec.md", "--workflow", "g5-sess", "--agent-stub"}, nil, dir)
+	stdout1, _, code1 := runGump(t, []string{"run", "spec.md", "--workflow", "g5-sess", "--agent-stub"}, nil, dir)
 	if code1 == 0 {
 		t.Fatal("expected fatal")
 	}
-	uuid := extractCookID(stdout1)
+	uuid := extractRunID(stdout1)
 	man1 := readFile(t, filepath.Join(dir, ".gump", "runs", uuid, "manifest.ndjson"))
 	if !strings.Contains(man1, "sess-from-tests") {
 		t.Fatalf("first run should record session id: %s", man1)
 	}
-	_, _, code2 := runPudding(t, []string{"run", "--resume", "--agent-stub"}, nil, dir)
+	_, _, code2 := runGump(t, []string{"run", "--resume", "--agent-stub"}, nil, dir)
 	if code2 != 0 {
 		t.Fatal("resume failed")
 	}
@@ -245,11 +245,11 @@ func TestG5_E2E_6_ResumePassRefused(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
 	gitCommitAll(t, dir, "setup")
-	_, _, c1 := runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, nil, dir)
+	_, _, c1 := runGump(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, nil, dir)
 	if c1 != 0 {
 		t.Skip("first run did not pass; cannot test resume refusal")
 	}
-	_, stderr, c2 := runPudding(t, []string{"run", "--resume", "--agent-stub"}, nil, dir)
+	_, stderr, c2 := runGump(t, []string{"run", "--resume", "--agent-stub"}, nil, dir)
 	if c2 == 0 {
 		t.Fatal("expected non-zero exit when resuming a passed run")
 	}
@@ -266,10 +266,10 @@ steps:
     agent: stub
     gate: [compile]
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"},"by_attempt":{"1":{"files":{"x.go":"package main\n\nfunc X() { !!! }\n"}},"2":{"files":{"x.go":"package main\n"}}}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"},"by_attempt":{"1":{"files":{"x.go":"package main\n\nfunc X() { !!! }\n"}},"2":{"files":{"x.go":"package main\n"}}}}`)
 	writeFile(t, dir, "spec.md", "x")
 	gitCommitAll(t, dir, "setup")
-	stdout1, _, code1 := runPudding(t, []string{"run", "spec.md", "--workflow", "g5-mw", "--agent-stub"}, nil, dir)
+	stdout1, _, code1 := runGump(t, []string{"run", "spec.md", "--workflow", "g5-mw", "--agent-stub"}, nil, dir)
 	if code1 == 0 {
 		t.Fatal("expected fatal")
 	}
@@ -279,7 +279,7 @@ steps:
 		t.Fatalf("no worktree: %s", stdout1)
 	}
 	_ = os.RemoveAll(m[1])
-	_, stderr, code2 := runPudding(t, []string{"run", "--resume", "--agent-stub"}, nil, dir)
+	_, stderr, code2 := runGump(t, []string{"run", "--resume", "--agent-stub"}, nil, dir)
 	if code2 == 0 {
 		t.Fatal("expected failure")
 	}
@@ -305,7 +305,7 @@ steps:
         retry: 1
         strategy: [same]
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "files": {"main.go": "package main\n\nfunc main() {}\n"},
   "by_attempt": {
     "1": {"files": {"z.go": "package main\n\nfunc Z() { BAD }\n"}},
@@ -314,11 +314,11 @@ steps:
 }`)
 	writeFile(t, dir, "spec.md", "x")
 	gitCommitAll(t, dir, "setup")
-	_, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "g5-c8", "--agent-stub"}, nil, dir)
+	_, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "g5-c8", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	manifest := readFile(t, filepath.Join(latestCookDir(t, dir), "manifest.ndjson"))
+	manifest := readFile(t, filepath.Join(latestRunDir(t, dir), "manifest.ndjson"))
 	if g5CountManifest(manifest, "retry_triggered") < 1 {
 		t.Fatalf("expected retry_triggered in manifest: %s", manifest)
 	}
@@ -344,7 +344,7 @@ steps:
         strategy: ["escalate: claude-opus"]
 `)
 	// Attempt 1: exceed max_turns (action then two assistant texts). Attempt 2: single assistant, valid compile.
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "files": {"main.go": "package main\n\nfunc main() {}\n"},
   "stdout_extra_json_lines_by_attempt": {
     "1": [
@@ -360,11 +360,11 @@ steps:
 }`)
 	writeFile(t, dir, "spec.md", "x")
 	gitCommitAll(t, dir, "setup")
-	_, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "g5-c9", "--agent-stub"}, nil, dir)
+	_, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "g5-c9", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	manifest := readFile(t, filepath.Join(latestCookDir(t, dir), "manifest.ndjson"))
+	manifest := readFile(t, filepath.Join(latestRunDir(t, dir), "manifest.ndjson"))
 	if !strings.Contains(manifest, `"strategy":"escalate: claude-opus"`) && !strings.Contains(manifest, `escalate: claude-opus`) {
 		t.Fatalf("expected guard_fail escalate strategy in manifest: %s", manifest)
 	}
@@ -381,7 +381,7 @@ steps:
       retry: 3
       strategy: [same]
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "files": {"main.go": "package main\n\nfunc main() {}\n"},
   "by_attempt": {
     "1": {"files": {"a.go": "package main\n\nfunc A() { !!! }\n"}},
@@ -391,11 +391,11 @@ steps:
 }`)
 	writeFile(t, dir, "spec.md", "x")
 	gitCommitAll(t, dir, "setup")
-	_, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "g5-c10", "--agent-stub"}, nil, dir)
+	_, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "g5-c10", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	manifest := readFile(t, filepath.Join(latestCookDir(t, dir), "manifest.ndjson"))
+	manifest := readFile(t, filepath.Join(latestRunDir(t, dir), "manifest.ndjson"))
 	if g5CountManifest(manifest, "retry_triggered") < 2 {
 		t.Fatalf("expected at least 2 retry_triggered for flat retry:3: %s", manifest)
 	}
@@ -420,7 +420,7 @@ steps:
         retry: 2
         strategy: [same]
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "files": {"main.go": "package main\n\nfunc main() {}\n"},
   "stdout_extra_json_lines_by_attempt": {
     "1": [
@@ -438,11 +438,11 @@ steps:
 }`)
 	writeFile(t, dir, "spec.md", "x")
 	gitCommitAll(t, dir, "setup")
-	_, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "g5-c11", "--agent-stub"}, nil, dir)
+	_, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "g5-c11", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	manifest := readFile(t, filepath.Join(latestCookDir(t, dir), "manifest.ndjson"))
+	manifest := readFile(t, filepath.Join(latestRunDir(t, dir), "manifest.ndjson"))
 	if !strings.Contains(manifest, `"type":"guard_triggered"`) {
 		t.Fatalf("expected guard_triggered: %s", manifest)
 	}
@@ -465,7 +465,7 @@ steps:
         retry: 2
         strategy: [same]
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "files": {"main.go": "package main\n\nfunc main() {}\n"},
   "review_by_attempt": {
     "1": "{\"pass\":false,\"comment\":\"no\"}",
@@ -474,11 +474,11 @@ steps:
 }`)
 	writeFile(t, dir, "spec.md", "x")
 	gitCommitAll(t, dir, "setup")
-	_, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "g5-c12", "--agent-stub"}, nil, dir)
+	_, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "g5-c12", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	manifest := readFile(t, filepath.Join(latestCookDir(t, dir), "manifest.ndjson"))
+	manifest := readFile(t, filepath.Join(latestRunDir(t, dir), "manifest.ndjson"))
 	if g5CountManifest(manifest, "retry_triggered") < 1 {
 		t.Fatalf("expected retries routed via gate_fail fallback: %s", manifest)
 	}
@@ -495,7 +495,7 @@ steps:
       retry: 2
       strategy: [same]
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "files": {"main.go": "package main\n\nfunc main() {}\n"},
   "by_attempt": {
     "1": {"files": {"q.go": "package main\n\nfunc Q() { !!! }\n"}},
@@ -504,11 +504,11 @@ steps:
 }`)
 	writeFile(t, dir, "spec.md", "x")
 	gitCommitAll(t, dir, "setup")
-	_, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "g5-rep", "--agent-stub"}, nil, dir)
+	_, _, code := runGump(t, []string{"run", "spec.md", "--workflow", "g5-rep", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("run failed %d", code)
 	}
-	stdout, stderr, rc := runPudding(t, []string{"report", "--detail", "impl"}, nil, dir)
+	stdout, stderr, rc := runGump(t, []string{"report", "--detail", "impl"}, nil, dir)
 	if rc != 0 {
 		t.Fatalf("report %d stderr=%s", rc, stderr)
 	}
@@ -522,13 +522,13 @@ steps:
 func TestG5_E2E_14_CursorStubCLI(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
 	gitCommitAll(t, dir, "setup")
-	_, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent", "cursor", "--agent-stub"}, nil, dir)
+	_, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent", "cursor", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	manifest := readFile(t, filepath.Join(latestCookDir(t, dir), "manifest.ndjson"))
+	manifest := readFile(t, filepath.Join(latestRunDir(t, dir), "manifest.ndjson"))
 	cli := g5LastAgentLaunchedCLI(manifest)
 	for _, frag := range []string{"cursor-agent", "-p", "--yolo", "--trust"} {
 		if !strings.Contains(cli, frag) {
@@ -541,9 +541,9 @@ func TestG5_E2E_15_CursorContextMDC(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, ".cursor/rules/existing.mdc", "---\ndescription: test\n---\nbody\n")
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent", "cursor", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent", "cursor", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
@@ -566,7 +566,7 @@ func TestG5_E2E_15_CursorContextMDC(t *testing.T) {
 }
 
 func TestG5_E2E_16_DoctorCursorLine(t *testing.T) {
-	stdout, stderr, code := runPudding(t, []string{"doctor"}, map[string]string{"GUMP_E2E_SKIP_CURSOR_DOCTOR": "1"}, "")
+	stdout, stderr, code := runGump(t, []string{"doctor"}, map[string]string{"GUMP_E2E_SKIP_CURSOR_DOCTOR": "1"}, "")
 	if code != 0 {
 		t.Fatalf("doctor %d stderr=%s", code, stderr)
 	}
@@ -594,7 +594,7 @@ steps:
     prompt: "x"
     gate: [compile]
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "files": {"main.go": "package main\n\nfunc main() {}\n"},
   "session_id_by_step": {"tests": "cursor-sess-1"},
   "by_attempt": {
@@ -604,12 +604,12 @@ steps:
 }`)
 	writeFile(t, dir, "spec.md", "x")
 	gitCommitAll(t, dir, "setup")
-	stdout1, _, code1 := runPudding(t, []string{"run", "spec.md", "--workflow", "g5-cur", "--agent", "cursor", "--agent-stub"}, nil, dir)
+	stdout1, _, code1 := runGump(t, []string{"run", "spec.md", "--workflow", "g5-cur", "--agent", "cursor", "--agent-stub"}, nil, dir)
 	if code1 == 0 {
 		t.Fatal("expected fatal")
 	}
-	uuid := extractCookID(stdout1)
-	_, _, code2 := runPudding(t, []string{"run", "--resume", "--agent", "cursor", "--agent-stub"}, nil, dir)
+	uuid := extractRunID(stdout1)
+	_, _, code2 := runGump(t, []string{"run", "--resume", "--agent", "cursor", "--agent-stub"}, nil, dir)
 	if code2 != 0 {
 		t.Fatal("resume failed")
 	}
@@ -623,13 +623,13 @@ steps:
 func TestG5_E2E_18_ModelAliasClaudeOpusplan(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
 	gitCommitAll(t, dir, "setup")
-	_, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent", "claude-opusplan", "--agent-stub"}, nil, dir)
+	_, _, code := runGump(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent", "claude-opusplan", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatal(code)
 	}
-	cli := g5LastAgentLaunchedCLI(readFile(t, filepath.Join(latestCookDir(t, dir), "manifest.ndjson")))
+	cli := g5LastAgentLaunchedCLI(readFile(t, filepath.Join(latestRunDir(t, dir), "manifest.ndjson")))
 	if !strings.Contains(cli, "--model opusplan") {
 		t.Fatalf("cli=%s", cli)
 	}
@@ -638,13 +638,13 @@ func TestG5_E2E_18_ModelAliasClaudeOpusplan(t *testing.T) {
 func TestG5_E2E_19_ModelAliasCodexGpt54(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
 	gitCommitAll(t, dir, "setup")
-	_, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent", "codex-gpt54", "--agent-stub"}, nil, dir)
+	_, _, code := runGump(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent", "codex-gpt54", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatal(code)
 	}
-	cli := g5LastAgentLaunchedCLI(readFile(t, filepath.Join(latestCookDir(t, dir), "manifest.ndjson")))
+	cli := g5LastAgentLaunchedCLI(readFile(t, filepath.Join(latestRunDir(t, dir), "manifest.ndjson")))
 	if !strings.Contains(cli, "-m gpt-5.4") && !strings.Contains(cli, "gpt-5.4") {
 		t.Fatalf("cli=%s", cli)
 	}
@@ -653,13 +653,13 @@ func TestG5_E2E_19_ModelAliasCodexGpt54(t *testing.T) {
 func TestG5_E2E_20_ModelAliasGeminiPro(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
 	gitCommitAll(t, dir, "setup")
-	_, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent", "gemini-pro", "--agent-stub"}, nil, dir)
+	_, _, code := runGump(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent", "gemini-pro", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatal(code)
 	}
-	cli := g5LastAgentLaunchedCLI(readFile(t, filepath.Join(latestCookDir(t, dir), "manifest.ndjson")))
+	cli := g5LastAgentLaunchedCLI(readFile(t, filepath.Join(latestRunDir(t, dir), "manifest.ndjson")))
 	if !strings.Contains(cli, "gemini-3.1-pro-preview") {
 		t.Fatalf("cli=%s", cli)
 	}
@@ -671,13 +671,13 @@ func TestG5_E2E_20_ModelAliasGeminiPro(t *testing.T) {
 func TestG5_E2E_21_ModelAliasPassthrough(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
 	gitCommitAll(t, dir, "setup")
-	_, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent", "claude-some-future-model", "--agent-stub"}, nil, dir)
+	_, _, code := runGump(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent", "claude-some-future-model", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatal(code)
 	}
-	cli := g5LastAgentLaunchedCLI(readFile(t, filepath.Join(latestCookDir(t, dir), "manifest.ndjson")))
+	cli := g5LastAgentLaunchedCLI(readFile(t, filepath.Join(latestRunDir(t, dir), "manifest.ndjson")))
 	if !strings.Contains(cli, "--model some-future-model") {
 		t.Fatalf("cli=%s", cli)
 	}

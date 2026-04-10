@@ -104,8 +104,8 @@ var (
 	artifactMarker   = "[" + brand.Upper() + ":artifact]"
 	reviewMarker     = "[" + brand.Upper() + ":review]"
 	validateMarker   = "[" + brand.Upper() + ":validate]"
-	testScenarioFile = ".pud" + "ding-test-scenario.json"
-	testPlanFile     = ".pud" + "ding-test-plan.json"
+	testScenarioFile = ".gump-test-scenario.json"
+	testPlanFile     = ".gump-test-plan.json"
 )
 
 func stubArtifactFilename(stepName, qualStepPath string) string {

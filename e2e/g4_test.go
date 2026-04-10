@@ -11,7 +11,7 @@ import (
 
 func TestG4_RestartFromGateReevaluated(t *testing.T) {
 	dir := setupGoRepo(t)
-	writeFile(t, dir, ".pudding/recipes/test-g4-restart-gate.yaml", `name: test-g4-restart-gate
+	writeFile(t, dir, ".gump/workflows/test-g4-restart-gate.yaml", `name: test-g4-restart-gate
 steps:
   - name: precheck
     gate:
@@ -27,13 +27,13 @@ steps:
       restart_from: precheck
 `)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"1":{"files":{"bad.go":"package main\n\nfunc broken() { SYNTAX }\n"}},"2":{"files":{"bad.go":"package main\n\nfunc fixed() {}\n"}}}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"by_attempt":{"1":{"files":{"bad.go":"package main\n\nfunc broken() { SYNTAX }\n"}},"2":{"files":{"bad.go":"package main\n\nfunc fixed() {}\n"}}}}`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-g4-restart-gate", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "test-g4-restart-gate", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}
-	manifest := readFile(t, filepath.Join(latestCookDir(t, dir), "manifest.ndjson"))
+	manifest := readFile(t, filepath.Join(latestRunDir(t, dir), "manifest.ndjson"))
 	count := 0
 	for _, line := range strings.Split(strings.TrimSpace(manifest), "\n") {
 		var ev map[string]interface{}

@@ -1,0 +1,21 @@
+name: simple
+max_budget: 5.00
+
+steps:
+  - name: decompose
+    type: split
+    get:
+      prompt: |
+        Decompose {spec} into tasks.
+    run:
+      agent: claude-opus
+    gate: [schema]
+    each:
+      - name: code
+        type: code
+        get:
+          prompt: |
+            Implement: {task.description}
+        run:
+          agent: claude-opus
+        gate: [compile]

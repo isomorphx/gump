@@ -18,7 +18,7 @@ import (
 // M4-E2E-1: gate events (renamed from validation_*)
 func TestM4_E2E1_GateEvents(t *testing.T) {
 	dir := setupGoRepo(t)
-	writeFile(t, dir, ".pudding/recipes/test-m4-e1.yaml", `name: test-m4-e1
+	writeFile(t, dir, ".gump/workflows/test-m4-e1.yaml", `name: test-m4-e1
 steps:
   - name: code
     agent: claude-haiku
@@ -27,14 +27,14 @@ steps:
     gate: [compile]
 `)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m4-e1", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "test-m4-e1", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}
-	cookDir := latestCookDir(t, dir)
-	manifest := readFile(t, filepath.Join(cookDir, "manifest.ndjson"))
+	runDir := latestRunDir(t, dir)
+	manifest := readFile(t, filepath.Join(runDir, "manifest.ndjson"))
 	if !strings.Contains(manifest, "gate_started") {
 		t.Error("manifest should contain gate_started")
 	}
@@ -49,7 +49,7 @@ steps:
 // M4-E2E-2: gate_failed
 func TestM4_E2E2_GateFailed(t *testing.T) {
 	dir := setupGoRepo(t)
-	writeFile(t, dir, ".pudding/recipes/test-m4-e2.yaml", `name: test-m4-e2
+	writeFile(t, dir, ".gump/workflows/test-m4-e2.yaml", `name: test-m4-e2
 steps:
   - name: code
     agent: claude-haiku
@@ -58,14 +58,14 @@ steps:
     gate: [compile]
 `)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_step":{"code":{"files":{"bad.go":"package main\n\nfunc x() { SYNTAXERROR }\n"}}}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"by_step":{"code":{"files":{"bad.go":"package main\n\nfunc x() { SYNTAXERROR }\n"}}}}`)
 	gitCommitAll(t, dir, "setup")
-	_, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m4-e2", "--agent-stub"}, nil, dir)
+	_, _, code := runGump(t, []string{"run", "spec.md", "--workflow", "test-m4-e2", "--agent-stub"}, nil, dir)
 	if code == 0 {
 		t.Fatal("expected non-zero exit")
 	}
-	cookDir := latestCookDir(t, dir)
-	manifest := readFile(t, filepath.Join(cookDir, "manifest.ndjson"))
+	runDir := latestRunDir(t, dir)
+	manifest := readFile(t, filepath.Join(runDir, "manifest.ndjson"))
 	if !strings.Contains(manifest, "gate_failed") {
 		t.Error("manifest should contain gate_failed")
 	}
@@ -91,7 +91,7 @@ steps:
 // M4-E2E-3: HITL paused / resumed
 func TestM4_E2E3_HITLEvents(t *testing.T) {
 	dir := setupGoRepo(t)
-	writeFile(t, dir, ".pudding/recipes/test-m4-e3.yaml", `name: test-m4-e3
+	writeFile(t, dir, ".gump/workflows/test-m4-e3.yaml", `name: test-m4-e3
 steps:
   - name: code
     agent: claude-haiku
@@ -101,7 +101,7 @@ steps:
     gate: [compile]
 `)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
 	gitCommitAll(t, dir, "setup")
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -124,8 +124,8 @@ steps:
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, errb.String())
 	}
-	cookDir := latestCookDir(t, dir)
-	manifest := readFile(t, filepath.Join(cookDir, "manifest.ndjson"))
+	runDir := latestRunDir(t, dir)
+	manifest := readFile(t, filepath.Join(runDir, "manifest.ndjson"))
 	if !strings.Contains(manifest, "hitl_paused") {
 		t.Error("manifest should contain hitl_paused")
 	}
@@ -142,7 +142,7 @@ steps:
 // M4-E2E-4: budget_exceeded
 func TestM4_E2E4_BudgetExceeded(t *testing.T) {
 	dir := setupGoRepo(t)
-	writeFile(t, dir, ".pudding/recipes/test-m4-e4.yaml", `name: test-m4-e4
+	writeFile(t, dir, ".gump/workflows/test-m4-e4.yaml", `name: test-m4-e4
 max_budget: 0.01
 steps:
   - name: code
@@ -151,14 +151,14 @@ steps:
     prompt: "x"
 `)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"cost_usd": 0.05}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"cost_usd": 0.05}`)
 	gitCommitAll(t, dir, "setup")
-	_, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m4-e4", "--agent-stub"}, nil, dir)
+	_, _, code := runGump(t, []string{"run", "spec.md", "--workflow", "test-m4-e4", "--agent-stub"}, nil, dir)
 	if code == 0 {
 		t.Fatal("expected non-zero exit")
 	}
-	cookDir := latestCookDir(t, dir)
-	manifest := readFile(t, filepath.Join(cookDir, "manifest.ndjson"))
+	runDir := latestRunDir(t, dir)
+	manifest := readFile(t, filepath.Join(runDir, "manifest.ndjson"))
 	if !strings.Contains(manifest, "budget_exceeded") {
 		t.Error("manifest should contain budget_exceeded")
 	}
@@ -198,8 +198,8 @@ steps:
 	if be == nil {
 		t.Fatal("no budget_exceeded event")
 	}
-	if be["scope"] != "run" && be["scope"] != "cook" {
-		t.Errorf("scope want run (or legacy cook), got %v", be["scope"])
+	if be["scope"] != "run" {
+		t.Errorf("scope want run, got %v", be["scope"])
 	}
 	if mx, ok := be["max_usd"].(float64); !ok || mx != 0.01 {
 		t.Errorf("max_usd want 0.01, got %v", be["max_usd"])
@@ -213,10 +213,10 @@ steps:
 	}
 }
 
-// M4-E2E-5: cook_started max_budget
-func TestM4_E2E5_CookStartedMaxBudget(t *testing.T) {
+// M4-E2E-5: run_started max_budget
+func TestM4_E2E5_RunStartedMaxBudget(t *testing.T) {
 	dir := setupGoRepo(t)
-	writeFile(t, dir, ".pudding/recipes/test-m4-e5.yaml", `name: test-m4-e5
+	writeFile(t, dir, ".gump/workflows/test-m4-e5.yaml", `name: test-m4-e5
 max_budget: 5.00
 steps:
   - name: code
@@ -225,23 +225,23 @@ steps:
     prompt: "x"
 `)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m4-e5", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "test-m4-e5", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}
-	cookDir := latestCookDir(t, dir)
-	manifest := readFile(t, filepath.Join(cookDir, "manifest.ndjson"))
+	runDir := latestRunDir(t, dir)
+	manifest := readFile(t, filepath.Join(runDir, "manifest.ndjson"))
 	if !strings.Contains(manifest, `"max_budget":5`) && !strings.Contains(manifest, `"max_budget": 5`) {
-		t.Error("cook_started should include max_budget 5")
+		t.Error("run_started should include max_budget 5")
 	}
 }
 
 // M4-E2E-6: step_started item (foreach)
 func TestM4_E2E6_StepStartedItem(t *testing.T) {
 	dir := setupGoRepo(t)
-	writeFile(t, dir, ".pudding/recipes/test-m4-e6.yaml", `name: test-m4-e6
+	writeFile(t, dir, ".gump/workflows/test-m4-e6.yaml", `name: test-m4-e6
 steps:
   - name: plan
     agent: claude-haiku
@@ -258,15 +258,15 @@ steps:
         gate: [compile]
 `)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-plan.json", `[{"name":"add-auth","description":"auth","files":["main.go"]}]`)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
+	writeFile(t, dir, ".gump-test-plan.json", `[{"name":"add-auth","description":"auth","files":["main.go"]}]`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m4-e6", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "test-m4-e6", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}
-	cookDir := latestCookDir(t, dir)
-	manifest := readFile(t, filepath.Join(cookDir, "manifest.ndjson"))
+	runDir := latestRunDir(t, dir)
+	manifest := readFile(t, filepath.Join(runDir, "manifest.ndjson"))
 	if !strings.Contains(manifest, `"item":"add-auth"`) && !strings.Contains(manifest, `"item": "add-auth"`) {
 		t.Error("build step_started should have item add-auth")
 	}
@@ -287,7 +287,7 @@ steps:
 // M4-E2E-7: observed_at on stdout artifact
 func TestM4_E2E7_StdoutObservedAt(t *testing.T) {
 	dir := setupGoRepo(t)
-	writeFile(t, dir, ".pudding/recipes/test-m4-e7.yaml", `name: test-m4-e7
+	writeFile(t, dir, ".gump/workflows/test-m4-e7.yaml", `name: test-m4-e7
 steps:
   - name: code
     agent: claude-haiku
@@ -295,14 +295,14 @@ steps:
     prompt: "x"
 `)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m4-e7", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "test-m4-e7", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}
-	cookDir := latestCookDir(t, dir)
-	artDir := filepath.Join(cookDir, "artifacts")
+	runDir := latestRunDir(t, dir)
+	artDir := filepath.Join(runDir, "artifacts")
 	entries, err := os.ReadDir(artDir)
 	if err != nil {
 		t.Fatal(err)
@@ -347,7 +347,7 @@ steps:
 func TestM4_E2E8_SessionMode(t *testing.T) {
 	t.Run("reuse", func(t *testing.T) {
 		dir := setupGoRepo(t)
-		writeFile(t, dir, ".pudding/recipes/test-m4-e8a.yaml", `name: test-m4-e8a
+		writeFile(t, dir, ".gump/workflows/test-m4-e8a.yaml", `name: test-m4-e8a
 steps:
   - name: code
     agent: claude-haiku
@@ -356,21 +356,21 @@ steps:
     prompt: "x"
 `)
 		writeFile(t, dir, "spec.md", "x")
-		writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
+		writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
 		gitCommitAll(t, dir, "setup")
-		stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m4-e8a", "--agent-stub"}, nil, dir)
+		stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "test-m4-e8a", "--agent-stub"}, nil, dir)
 		if code != 0 {
 			t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 		}
-		cookDir := latestCookDir(t, dir)
-		manifest := readFile(t, filepath.Join(cookDir, "manifest.ndjson"))
+		runDir := latestRunDir(t, dir)
+		manifest := readFile(t, filepath.Join(runDir, "manifest.ndjson"))
 		if !strings.Contains(manifest, `"session_mode":"reuse"`) && !strings.Contains(manifest, `"session_mode": "reuse"`) {
 			t.Error("step_started should have session_mode reuse")
 		}
 	})
 	t.Run("default_fresh", func(t *testing.T) {
 		dir := setupGoRepo(t)
-		writeFile(t, dir, ".pudding/recipes/test-m4-e8b.yaml", `name: test-m4-e8b
+		writeFile(t, dir, ".gump/workflows/test-m4-e8b.yaml", `name: test-m4-e8b
 steps:
   - name: code
     agent: claude-haiku
@@ -378,14 +378,14 @@ steps:
     prompt: "x"
 `)
 		writeFile(t, dir, "spec.md", "x")
-		writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
+		writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
 		gitCommitAll(t, dir, "setup")
-		stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m4-e8b", "--agent-stub"}, nil, dir)
+		stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "test-m4-e8b", "--agent-stub"}, nil, dir)
 		if code != 0 {
 			t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 		}
-		cookDir := latestCookDir(t, dir)
-		manifest := readFile(t, filepath.Join(cookDir, "manifest.ndjson"))
+		runDir := latestRunDir(t, dir)
+		manifest := readFile(t, filepath.Join(runDir, "manifest.ndjson"))
 		if !strings.Contains(manifest, `"session_mode":"fresh"`) && !strings.Contains(manifest, `"session_mode": "fresh"`) {
 			t.Error("step_started should have session_mode fresh")
 		}
@@ -395,7 +395,7 @@ steps:
 // M4-E2E-9: session_id in state bag + ledger
 func TestM4_E2E9_SessionIDKey(t *testing.T) {
 	dir := setupGoRepo(t)
-	writeFile(t, dir, ".pudding/recipes/test-m4-e9.yaml", `name: test-m4-e9
+	writeFile(t, dir, ".gump/workflows/test-m4-e9.yaml", `name: test-m4-e9
 steps:
   - name: code
     agent: claude-haiku
@@ -403,21 +403,21 @@ steps:
     prompt: "x"
 `)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"session_id_by_step":{"code":"sid-m4-test"},"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"session_id_by_step":{"code":"sid-m4-test"},"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m4-e9", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "test-m4-e9", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}
-	cookDir := latestCookDir(t, dir)
-	sb := readFile(t, filepath.Join(cookDir, "state-bag.json"))
+	runDir := latestRunDir(t, dir)
+	sb := readFile(t, filepath.Join(runDir, "state-bag.json"))
 	if !strings.Contains(sb, "session_id") {
 		t.Error("state-bag should persist session_id for the step")
 	}
 	if !strings.Contains(sb, "sid-m4-test") {
 		t.Error("state-bag should contain session id value")
 	}
-	manifest := readFile(t, filepath.Join(cookDir, "manifest.ndjson"))
+	manifest := readFile(t, filepath.Join(runDir, "manifest.ndjson"))
 	found := false
 	for _, line := range strings.Split(strings.TrimSpace(manifest), "\n") {
 		var ev map[string]interface{}

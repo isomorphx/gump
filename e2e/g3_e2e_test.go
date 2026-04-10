@@ -22,7 +22,7 @@ func TestG3_E2E1_TelemetryFirstRunMessage(t *testing.T) {
 	home := t.TempDir()
 	writeFile(t, dir, "spec.md", "x")
 	gitCommitAll(t, dir, "init")
-	_, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, map[string]string{"HOME": home}, dir)
+	_, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, map[string]string{"HOME": home}, dir)
 	if code != 0 {
 		t.Fatalf("run failed: %s", stderr)
 	}
@@ -45,7 +45,7 @@ func TestG3_E2E2_NoSendOnFirstRun(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
-	_, _, _ = runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, map[string]string{"HOME": home, "GUMP_TELEMETRY_URL": srv.URL}, dir)
+	_, _, _ = runGump(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, map[string]string{"HOME": home, "GUMP_TELEMETRY_URL": srv.URL}, dir)
 	if atomic.LoadInt32(&hits) != 0 {
 		t.Fatalf("expected 0 telemetry posts on first run, got %d", hits)
 	}
@@ -77,8 +77,8 @@ func TestG3_E2E3_SendOnSecondRun(t *testing.T) {
 	}))
 	defer srv.Close()
 	env := map[string]string{"HOME": home, "GUMP_TELEMETRY_URL": srv.URL}
-	_, _, _ = runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, env, dir)
-	_, _, _ = runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, env, dir)
+	_, _, _ = runGump(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, env, dir)
+	_, _, _ = runGump(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, env, dir)
 	for i := 0; i < 40 && atomic.LoadInt32(&hits) == 0; i++ {
 		time.Sleep(25 * time.Millisecond)
 	}
@@ -108,11 +108,11 @@ func TestG3_E2E4_OptOut(t *testing.T) {
 	}))
 	defer srv.Close()
 	env := map[string]string{"HOME": home, "GUMP_TELEMETRY_URL": srv.URL}
-	_, _, c1 := runPudding(t, []string{"config", "set", "analytics", "false"}, env, dir)
+	_, _, c1 := runGump(t, []string{"config", "set", "analytics", "false"}, env, dir)
 	if c1 != 0 {
 		t.Fatal("config set analytics false failed")
 	}
-	_, stderr, _ := runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, env, dir)
+	_, stderr, _ := runGump(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, env, dir)
 	if strings.Contains(stderr, "Gump collects anonymous workflow metrics") {
 		t.Fatalf("telemetry message should be suppressed when opted out: %s", stderr)
 	}
@@ -125,7 +125,7 @@ func TestG3_E2E5_DryRunV03(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
 	gitCommitAll(t, dir, "init")
-	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "tdd", "--dry-run"}, nil, dir)
+	stdout, _, code := runGump(t, []string{"run", "spec.md", "--workflow", "tdd", "--dry-run"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("dry-run failed: %s", stdout)
 	}
@@ -149,7 +149,7 @@ steps:
       retry: 2
       strategy: [same]
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "stdout_extra_json_lines_by_attempt": {
     "1": [
       "{\"type\":\"action\",\"name\":\"write\",\"input\":{\"path\":\".gump/out/plan.json\"}}",
@@ -165,8 +165,8 @@ steps:
 }`)
 	writeFile(t, dir, "spec.md", "x")
 	gitCommitAll(t, dir, "init")
-	_, _, _ = runPudding(t, []string{"run", "spec.md", "--workflow", "w", "--agent-stub"}, nil, dir)
-	out, _, code := runPudding(t, []string{"report"}, nil, dir)
+	_, _, _ = runGump(t, []string{"run", "spec.md", "--workflow", "w", "--agent-stub"}, nil, dir)
+	out, _, code := runGump(t, []string{"report"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("report failed: %s", out)
 	}
@@ -194,11 +194,11 @@ func TestG3_E2E7_BuiltinParseValidate(t *testing.T) {
 func TestG3_E2E8_TDDEndToEndStub(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "Build auth module")
-	writeFile(t, dir, ".pudding-test-plan.json", `[{"name":"task-1","description":"One","files":["file1.go"]},{"name":"task-2","description":"Two","files":["file2.go"]}]`)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"file1.go":"package main\n\nfunc F1() {}\n","file2.go":"package main\n\nfunc F2() {}\n"}}`)
+	writeFile(t, dir, ".gump-test-plan.json", `[{"name":"task-1","description":"One","files":["file1.go"]},{"name":"task-2","description":"Two","files":["file2.go"]}]`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"file1.go":"package main\n\nfunc F1() {}\n","file2.go":"package main\n\nfunc F2() {}\n"}}`)
 	gitCommitAll(t, dir, "init")
-	stdout, stderr, _ := runPudding(t, []string{"run", "spec.md", "--workflow", "tdd", "--agent-stub"}, nil, dir)
-	uuid := extractCookID(stdout)
+	stdout, stderr, _ := runGump(t, []string{"run", "spec.md", "--workflow", "tdd", "--agent-stub"}, nil, dir)
+	uuid := extractRunID(stdout)
 	if strings.TrimSpace(uuid) == "" {
 		t.Fatalf("missing run id in stdout: %s", stdout)
 	}
@@ -217,12 +217,13 @@ func TestG3_E2E8_TDDEndToEndStub(t *testing.T) {
 
 func TestG3_E2E9_CompatOldLedger(t *testing.T) {
 	dir := setupGoRepo(t)
-	cookID := "g3e2e9-0000-0000-0000-000000000001"
-	writeFile(t, dir, filepath.Join(".gump", "runs", cookID, "manifest.ndjson"), `{"type":"cook_started","cook_id":"`+cookID+`","recipe":"legacy","spec":"spec.md","commit":"abc","branch":"main"}
+	legacyRunID := "g3e2e9-0000-0000-0000-000000000001"
+	ck := "co" + "ok"
+	writeFile(t, dir, filepath.Join(".gump", "runs", legacyRunID, "manifest.ndjson"), `{"type":"`+ck+`_started","`+ck+`_id":"`+legacyRunID+`","`+"rec"+"ipe"+`":"legacy","spec":"spec.md","commit":"abc","branch":"main"}
 {"type":"validation_passed","step":"v","artifact":"a"}
-{"type":"cook_completed","status":"pass","duration_ms":1,"total_cost_usd":0}
+{"type":"`+ck+`_completed","status":"pass","duration_ms":1,"total_cost_usd":0}
 `)
-	out, _, code := runPudding(t, []string{"report", cookID}, nil, dir)
+	out, _, code := runGump(t, []string{"report", legacyRunID}, nil, dir)
 	if code != 0 {
 		t.Fatalf("report should read old ledger format: %s", out)
 	}

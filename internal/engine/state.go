@@ -14,7 +14,7 @@ const (
 	StepSkipped StepStatus = "skipped"
 )
 
-// StepExecution records one step run for tracing and reporting; written to the engine journal and optionally to cook.
+// StepExecution records one step run for tracing and reporting; written to the engine journal and optionally to the run ledger.
 // StepPath is the fully-qualified path so we can correlate retries with the same logical step and reuse its session when session: reuse-on-retry.
 // OutputMode is "diff", "plan", "artifact", or "" (validation-only). SessionID is set for resolveTargetedSession and reuse-on-retry.
 // ValidateError and ValidateDiff are set on validation failure so retry (step 6) can inject {error} and {diff}.

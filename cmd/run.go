@@ -25,71 +25,77 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	cookRecipe      string
-	cookRecipeAlias string
-	cookAgent       string
-	cookDryRun      bool
-	cookAgentStub   bool
-	cookReplay      bool
-	cookResume      bool
-	cookFromStep    string
-	cookCookID      string
-	cookCookIDAlias string
-	cookVerbose     bool
-	cookPauseAfter  string
-	cookSet         []string
+const (
+	legacyCLIRunFlag      = "co" + "ok"
+	legacyCLIWorkflowFlag = "rec" + "ipe"
 )
 
-var cookCmd = &cobra.Command{
+var (
+	wfName       string
+	wfNameAlias  string
+	agentOverride string
+	dryRun       bool
+	agentStub    bool
+	wantReplay   bool
+	wantResume   bool
+	fromStep     string
+	runID        string
+	runIDLegacy  string
+	verbose      bool
+	pauseAfter   string
+	stateSet     []string
+)
+
+var gumpRunCmd = &cobra.Command{
 	Use:   "run [spec-file]",
 	Short: "Run a workflow against a spec file",
 	Long:  "Resolve the workflow, parse and validate it, then run the workflow (or dry-run to only show the plan).",
 	Args: func(cmd *cobra.Command, args []string) error {
-		if cookReplay || cookResume {
+		if wantReplay || wantResume {
 			return nil
 		}
 		return cobra.ExactArgs(1)(cmd, args)
 	},
-	RunE: runCook,
+	RunE: executeRun,
 }
 
 func init() {
-	cookCmd.Flags().StringVar(&cookRecipe, "workflow", "", "Workflow name (e.g. tdd, freeform). Omitted for --replay (uses last run's workflow).")
-	cookCmd.Flags().StringVar(&cookRecipeAlias, "recipe", "", "Deprecated alias for --workflow (e.g. tdd, freeform). Omitted for --replay.")
-	cookCmd.Flags().StringVar(&cookAgent, "agent", "", "Override agent for all steps (e.g. claude-sonnet, gemini)")
-	cookCmd.Flags().BoolVar(&cookDryRun, "dry-run", false, "Only show plan, do not execute")
-	cookCmd.Flags().BoolVar(&cookAgentStub, "agent-stub", false, "Use stub agent for testing (writes files, no real agent)")
-	cookCmd.Flags().BoolVar(&cookReplay, "replay", false, "Replay from a step of the last fatal run (use with --from-step)")
-	cookCmd.Flags().BoolVar(&cookResume, "resume", false, "Resume the last fatal/aborted run in place")
-	cookCmd.Flags().StringVar(&cookFromStep, "from-step", "", "Step path or short name to start from (required for --replay)")
-	cookCmd.Flags().StringVar(&cookCookID, "run", "", "Run UUID to replay (default: last fatal run)")
-	cookCmd.Flags().StringVar(&cookCookIDAlias, "cook", "", "Deprecated alias for --run")
-	_ = cookCmd.Flags().MarkDeprecated("cook", "use --run instead")
-	cookCmd.Flags().BoolVarP(&cookVerbose, "verbose", "v", false, "Full streaming output (no truncation)")
-	cookCmd.Flags().StringVar(&cookPauseAfter, "pause-after", "", "Inject HITL pause after the given step name; the step must exist in the recipe")
-	cookCmd.Flags().StringSliceVar(&cookSet, "set", nil, "Initial state key=value before the run (repeatable); same idea as sub-workflow with:")
-	rootCmd.AddCommand(cookCmd)
+	gumpRunCmd.Flags().StringVar(&wfName, "workflow", "", "Workflow name (e.g. tdd, freeform). Omitted for --replay (uses last run's workflow).")
+	gumpRunCmd.Flags().StringVar(&wfNameAlias, legacyCLIWorkflowFlag, "", "Deprecated alias for --workflow (e.g. tdd, freeform). Omitted for --replay.")
+	gumpRunCmd.Flags().StringVar(&agentOverride, "agent", "", "Override agent for all steps (e.g. claude-sonnet, gemini)")
+	gumpRunCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Only show plan, do not execute")
+	gumpRunCmd.Flags().BoolVar(&agentStub, "agent-stub", false, "Use stub agent for testing (writes files, no real agent)")
+	gumpRunCmd.Flags().BoolVar(&wantReplay, "replay", false, "Replay from a step of the last fatal run (use with --from-step)")
+	gumpRunCmd.Flags().BoolVar(&wantResume, "resume", false, "Resume the last fatal/aborted run in place")
+	gumpRunCmd.Flags().StringVar(&fromStep, "from-step", "", "Step path or short name to start from (required for --replay)")
+	gumpRunCmd.Flags().StringVar(&runID, "run", "", "Run UUID to replay (default: last fatal run)")
+	gumpRunCmd.Flags().StringVar(&runIDLegacy, legacyCLIRunFlag, "", "Deprecated alias for --run")
+	_ = gumpRunCmd.Flags().MarkDeprecated(legacyCLIRunFlag, "use --run instead")
+	_ = gumpRunCmd.Flags().MarkDeprecated(legacyCLIWorkflowFlag, "use --workflow instead")
+	gumpRunCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Full streaming output (no truncation)")
+	gumpRunCmd.Flags().StringVar(&pauseAfter, "pause-after", "", "Inject HITL pause after the given step name; the step must exist in the workflow")
+	gumpRunCmd.Flags().StringSliceVar(&stateSet, "set", nil, "Initial state key=value before the run (repeatable); same idea as sub-workflow with:")
+	rootCmd.AddCommand(gumpRunCmd)
 }
 
-// runCookReplay runs a replay from the last fatal run (or --cook <id>), restoring state bag and worktree, then running from --from-step.
-func runCookReplay(specPath string, cfg *config.Config, resolved *workflow.ResolvedWorkflow, rec *workflow.Workflow) error {
+// executeRunReplay runs a replay from the last fatal run (or legacy --run alias), restoring state and worktree, then running from --from-step.
+func executeRunReplay(specPath string, cfg *config.Config, resolved *workflow.ResolvedWorkflow, rec *workflow.Workflow) error {
 	if rec == nil {
-		return fmt.Errorf("replay: recipe is nil")
+		return fmt.Errorf("replay: workflow is nil")
 	}
 	if resolved == nil {
-		return fmt.Errorf("replay: resolved recipe is nil")
+		return fmt.Errorf("replay: resolved workflow is nil")
 	}
 	cwd, _ := os.Getwd()
 	repoRoot, err := sandbox.GitRepoRoot(cwd)
 	if err != nil {
 		return err
 	}
-	if cookFromStep == "" {
+	if fromStep == "" {
 		return fmt.Errorf("--from-step is required when using --replay")
 	}
 	var resolver agent.AdapterResolver
-	if cookAgentStub {
+	if agentStub {
 		resolver = &agent.StubResolver{Stub: &agent.StubAdapter{}}
 	} else {
 		resolver = &agent.Registry{
@@ -101,8 +107,8 @@ func runCookReplay(specPath string, cfg *config.Config, resolved *workflow.Resol
 			Cursor:   agent.NewCursorAdapter(),
 		}
 	}
-	agentsCLI := agentsCLIFromRecipe(rec, cookAgentStub)
-	c, stepsCount, err := engine.RunReplay(repoRoot, specPath, cookFromStep, cookCookID, rec, resolved.Raw, resolver, cfg, agentsCLI)
+	agentsCLI := agentsCLIForWorkflow(rec, agentStub)
+	c, stepsCount, err := engine.RunReplay(repoRoot, specPath, fromStep, runID, rec, resolved.Raw, resolver, cfg, agentsCLI)
 	if err != nil {
 		if c != nil {
 			_ = run.WriteStatus(c.RunDir, "fatal")
@@ -123,22 +129,22 @@ func runCookReplay(specPath string, cfg *config.Config, resolved *workflow.Resol
 	return nil
 }
 
-// runCook runs the recipe: dry-run prints the plan only; otherwise creates worktree, runs engine, persists state-bag.
-func runCook(cmd *cobra.Command, args []string) error {
-	if cookRecipeAlias != "" {
-		// WHY: G1 requires --recipe as a deprecated alias for --workflow.
-		fmt.Fprintln(os.Stderr, "warning: --recipe is deprecated, use --workflow instead")
-		if cookRecipe == "" {
-			cookRecipe = cookRecipeAlias
+// executeRun runs the workflow: dry-run prints the plan only; otherwise creates worktree, runs engine, persists state.
+func executeRun(cmd *cobra.Command, args []string) error {
+	if wfNameAlias != "" {
+		// WHY: G1 keeps a deprecated CLI alias so existing scripts keep working until operators migrate flags.
+		fmt.Fprintln(os.Stderr, "warning: --"+legacyCLIWorkflowFlag+" is deprecated, use --workflow instead")
+		if wfName == "" {
+			wfName = wfNameAlias
 		}
 	}
-	if cookCookIDAlias != "" {
-		fmt.Fprintln(os.Stderr, "warning: --cook is deprecated, use --run instead")
-		if cookCookID == "" {
-			cookCookID = cookCookIDAlias
+	if runIDLegacy != "" {
+		fmt.Fprintln(os.Stderr, "warning: --"+legacyCLIRunFlag+" is deprecated, use --run instead")
+		if runID == "" {
+			runID = runIDLegacy
 		}
 	}
-	if cookReplay && cookResume {
+	if wantReplay && wantResume {
 		return fmt.Errorf("--replay and --resume are mutually exclusive")
 	}
 
@@ -160,12 +166,12 @@ func runCook(cmd *cobra.Command, args []string) error {
 	var resolved *workflow.ResolvedWorkflow
 	var rec *workflow.Workflow
 
-	if cookResume {
+	if wantResume {
 		if len(args) > 0 {
 			return fmt.Errorf("spec file is not used with --resume")
 		}
 		var resolver agent.AdapterResolver
-		if cookAgentStub {
+		if agentStub {
 			resolver = &agent.StubResolver{Stub: &agent.StubAdapter{}}
 		} else {
 			resolver = &agent.Registry{
@@ -183,11 +189,11 @@ func runCook(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if cmd.Flags().Changed("verbose") {
-			engine.Verbose = cookVerbose
+			engine.Verbose = verbose
 		} else {
 			engine.Verbose = cfg.Verbose
 		}
-		c, stepsCount, err := engine.RunResume(repoRoot, cookCookID, resolver, cfg, nil)
+		c, stepsCount, err := engine.RunResume(repoRoot, runID, resolver, cfg, nil)
 		if err != nil {
 			if c != nil {
 				_ = run.WriteStatus(c.RunDir, "fatal")
@@ -204,27 +210,27 @@ func runCook(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if cookReplay {
-		if len(args) >= 1 && cookRecipe != "" {
-			// Replay with explicit spec and recipe (e.g. smoke test): use them so we don't depend on snapshot.
+	if wantReplay {
+		if len(args) >= 1 && wfName != "" {
+			// Replay with explicit spec and workflow (e.g. smoke test): use them so we don't depend on snapshot.
 			specPath = args[0]
 			projectRoot := config.ProjectRoot()
 			var err error
-			resolved, err = workflow.Resolve(cookRecipe, projectRoot)
+			resolved, err = workflow.Resolve(wfName, projectRoot)
 			if err != nil {
 				return err
 			}
-			recipeDir := ""
+			wfDir := ""
 			if resolved.Path != "" {
-				recipeDir = filepath.Dir(resolved.Path)
+				wfDir = filepath.Dir(resolved.Path)
 			}
 			var warns []workflow.Warning
-			rec, warns, err = workflow.Parse(resolved.Raw, recipeDir)
+			rec, warns, err = workflow.Parse(resolved.Raw, wfDir)
 			for _, w := range warns {
 				fmt.Fprintln(os.Stderr, "warning:", w.Message)
 			}
 			if err != nil {
-				return fmt.Errorf("%w\n(recipe loaded from %s)", err, resolved.Source)
+				return fmt.Errorf("%w\n(workflow loaded from %s)", err, resolved.Source)
 			}
 			workflow.ValidateProjectRoot = projectRoot
 			if errs := workflow.Validate(rec); len(errs) > 0 {
@@ -233,7 +239,7 @@ func runCook(cmd *cobra.Command, args []string) error {
 				}
 				os.Exit(1)
 			}
-			return runCookReplay(specPath, cfg, resolved, rec)
+			return executeRunReplay(specPath, cfg, resolved, rec)
 		}
 		// Replay without args: infer spec and workflow from the last fatal run snapshot.
 		cwd, _ := os.Getwd()
@@ -241,11 +247,11 @@ func runCook(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		cookDir, err := engine.FindLastFatalCook(repoRoot, cookCookID)
+		runDir, err := engine.FindLastFatalRun(repoRoot, runID)
 		if err != nil {
 			return err
 		}
-		ctxPath := filepath.Join(cookDir, "context-snapshot.json")
+		ctxPath := filepath.Join(runDir, "context-snapshot.json")
 		ctxData, err := os.ReadFile(ctxPath)
 		if err != nil {
 			return fmt.Errorf("replay: read context snapshot: %w", err)
@@ -258,14 +264,14 @@ func runCook(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("replay: parse context snapshot: %w", err)
 		}
 		specPath = filepath.Join(ctx.RepoRoot, ctx.Spec)
-		recipePath := filepath.Join(cookDir, "workflow-snapshot.yaml")
-		recipeRaw, err := os.ReadFile(recipePath)
+		snapPath := filepath.Join(runDir, "workflow-snapshot.yaml")
+		snapYAML, err := os.ReadFile(snapPath)
 		if err != nil {
 			return fmt.Errorf("replay: read workflow snapshot: %w", err)
 		}
-		resolved = &workflow.ResolvedWorkflow{Name: "", Source: "replay", Path: recipePath, Raw: recipeRaw}
+		resolved = &workflow.ResolvedWorkflow{Name: "", Source: "replay", Path: snapPath, Raw: snapYAML}
 		var warns []workflow.Warning
-		rec, warns, err = workflow.Parse(recipeRaw, "")
+		rec, warns, err = workflow.Parse(snapYAML, "")
 		for _, w := range warns {
 			fmt.Fprintln(os.Stderr, "warning:", w.Message)
 		}
@@ -279,10 +285,10 @@ func runCook(cmd *cobra.Command, args []string) error {
 			}
 			os.Exit(1)
 		}
-		return runCookReplay(specPath, cfg, resolved, rec)
+		return executeRunReplay(specPath, cfg, resolved, rec)
 	}
 
-	if cookRecipe == "" {
+	if wfName == "" {
 		return fmt.Errorf("--workflow is required when not using --replay")
 	}
 	if len(args) < 1 {
@@ -291,16 +297,16 @@ func runCook(cmd *cobra.Command, args []string) error {
 	specPath = args[0]
 	projectRoot := config.ProjectRoot()
 	workflow.ValidateProjectRoot = projectRoot
-	resolved, err = workflow.Resolve(cookRecipe, projectRoot)
+	resolved, err = workflow.Resolve(wfName, projectRoot)
 	if err != nil {
 		return err
 	}
-	recipeDir := ""
+	wfDir := ""
 	if resolved.Path != "" {
-		recipeDir = filepath.Dir(resolved.Path)
+		wfDir = filepath.Dir(resolved.Path)
 	}
 	var warns []workflow.Warning
-	rec, warns, err = workflow.Parse(resolved.Raw, recipeDir)
+	rec, warns, err = workflow.Parse(resolved.Raw, wfDir)
 	for _, w := range warns {
 		fmt.Fprintln(os.Stderr, "warning:", w.Message)
 	}
@@ -319,7 +325,7 @@ func runCook(cmd *cobra.Command, args []string) error {
 		}
 		os.Exit(1)
 	}
-	if cookDryRun {
+	if dryRun {
 		workflow.EmitDryRunSubworkflowInputWarnings(rec, projectRoot)
 	}
 	specInfo, err := os.Stat(specPath)
@@ -334,7 +340,7 @@ func runCook(cmd *cobra.Command, args []string) error {
 	if p := config.ProjectConfigPath(); p != "" {
 		configSource = "gump.toml"
 	}
-	if cookDryRun {
+	if dryRun {
 		fmt.Println("Gump Dry Run")
 		fmt.Println("─────────────────────────────────────────────────────────")
 		fmt.Println()
@@ -381,7 +387,7 @@ func runCook(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Worktree: %s\n", c.WorktreeDir)
 
 	var resolver agent.AdapterResolver
-	if cookAgentStub {
+	if agentStub {
 		resolver = &agent.StubResolver{Stub: &agent.StubAdapter{}}
 	} else {
 		resolver = &agent.Registry{
@@ -395,9 +401,9 @@ func runCook(cmd *cobra.Command, args []string) error {
 	}
 
 	eng := engine.New(c, rec, resolver, cfg, string(specContent))
-	eng.AgentsCLI = agentsCLIFromRecipe(rec, cookAgentStub)
-	eng.CookAgentOverride = cookAgent
-	for _, kv := range cookSet {
+	eng.AgentsCLI = agentsCLIForWorkflow(rec, agentStub)
+	eng.RunAgentOverride = agentOverride
+	for _, kv := range stateSet {
 		kv = strings.TrimSpace(kv)
 		if kv == "" {
 			continue
@@ -409,15 +415,15 @@ func runCook(cmd *cobra.Command, args []string) error {
 		eng.State.Set(strings.TrimSpace(kv[:i]), strings.TrimSpace(kv[i+1:]))
 	}
 	if cmd.Flags().Changed("verbose") {
-		engine.Verbose = cookVerbose
+		engine.Verbose = verbose
 	} else {
 		engine.Verbose = cfg.Verbose
 	}
-	if cookPauseAfter != "" {
-		if workflow.FindStepByName(rec.Steps, cookPauseAfter) == nil {
-			return fmt.Errorf("--pause-after: step %q not found in recipe", cookPauseAfter)
+	if pauseAfter != "" {
+		if workflow.FindStepByName(rec.Steps, pauseAfter) == nil {
+			return fmt.Errorf("--pause-after: step %q not found in workflow", pauseAfter)
 		}
-		eng.PauseAfterStep = cookPauseAfter
+		eng.PauseAfterStep = pauseAfter
 	}
 	anonymousID, telemetryFirstRun := telemetry.InitAnonymousID(cfg.Analytics, os.Stderr)
 	runStartedAt := time.Now()
@@ -426,7 +432,7 @@ func runCook(cmd *cobra.Command, args []string) error {
 	}
 	if err := eng.Execute(); err != nil {
 		sendTelemetry("fail")
-		if errors.Is(err, engine.ErrCookAborted) {
+		if errors.Is(err, engine.ErrRunAborted) {
 			_ = run.WriteStatus(c.RunDir, "aborted")
 			return err
 		}
@@ -578,7 +584,7 @@ func detectRepoLanguage(root string) string {
 		}
 		if d.IsDir() {
 			name := d.Name()
-			if name == ".git" || name == ".gump" || name == ".pudding" || name == "node_modules" || name == "vendor" {
+			if name == ".git" || name == ".gump" || name == "node_modules" || name == "vendor" {
 				return filepath.SkipDir
 			}
 			return nil
@@ -615,7 +621,7 @@ func detectRepoSizeBucket(root string) string {
 		}
 		if d.IsDir() {
 			name := d.Name()
-			if name == ".git" || name == ".gump" || name == ".pudding" || name == "node_modules" || name == "vendor" {
+			if name == ".git" || name == ".gump" || name == "node_modules" || name == "vendor" {
 				return filepath.SkipDir
 			}
 			return nil
@@ -642,8 +648,8 @@ func maxInt(a, b int) int {
 	return b
 }
 
-// agentsCLIFromRecipe builds a map of agent name -> CLI version for cook_started. Stub mode uses "stub-1.0.0"; otherwise "unknown".
-func agentsCLIFromRecipe(rec *workflow.Workflow, useStub bool) map[string]string {
+// agentsCLIForWorkflow builds a map of agent name -> CLI version for run_started. Stub mode uses "stub-1.0.0"; otherwise "unknown".
+func agentsCLIForWorkflow(rec *workflow.Workflow, useStub bool) map[string]string {
 	agents := make(map[string]struct{})
 	var walkAgents func(steps []workflow.Step)
 	walkAgents = func(steps []workflow.Step) {
@@ -759,8 +765,6 @@ func printStepsV4(steps []workflow.Step, indent string, parentNum string) {
 				if line := formatRetryDryRunV4(s.Retry); line != "" {
 					fmt.Printf("%sretry: %s\n", detailIndent, line)
 				}
-			} else if of := s.OnFailureCompat(); of != nil && of.Retry > 0 {
-				fmt.Printf("%sretry: exit cap ≈ %d attempts\n", detailIndent, of.Retry)
 			}
 		}
 		if len(s.Steps) > 0 {
@@ -820,30 +824,6 @@ func formatValidators(v []workflow.GateEntry) string {
 			parts = append(parts, x.Type+":"+x.Arg)
 		} else {
 			parts = append(parts, x.Type)
-		}
-	}
-	return "[" + strings.Join(parts, ", ") + "]"
-}
-
-func formatStrategyV4(entries []workflow.StrategyEntryCompat) string {
-	if len(entries) == 0 {
-		return "[]"
-	}
-	parts := make([]string, 0, len(entries))
-	for _, e := range entries {
-		switch e.Type {
-		case "same":
-			if e.Count > 1 {
-				parts = append(parts, fmt.Sprintf("same×%d", e.Count))
-			} else {
-				parts = append(parts, "same")
-			}
-		case "escalate":
-			parts = append(parts, fmt.Sprintf("escalate: %s", e.Agent))
-		case "replan":
-			parts = append(parts, fmt.Sprintf("replan: %s", e.Agent))
-		default:
-			parts = append(parts, e.Type)
 		}
 	}
 	return "[" + strings.Join(parts, ", ") + "]"

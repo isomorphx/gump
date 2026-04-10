@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="isomorphx/pudding"
+REPO="isomorphx/gump"
 INSTALL_DIR="/usr/local/bin"
-BINARY_NAME="pudding"
+BINARY_NAME="gump"
 
 main() {
     detect_platform
@@ -12,9 +12,9 @@ main() {
     install_binary
     cleanup
     echo ""
-    echo "Pudding ${VERSION} installed to ${INSTALL_DIR}/${BINARY_NAME}"
+    echo "Gump ${VERSION} installed to ${INSTALL_DIR}/${BINARY_NAME}"
     echo ""
-    echo "Run 'pudding doctor' to verify your setup."
+    echo "Run 'gump doctor' to verify your setup."
 }
 
 detect_platform() {
@@ -45,11 +45,11 @@ download_and_verify() {
     TMPDIR=$(mktemp -d)
     trap 'rm -rf "${TMPDIR}"' EXIT
 
-    ARCHIVE="pudding_${OS}_${ARCH}.tar.gz"
+    ARCHIVE="gump_${OS}_${ARCH}.tar.gz"
     DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}/${ARCHIVE}"
     CHECKSUMS_URL="https://github.com/${REPO}/releases/download/${VERSION}/checksums.txt"
 
-    echo "Downloading Pudding ${VERSION} for ${OS}/${ARCH}..."
+    echo "Downloading Gump ${VERSION} for ${OS}/${ARCH}..."
     fetch "${DOWNLOAD_URL}" > "${TMPDIR}/${ARCHIVE}"
     fetch "${CHECKSUMS_URL}" > "${TMPDIR}/checksums.txt"
 
@@ -99,4 +99,3 @@ fatal() {
 }
 
 main
-

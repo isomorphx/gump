@@ -71,13 +71,13 @@ steps:
     agent: claude-sonnet
     gate: [compile, validate: validators/check]
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"review_by_step":{"analyze":"{\"pass\":true,\"comments\":\"Looks good\"}"},"files":{"main.go":"package main\nfunc main(){}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"review_by_step":{"analyze":"{\"pass\":true,\"comments\":\"Looks good\"}"},"files":{"main.go":"package main\nfunc main(){}\n"}}`)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r5-01", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r5-01", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	st := readRunState(t, dir, runID)
 	if st["impl.gate.check.pass"] != "true" || st["impl.gate.check.comments"] != "Looks good" {
 		t.Fatalf("gate state: %+v", map[string]string{"pass": st["impl.gate.check.pass"], "comments": st["impl.gate.check.comments"]})
@@ -106,13 +106,13 @@ steps:
     agent: claude-sonnet
     gate: [compile, validate: validators/check]
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"review_by_step":{"analyze":"{\"pass\":false,\"comments\":\"Architecture violation\"}"},"files":{"main.go":"package main\nfunc main(){}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"review_by_step":{"analyze":"{\"pass\":false,\"comments\":\"Architecture violation\"}"},"files":{"main.go":"package main\nfunc main(){}\n"}}`)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r5-02", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r5-02", "--agent-stub"}, envWithStubPath(), dir)
 	if code == 0 {
 		t.Fatalf("expected fail stderr=%s", stderr)
 	}
-	runID := extractCookID(stdout + stderr)
+	runID := extractRunID(stdout + stderr)
 	st := readRunState(t, dir, runID)
 	if st["impl.gate.check.pass"] != "false" || st["impl.gate.check.comments"] != "Architecture violation" {
 		t.Fatalf("gate state: %+v", st)
@@ -170,13 +170,13 @@ steps:
         spec: "{spec}"
         agent: claude-opus
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"review_by_step":{"analyze":"{\"pass\":true,\"comments\":\"ok\"}"},"files":{"main.go":"package main\n// DIFF_R5_03_MARK\nfunc main(){}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"review_by_step":{"analyze":"{\"pass\":true,\"comments\":\"ok\"}"},"files":{"main.go":"package main\n// DIFF_R5_03_MARK\nfunc main(){}\n"}}`)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r5-03", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r5-03", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	assertStepStartedAgentForStepContaining(t, dir, runID, "gate/review", "claude-opus")
 	agents := agentsLaunchedForStep(t, dir, runID, "impl")
 	if len(agents) < 1 || agents[0] != "claude-sonnet" {
@@ -220,13 +220,13 @@ steps:
           Fix only these.
       - exit: 4
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"review_by_step":{"analyze":"{\"pass\":false,\"comments\":\"Missing error handling in auth module\"}"},"files":{"main.go":"package main\nfunc main(){}\n","main_test.go":"package main\nimport \"testing\"\nfunc TestM(t *testing.T){}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"review_by_step":{"analyze":"{\"pass\":false,\"comments\":\"Missing error handling in auth module\"}"},"files":{"main.go":"package main\nfunc main(){}\n","main_test.go":"package main\nimport \"testing\"\nfunc TestM(t *testing.T){}\n"}}`)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r5-04", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r5-04", "--agent-stub"}, envWithStubPath(), dir)
 	if code == 0 {
 		t.Fatalf("expected non-zero exit after validator keeps failing stderr=%s", stderr)
 	}
-	runID := extractCookID(stdout + stderr)
+	runID := extractRunID(stdout + stderr)
 	st := readRunState(t, dir, runID)
 	if st["impl.gate.review.comments"] != "Missing error handling in auth module" {
 		t.Fatalf("gate review comments in state: %q", st["impl.gate.review.comments"])
@@ -310,13 +310,13 @@ steps:
         agent: claude-opus
       - exit: 4
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"review_by_step":{"judge":"{\"pass\":true,\"comments\":\"escalate\"}"},"by_attempt":{"1":{"files":{"main.go":"package main\n\nfunc Broken( { }\n"}},"2":{"files":{"main.go":"package main\nfunc main(){}\n"}},"3":{"files":{"main.go":"package main\nfunc main(){}\n"}},"4":{"files":{"main.go":"package main\nfunc main(){}\n"}}}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"review_by_step":{"judge":"{\"pass\":true,\"comments\":\"escalate\"}"},"by_attempt":{"1":{"files":{"main.go":"package main\n\nfunc Broken( { }\n"}},"2":{"files":{"main.go":"package main\nfunc main(){}\n"}},"3":{"files":{"main.go":"package main\nfunc main(){}\n"}},"4":{"files":{"main.go":"package main\nfunc main(){}\n"}}}}`)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r5-05", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r5-05", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	agents := agentsLaunchedForStep(t, dir, runID, "impl")
 	if len(agents) < 2 || agents[len(agents)-1] != "claude-opus" {
 		t.Fatalf("want escalation to opus, got %v", agents)
@@ -351,13 +351,13 @@ steps:
         agent: claude-opus
       - exit: 4
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"review_by_step":{"judge":"{\"pass\":false,\"comments\":\"ok\"}"},"by_attempt":{"1":{"files":{"main.go":"package main\n\nfunc Broken( { }\n"}},"2":{"files":{"main.go":"package main\n\nfunc main(){}\n"}}}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"review_by_step":{"judge":"{\"pass\":false,\"comments\":\"ok\"}"},"by_attempt":{"1":{"files":{"main.go":"package main\n\nfunc Broken( { }\n"}},"2":{"files":{"main.go":"package main\n\nfunc main(){}\n"}}}}`)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r5-06", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r5-06", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	agents := agentsLaunchedForStep(t, dir, runID, "impl")
 	for _, a := range agents {
 		if a == "claude-opus" {
@@ -392,13 +392,13 @@ steps:
     agent: claude-sonnet
     gate: [compile]
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"review_by_step":{"deploy":"{\"pass\":true,\"comments\":\"staging-ready\"}"},"files":{"main.go":"package main\nfunc main(){}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"review_by_step":{"deploy":"{\"pass\":true,\"comments\":\"staging-ready\"}"},"files":{"main.go":"package main\nfunc main(){}\n"}}`)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r5-07", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r5-07", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	st := readRunState(t, dir, runID)
 	if st["setup.state.deploy.comments"] != "staging-ready" {
 		t.Fatalf("expected merged validate comments, got %q", st["setup.state.deploy.comments"])
@@ -420,13 +420,13 @@ steps:
       agent: claude-haiku
 `)
 	writeFile(t, dir, ".gump/workflows/r5-08.yaml", "name: r5-08\nsteps:\n  - name: impl\n    type: code\n    get:\n      prompt: \"Based on research: {research.output} Implement {spec}\"\n      workflow: validators/research\n      query: \"best practices for authentication\"\n      agent: claude-haiku\n    run:\n      agent: claude-sonnet\n    gate: [compile]\n")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"review_by_step":{"find":"{\"pass\":true,\"comments\":\"research-result-text\"}"},"files":{"main.go":"package main\nfunc main(){}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"review_by_step":{"find":"{\"pass\":true,\"comments\":\"research-result-text\"}"},"files":{"main.go":"package main\nfunc main(){}\n"}}`)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r5-08", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r5-08", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	st := readRunState(t, dir, runID)
 	if st["research.output"] != "true" {
 		t.Fatalf("expected research.output from validate step, got %q", st["research.output"])
@@ -447,13 +447,13 @@ steps:
     run:
       agent: "{agent}"
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"review_by_step":{"audit":"{\"pass\":true,\"comments\":\"ok\"}"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"review_by_step":{"audit":"{\"pass\":true,\"comments\":\"ok\"}"}}`)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "validators/arch-review", "--set", `diff=some diff`, "--set", `spec=some spec`, "--set", "agent=claude-opus", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "validators/arch-review", "--set", `diff=some diff`, "--set", `spec=some spec`, "--set", "agent=claude-opus", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	st := readRunState(t, dir, runID)
 	if st["audit.output"] != "true" {
 		t.Fatalf("expected audit validate output, got %q", st["audit.output"])
@@ -480,7 +480,7 @@ steps:
     workflow: validators/arch-review
 `)
 	gitCommitAll(t, dir, "wf")
-	_, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r5-10", "--dry-run"}, envWithStubPath(), dir)
+	_, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r5-10", "--dry-run"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
@@ -510,13 +510,13 @@ steps:
     agent: claude-sonnet
     gate: [compile, validate: validators/check, test]
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"review_by_step":{"analyze":"{\"pass\":false,\"comments\":\"no\"}"},"files":{"main.go":"package main\nfunc main(){}\n","main_test.go":"package main\nimport \"testing\"\nfunc TestM(t *testing.T){}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"review_by_step":{"analyze":"{\"pass\":false,\"comments\":\"no\"}"},"files":{"main.go":"package main\nfunc main(){}\n","main_test.go":"package main\nimport \"testing\"\nfunc TestM(t *testing.T){}\n"}}`)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r5-11", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r5-11", "--agent-stub"}, envWithStubPath(), dir)
 	if code == 0 {
 		t.Fatalf("expected fail stderr=%s", stderr)
 	}
-	runID := extractCookID(stdout + stderr)
+	runID := extractRunID(stdout + stderr)
 	st := readRunState(t, dir, runID)
 	if st["impl.gate.compile"] != "true" {
 		t.Fatalf("compile should pass: %q", st["impl.gate.compile"])
@@ -550,13 +550,13 @@ steps:
     agent: claude-sonnet
     gate: [validate: validators/arch-review]
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"review_by_step":{"analyze":"{\"pass\":true,\"comments\":\"ok\"}"},"files":{"main.go":"package main\nfunc main(){}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"review_by_step":{"analyze":"{\"pass\":true,\"comments\":\"ok\"}"},"files":{"main.go":"package main\nfunc main(){}\n"}}`)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r5-12", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r5-12", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	sub := "impl/gate/review/analyze"
 	if !manifestHasStepSubstring(t, dir, runID, sub) {
 		t.Fatalf("manifest missing qualified step %q", sub)
@@ -584,13 +584,13 @@ steps:
     agent: claude-sonnet
     gate: [compile, validate: validators/extra]
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"cost_usd_by_step":{"impl":0.10,"v":0.05},"review_by_step":{"v":"{\"pass\":true,\"comments\":\"ok\"}"},"files":{"main.go":"package main\nfunc main(){}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"cost_usd_by_step":{"impl":0.10,"v":0.05},"review_by_step":{"v":"{\"pass\":true,\"comments\":\"ok\"}"},"files":{"main.go":"package main\nfunc main(){}\n"}}`)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r5-13", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r5-13", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	st := readRunState(t, dir, runID)
 	cost, err := strconv.ParseFloat(strings.TrimSpace(st["run.cost"]), 64)
 	if err != nil || cost < 0.14 || cost > 0.16 {
@@ -620,13 +620,13 @@ steps:
     agent: claude-sonnet
     gate: [compile, test, validate: validators/arch-review]
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"review_by_step":{"analyze":"{\"pass\":true,\"comments\":\"arch ok\"}"},"files":{"main.go":"package main\nfunc main(){}\n","main_test.go":"package main\nimport \"testing\"\nfunc TestM(t *testing.T){}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"review_by_step":{"analyze":"{\"pass\":true,\"comments\":\"arch ok\"}"},"files":{"main.go":"package main\nfunc main(){}\n","main_test.go":"package main\nimport \"testing\"\nfunc TestM(t *testing.T){}\n"}}`)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "smoke-r5-01", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "smoke-r5-01", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	st := readRunState(t, dir, runID)
 	if st["impl.gate.review.pass"] != "true" || st["impl.gate.review.comments"] != "arch ok" {
 		t.Fatalf("gate state: %+v", map[string]string{"pass": st["impl.gate.review.pass"], "comments": st["impl.gate.review.comments"]})

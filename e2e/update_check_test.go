@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func runPuddingBin(t *testing.T, binPath string, args []string, env map[string]string, dir string) (stdout, stderr string, exitCode int) {
+func runGumpBin(t *testing.T, binPath string, args []string, env map[string]string, dir string) (stdout, stderr string, exitCode int) {
 	t.Helper()
 
 	cmd := exec.Command(binPath, args...)
@@ -70,7 +70,7 @@ func readCacheCheckedAt(t *testing.T, home string) time.Time {
 
 func TestE2E_VersionLDFlags(t *testing.T) {
 	bin := binaryPathV99
-	stdout, _, code := runPuddingBin(t, bin, []string{"--version"}, nil, "")
+	stdout, _, code := runGumpBin(t, bin, []string{"--version"}, nil, "")
 	if code != 0 {
 		t.Fatalf("exit code %d stdout=%q", code, stdout)
 	}
@@ -81,7 +81,7 @@ func TestE2E_VersionLDFlags(t *testing.T) {
 
 func TestE2E_UpdateCheckSilencedOnDev(t *testing.T) {
 	dir := setupRepoWithCommit(t)
-	_, stderr, code := runPudding(t, []string{"playbook", "list"}, nil, dir)
+	_, stderr, code := runGump(t, []string{"playbook", "list"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit code %d stderr=%q", code, stderr)
 	}
@@ -100,7 +100,7 @@ func TestE2E_UpdateCheckDisabledByEnv(t *testing.T) {
 		"HOME":                   home,
 		"GUMP_NO_UPDATE_CHECK": "1",
 	}
-	_, stderr, code := runPuddingBin(t, bin, []string{"playbook", "list"}, env, dir)
+	_, stderr, code := runGumpBin(t, bin, []string{"playbook", "list"}, env, dir)
 	if code != 0 {
 		t.Fatalf("exit code %d stderr=%q", code, stderr)
 	}
@@ -126,7 +126,7 @@ check = false
 	env := map[string]string{
 		"HOME": home,
 	}
-	_, stderr, code := runPuddingBin(t, bin, []string{"playbook", "list"}, env, dir)
+	_, stderr, code := runGumpBin(t, bin, []string{"playbook", "list"}, env, dir)
 	if code != 0 {
 		t.Fatalf("exit code %d stderr=%q", code, stderr)
 	}
@@ -142,7 +142,7 @@ func TestE2E_UpdateCheckCacheFreshShowsMessage(t *testing.T) {
 
 	bin := binaryPathV001
 	env := map[string]string{"HOME": home}
-	_, stderr, code := runPuddingBin(t, bin, []string{"playbook", "list"}, env, dir)
+	_, stderr, code := runGumpBin(t, bin, []string{"playbook", "list"}, env, dir)
 	if code != 0 {
 		t.Fatalf("exit code %d stderr=%q", code, stderr)
 	}
@@ -171,7 +171,7 @@ func TestE2E_UpdateCheckCacheExpiredTriggersHTTP(t *testing.T) {
 	}
 
 	before := readCacheCheckedAt(t, home)
-	_, stderr, code := runPuddingBin(t, bin, []string{"playbook", "list"}, env, dir)
+	_, stderr, code := runGumpBin(t, bin, []string{"playbook", "list"}, env, dir)
 	if code != 0 {
 		t.Fatalf("exit code %d stderr=%q", code, stderr)
 	}
@@ -191,7 +191,7 @@ func TestE2E_UpdateCheckMessageNotPrintedOnCommandFailure(t *testing.T) {
 
 	bin := binaryPathV001
 	env := map[string]string{"HOME": home}
-	_, stderr, code := runPuddingBin(t, bin, []string{"run", "nonexistent-spec.md", "--workflow", "freeform"}, env, dir)
+	_, stderr, code := runGumpBin(t, bin, []string{"run", "nonexistent-spec.md", "--workflow", "freeform"}, env, dir)
 	if code == 0 {
 		t.Fatalf("expected failure exit code, got 0 stderr=%q", stderr)
 	}
@@ -208,7 +208,7 @@ func TestE2E_UpdateCheckNotTriggeredOnHelpOrVersionFlags(t *testing.T) {
 	bin := binaryPathV001
 	env := map[string]string{"HOME": home}
 
-	_, stderr, code := runPuddingBin(t, bin, []string{"--help"}, env, dir)
+	_, stderr, code := runGumpBin(t, bin, []string{"--help"}, env, dir)
 	if code != 0 {
 		t.Fatalf("--help should succeed, code=%d stderr=%q", code, stderr)
 	}
@@ -216,7 +216,7 @@ func TestE2E_UpdateCheckNotTriggeredOnHelpOrVersionFlags(t *testing.T) {
 		t.Fatalf("unexpected update message on --help: stderr=%q", stderr)
 	}
 
-	_, stderr, code = runPuddingBin(t, bin, []string{"--version"}, env, dir)
+	_, stderr, code = runGumpBin(t, bin, []string{"--version"}, env, dir)
 	if code != 0 {
 		t.Fatalf("--version should succeed, code=%d stderr=%q", code, stderr)
 	}
@@ -224,7 +224,7 @@ func TestE2E_UpdateCheckNotTriggeredOnHelpOrVersionFlags(t *testing.T) {
 		t.Fatalf("unexpected update message on --version: stderr=%q", stderr)
 	}
 
-	_, stderr, code = runPuddingBin(t, bin, []string{"run", "--help"}, env, dir)
+	_, stderr, code = runGumpBin(t, bin, []string{"run", "--help"}, env, dir)
 	if code != 0 {
 		t.Fatalf("run --help should succeed, code=%d stderr=%q", code, stderr)
 	}

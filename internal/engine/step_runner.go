@@ -282,9 +282,7 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 			lo = childState.Get(lastStepName + ".output")
 		}
 		e.State.Set(gw.Name+".output", lo)
-		for _, k := range childState.Keys() {
-			e.State.Set(gw.Name+".state."+k, childState.Get(k))
-		}
+		graftChildStateIntoParent(e.State, gw.Name, childState)
 	}
 	outputMode := step.OutputMode()
 	promptSrc := step.Prompt
@@ -301,8 +299,8 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 		taskFiles = taskContext.Files
 	}
 	agentToUse := strings.TrimSpace(step.Agent)
-	if e.CookAgentOverride != "" {
-		agentToUse = strings.TrimSpace(e.CookAgentOverride)
+	if e.RunAgentOverride != "" {
+		agentToUse = strings.TrimSpace(e.RunAgentOverride)
 	}
 	if strings.TrimSpace(agentOverride) != "" {
 		agentToUse = strings.TrimSpace(agentOverride)
@@ -335,7 +333,7 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 		return fmt.Errorf("prepare output dir: %w", err), preStepCommit
 	}
 	var retryCtx *pkgcontext.RetryContext
-	if errorContext != nil && step.OnFailureCompat() != nil && (attempt > 1 || errorContext.FromRestart) {
+	if errorContext != nil && step.ShouldRunWithRetryLoop() && (attempt > 1 || errorContext.FromRestart) {
 		ra := attempt
 		maxA := step.MaxAttempts()
 		if errorContext.FromRestart && attempt == 1 {
@@ -489,7 +487,7 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 		taskInfo = "[task " + taskContext.Name + "]"
 	}
 	retryInfo := ""
-	if step.OnFailureCompat() != nil && (attempt > 1 || (errorContext != nil && errorContext.FromRestart)) {
+	if step.ShouldRunWithRetryLoop() && (attempt > 1 || (errorContext != nil && errorContext.FromRestart)) {
 		shAttempt := attempt
 		shMax := step.MaxAttempts()
 		if errorContext != nil && errorContext.FromRestart && attempt == 1 {
@@ -964,7 +962,7 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 					_ = e.Run.Ledger.Emit(ledger.GateFailed{Step: e.ledgerStepPath(stepPath), Reason: errMsg, Artifact: ""})
 					e.emitStepCompleted(stepPath, attempt, "fatal", int(time.Since(exec.StartedAt).Milliseconds()), dc, outputMode, outputValue, true)
 					e.stepCompletedCount++
-					e.printCookTotal()
+					e.printRunTotal()
 				}
 				exec.ValidateError = errMsg
 				exec.ValidateDiff = dc.Patch
@@ -1075,7 +1073,7 @@ func (e *Engine) hitlPauseStep(stepPath, position, outputMode string, filesChang
 		if e.Run.Ledger != nil {
 			_ = e.Run.Ledger.Emit(ledger.HITLResumed{Step: e.ledgerStepPath(stepPath), Action: "abort"})
 		}
-		return ErrCookAborted
+		return ErrRunAborted
 	case err := <-readCh:
 		if err != nil && !errors.Is(err, io.EOF) {
 			return err
@@ -1136,8 +1134,8 @@ func (e *Engine) emitStepCompletedFromLast() {
 	e.State.SetStepOutcome(o.stepPath, stepStatus, retries)
 	e.State.Set(o.stepPath+".attempt", strconv.Itoa(o.attempt))
 	e.State.SetStepCheckResult(o.stepPath, checkResult)
-	if !e.cookRunStartedAt.IsZero() {
-		e.State.SetRunMetric("duration", fmt.Sprintf("%d", int(time.Since(e.cookRunStartedAt).Milliseconds())))
+	if !e.runStartedAt.IsZero() {
+		e.State.SetRunMetric("duration", fmt.Sprintf("%d", int(time.Since(e.runStartedAt).Milliseconds())))
 	}
 	e.State.SetRunMetric("status", stepStatus)
 
@@ -1165,7 +1163,7 @@ func (e *Engine) emitStepCompletedFromLast() {
 	commit, _ := sandbox.HeadCommit(e.Run.WorktreeDir)
 	_ = e.Run.Ledger.Emit(ledger.StepCompleted{Step: lp, Status: o.status, DurationMs: o.durationMs, Commit: commit})
 	e.stepCompletedCount++
-	e.printCookTotal()
+	e.printRunTotal()
 }
 
 // emitStepCompleted writes step artifacts (diff, output) then emits step_completed; used only for validation-only steps (no retry loop).
@@ -1189,8 +1187,8 @@ func (e *Engine) emitStepCompleted(stepPath string, attempt int, status string, 
 	}
 	e.State.SetStepOutcome(stepPath, stepStatus, retries)
 	e.State.SetStepCheckResult(stepPath, checkResult)
-	if !e.cookRunStartedAt.IsZero() {
-		e.State.SetRunMetric("duration", fmt.Sprintf("%d", int(time.Since(e.cookRunStartedAt).Milliseconds())))
+	if !e.runStartedAt.IsZero() {
+		e.State.SetRunMetric("duration", fmt.Sprintf("%d", int(time.Since(e.runStartedAt).Milliseconds())))
 	}
 	e.State.SetRunMetric("status", stepStatus)
 
@@ -1218,5 +1216,5 @@ func (e *Engine) emitStepCompleted(stepPath string, attempt int, status string, 
 	commit, _ := sandbox.HeadCommit(e.Run.WorktreeDir)
 	_ = e.Run.Ledger.Emit(ledger.StepCompleted{Step: lp, Status: status, DurationMs: durationMs, Commit: commit})
 	e.stepCompletedCount++
-	e.printCookTotal()
+	e.printRunTotal()
 }

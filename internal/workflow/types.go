@@ -1,6 +1,6 @@
 package workflow
 
-// Workflow is the v0.0.4 root document (replaces the old recipe shape for parsing and validation).
+// Workflow is the v0.0.4 root document (replaces the pre-v0.0.4 YAML root for parsing and validation).
 type Workflow struct {
 	Name        string
 	MaxBudget   float64
@@ -81,28 +81,4 @@ type ContextSource struct {
 // Warning records a deprecated keyword still present in YAML; parsing continues.
 type Warning struct {
 	Message string
-}
-
-// OnFailureCompat mirrors the pre-R3 execution model so the engine can keep one retry loop until it natively understands retry: (R3).
-type OnFailureCompat struct {
-	Retry       int
-	Strategy    []StrategyEntryCompat
-	RestartFrom string
-	GateFail    *FailureActionCompat
-	GuardFail   *FailureActionCompat
-	ReviewFail  *FailureActionCompat
-}
-
-// FailureActionCompat is one branch under legacy conditional on_failure.
-type FailureActionCompat struct {
-	Retry       int
-	Strategy    []StrategyEntryCompat
-	RestartFrom string
-}
-
-// StrategyEntryCompat is one strategy slot for the compat layer.
-type StrategyEntryCompat struct {
-	Type  string
-	Agent string
-	Count int
 }

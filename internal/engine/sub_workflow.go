@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -23,14 +24,14 @@ func newChildEngine(parent *Engine, childWf *workflow.Workflow, childState *stat
 		SpecContent:         parent.SpecContent,
 		State:               childState,
 		AgentsCLI:           parent.AgentsCLI,
-		CookAgentOverride:   parent.CookAgentOverride,
+		RunAgentOverride:    parent.RunAgentOverride,
 		agentsUsed:          make(map[string]struct{}),
 		globalStepAttempts:  make(map[string]int),
 		budgetTracker:       NewBudgetTracker(childWf.MaxBudget),
 		pendingRestartFrom:  make(map[string]*ErrorContext),
 		LedgerStepPrefix:    ledgerPrefix,
 		SkipNoWritePost:     true,
-		cookRunStartedAt:    parent.cookRunStartedAt,
+		runStartedAt:        parent.runStartedAt,
 		stepTotalEstimate:   len(childWf.Steps),
 	}
 }
@@ -55,7 +56,8 @@ func (parent *Engine) mergeChildTelemetry(child *Engine) {
 // RunSubWorkflow resolves and runs a nested workflow; child metrics fold into the parent for global caps (spec R5).
 func (swr *SubWorkflowRunner) RunSubWorkflow(workflowPath string, inputs map[string]string, worktreeDir string, ledgerPrefix string, resolveCtx *state.ResolveContext) (*state.State, error) {
 	if swr == nil || swr.ParentEngine == nil {
-		return nil, nil
+		// WHY: callers must never treat a missing runner as success with a nil state bag.
+		return nil, fmt.Errorf("subworkflow: parent engine not set")
 	}
 	parent := swr.ParentEngine
 	resolved, err := workflow.Resolve(strings.TrimSpace(workflowPath), parent.Run.RepoRoot)
@@ -74,7 +76,10 @@ func (swr *SubWorkflowRunner) RunSubWorkflow(workflowPath string, inputs map[str
 		return nil, ev[0]
 	}
 	childState := state.New()
-	childState.SetRunAll(parent.State.CloneRun())
+	// WHY: nested runs inherit run.* telemetry; parent state may be absent in tests or thin harnesses.
+	if parent.State != nil {
+		childState.SetRunAll(parent.State.CloneRun())
+	}
 	for k, v := range inputs {
 		childState.Set(k, template.Resolve(v, resolveCtx))
 	}

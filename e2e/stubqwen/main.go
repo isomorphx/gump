@@ -30,20 +30,20 @@ func main() {
 	cwd, _ := os.Getwd()
 	if wt := os.Getenv("GUMP_WORKTREE"); wt != "" {
 		cwd = wt
-	} else if wt := os.Getenv("PUDDING_WORKTREE"); wt != "" {
+	} else if wt := os.Getenv("GUMP_WORKTREE"); wt != "" {
 		cwd = wt
 	}
 	// E2E sentinel: prove this stub ran; content = exe path and cwd for debugging.
 	if exe, err := os.Executable(); err == nil {
 		body := fmt.Sprintf("exe=%s\ncwd=%s", exe, cwd)
-		_ = os.WriteFile(filepath.Join(cwd, ".pudding-e2e-stub-qwen"), []byte(body), 0644)
+		_ = os.WriteFile(filepath.Join(cwd, ".gump-e2e-stub-qwen"), []byte(body), 0644)
 	}
-	if os.Getenv("PUDDING_STUB_QWEN_NO_RESULT") == "1" {
+	if os.Getenv("GUMP_STUB_QWEN_NO_RESULT") == "1" {
 		_ = os.WriteFile(filepath.Join(cwd, "hello.go"), []byte("package main\n\nfunc main() {}\n"), 0644)
 		emitQwenNDJSONNoResult(cwd, sessionID)
 		os.Exit(0)
 	}
-	scenarioPath := filepath.Join(cwd, ".pudding-test-scenario.json")
+	scenarioPath := filepath.Join(cwd, ".gump-test-scenario.json")
 	if data, err := os.ReadFile(scenarioPath); err == nil {
 		var scenario struct {
 			Files []struct {
@@ -64,8 +64,8 @@ func main() {
 			}
 		}
 	}
-	if prompt != "" && (strings.Contains(prompt, "[PUDDING:plan]") || strings.Contains(prompt, "[GUMP:plan]")) {
-		stateDir := ".pudding"
+	if prompt != "" && (strings.Contains(prompt, "[GUMP:plan]") || strings.Contains(prompt, "[GUMP:plan]")) {
+		stateDir := ".gump"
 		if strings.Contains(prompt, "[GUMP:plan]") {
 			stateDir = ".gump"
 		}
@@ -74,16 +74,16 @@ func main() {
 		planPath := filepath.Join(outDir, "plan.json")
 		_ = os.WriteFile(planPath, []byte(`[{"name":"task-1","description":"Stub task","files":["math_test.go","math.go"]}]`), 0644)
 	}
-	if prompt != "" && (strings.Contains(prompt, "[PUDDING:step:red]") || strings.Contains(prompt, "[GUMP:step:red]")) {
+	if prompt != "" && (strings.Contains(prompt, "[GUMP:step:red]") || strings.Contains(prompt, "[GUMP:step:red]")) {
 		_ = os.WriteFile(filepath.Join(cwd, "math_test.go"), []byte("package math\n\nimport \"testing\"\nfunc TestAdd(t *testing.T) {}\n"), 0644)
 	}
-	if prompt != "" && (strings.Contains(prompt, "[PUDDING:step:green]") || strings.Contains(prompt, "[GUMP:step:green]")) {
+	if prompt != "" && (strings.Contains(prompt, "[GUMP:step:green]") || strings.Contains(prompt, "[GUMP:step:green]")) {
 		_ = os.WriteFile(filepath.Join(cwd, "math.go"), []byte("package math\n\nfunc Add(a, b int) int { return a + b }\n"), 0644)
 	}
 	if prompt != "" &&
-		!strings.Contains(prompt, "[PUDDING:plan]") && !strings.Contains(prompt, "[GUMP:plan]") &&
-		!strings.Contains(prompt, "[PUDDING:step:red]") && !strings.Contains(prompt, "[GUMP:step:red]") &&
-		!strings.Contains(prompt, "[PUDDING:step:green]") && !strings.Contains(prompt, "[GUMP:step:green]") {
+		!strings.Contains(prompt, "[GUMP:plan]") && !strings.Contains(prompt, "[GUMP:plan]") &&
+		!strings.Contains(prompt, "[GUMP:step:red]") && !strings.Contains(prompt, "[GUMP:step:red]") &&
+		!strings.Contains(prompt, "[GUMP:step:green]") && !strings.Contains(prompt, "[GUMP:step:green]") {
 		_ = os.MkdirAll(cwd, 0755)
 		_ = os.WriteFile(filepath.Join(cwd, "hello.go"), []byte("package main\n\nfunc main() { println(\"hello world\") }\n"), 0644)
 	}

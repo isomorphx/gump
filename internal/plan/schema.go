@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// Task is one item from the plan step output; blast radius (Files) is optional so recipes can suggest scope without enforcing it.
+// Task is one item from the plan step output; blast radius (Files) is optional so workflows can suggest scope without enforcing it.
 type Task struct {
 	Name        string   `json:"name"`
 	Description string   `json:"description"`

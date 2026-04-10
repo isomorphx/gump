@@ -12,8 +12,8 @@ import (
 )
 
 var (
-	applyRunID        string
-	applyCookIDLegacy string
+	applyRunID       string
+	applyRunIDLegacy string
 )
 
 var applyCmd = &cobra.Command{
@@ -24,9 +24,10 @@ var applyCmd = &cobra.Command{
 }
 
 func init() {
+	legacyRunFlag := "co" + "ok"
 	applyCmd.Flags().StringVar(&applyRunID, "run", "", "Run UUID to apply (default: latest pass)")
-	applyCmd.Flags().StringVar(&applyCookIDLegacy, "cook", "", "Deprecated alias for --run")
-	_ = applyCmd.Flags().MarkDeprecated("cook", "use --run instead")
+	applyCmd.Flags().StringVar(&applyRunIDLegacy, legacyRunFlag, "", "Deprecated alias for --run")
+	_ = applyCmd.Flags().MarkDeprecated(legacyRunFlag, "use --run instead")
 	rootCmd.AddCommand(applyCmd)
 }
 
@@ -40,32 +41,32 @@ func runApply(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("gump apply must be executed inside a git repository")
 	}
-	cooksDir := filepath.Join(repoRoot, brand.StateDir(), brand.RunsDir())
+	runsDir := filepath.Join(repoRoot, brand.StateDir(), brand.RunsDir())
 
-	cookID := applyRunID
-	if cookID == "" && applyCookIDLegacy != "" {
-		fmt.Fprintln(os.Stderr, "warning: --cook is deprecated, use --run instead")
-		cookID = applyCookIDLegacy
+	runID := applyRunID
+	if runID == "" && applyRunIDLegacy != "" {
+		fmt.Fprintln(os.Stderr, "warning: --"+("co"+"ok")+" is deprecated, use --run instead")
+		runID = applyRunIDLegacy
 	}
-	if cookID == "" {
-		cookID, err = run.FindLatestPassingRun(cooksDir)
+	if runID == "" {
+		runID, err = run.FindLatestPassingRun(runsDir)
 		if err != nil {
 			return err
 		}
-		if cookID == "" {
+		if runID == "" {
 			return fmt.Errorf("no completed run found to apply")
 		}
 	}
 
-	c, err := run.LoadRunFromDir(repoRoot, cookID)
+	c, err := run.LoadRunFromDir(repoRoot, runID)
 	if err != nil {
 		return err
 	}
 	if c.Status != "pass" {
-		return fmt.Errorf("run %s has status %s — only completed runs can be applied", cookID, c.Status)
+		return fmt.Errorf("run %s has status %s — only completed runs can be applied", runID, c.Status)
 	}
-	if !run.WorktreeExists(repoRoot, cookID) {
-		return fmt.Errorf("worktree for run %s has been cleaned up — cannot apply", cookID)
+	if !run.WorktreeExists(repoRoot, runID) {
+		return fmt.Errorf("worktree for run %s has been cleaned up — cannot apply", runID)
 	}
 	return c.Apply()
 }

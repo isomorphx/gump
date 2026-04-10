@@ -46,7 +46,7 @@ func CheckCommandAvailable(command string) (binaryName string, available bool) {
 }
 
 // ResolveCommand picks the concrete shell command for a validation alias.
-// Recipes stay stack-agnostic (e.g. "compile") while each repo gets the right command; config wins so teams can pin a command.
+// Validator aliases stay stack-agnostic (e.g. "compile") while each repo gets the right command; config wins so teams can pin a command.
 func ResolveCommand(alias string, cfg *config.Config, worktreeDir string) (string, error) {
 	switch alias {
 	case "compile":

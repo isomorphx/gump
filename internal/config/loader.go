@@ -44,7 +44,7 @@ func Load() (*Config, *Source, error) {
 		applyFile(cfg, src, path, "~/"+userConfigDir()+"/"+userConfigFile)
 	}
 
-	// Project config: gump.toml from cwd upward (R7: no pudding.toml fallback)
+	// Project config: gump.toml from cwd upward (obsolete project filenames are not loaded).
 	cwd, _ := os.Getwd()
 	if cwd != "" {
 		path := findProjectConfig(cwd)

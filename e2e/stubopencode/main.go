@@ -77,16 +77,16 @@ func main() {
 	if cwd == "" {
 		cwd, _ = os.Getwd()
 	}
-	if os.Getenv("PUDDING_STUB_OPENCODE_MULTI_STEP") == "1" {
+	if os.Getenv("GUMP_STUB_OPENCODE_MULTI_STEP") == "1" {
 		emitOpenCodeNDJSONMultiStep(cwd, sessionID)
 		os.Exit(0)
 	}
-	if os.Getenv("PUDDING_STUB_OPENCODE_MALFORMED_TOKENS") == "1" {
+	if os.Getenv("GUMP_STUB_OPENCODE_MALFORMED_TOKENS") == "1" {
 		_ = os.WriteFile(filepath.Join(cwd, "hello.go"), []byte("package main\n\nfunc main() {}\n"), 0644)
 		emitOpenCodeNDJSONMalformed(cwd, sessionID)
 		os.Exit(0)
 	}
-	scenarioPath := filepath.Join(cwd, ".pudding-test-scenario.json")
+	scenarioPath := filepath.Join(cwd, ".gump-test-scenario.json")
 	if data, err := os.ReadFile(scenarioPath); err == nil {
 		var scenario struct {
 			Files []struct {
@@ -112,8 +112,8 @@ func main() {
 			}
 		}
 	}
-	if prompt != "" && (strings.Contains(prompt, "[PUDDING:plan]") || strings.Contains(prompt, "[GUMP:plan]")) {
-		stateDir := ".pudding"
+	if prompt != "" && (strings.Contains(prompt, "[GUMP:plan]") || strings.Contains(prompt, "[GUMP:plan]")) {
+		stateDir := ".gump"
 		if strings.Contains(prompt, "[GUMP:plan]") {
 			stateDir = ".gump"
 		}
@@ -121,16 +121,16 @@ func main() {
 		_ = os.MkdirAll(outDir, 0755)
 		_ = os.WriteFile(filepath.Join(outDir, "plan.json"), []byte(`[{"name":"task-1","description":"Stub task","files":["math_test.go","math.go"]}]`), 0644)
 	}
-	if prompt != "" && (strings.Contains(prompt, "[PUDDING:step:red]") || strings.Contains(prompt, "[GUMP:step:red]")) {
+	if prompt != "" && (strings.Contains(prompt, "[GUMP:step:red]") || strings.Contains(prompt, "[GUMP:step:red]")) {
 		_ = os.WriteFile(filepath.Join(cwd, "math_test.go"), []byte("package math\n\nimport \"testing\"\nfunc TestAdd(t *testing.T) {}\n"), 0644)
 	}
-	if prompt != "" && (strings.Contains(prompt, "[PUDDING:step:green]") || strings.Contains(prompt, "[GUMP:step:green]")) {
+	if prompt != "" && (strings.Contains(prompt, "[GUMP:step:green]") || strings.Contains(prompt, "[GUMP:step:green]")) {
 		_ = os.WriteFile(filepath.Join(cwd, "math.go"), []byte("package math\n\nfunc Add(a, b int) int { return a + b }\n"), 0644)
 	}
 	if prompt != "" &&
-		!strings.Contains(prompt, "[PUDDING:plan]") && !strings.Contains(prompt, "[GUMP:plan]") &&
-		!strings.Contains(prompt, "[PUDDING:step:red]") && !strings.Contains(prompt, "[GUMP:step:red]") &&
-		!strings.Contains(prompt, "[PUDDING:step:green]") && !strings.Contains(prompt, "[GUMP:step:green]") {
+		!strings.Contains(prompt, "[GUMP:plan]") && !strings.Contains(prompt, "[GUMP:plan]") &&
+		!strings.Contains(prompt, "[GUMP:step:red]") && !strings.Contains(prompt, "[GUMP:step:red]") &&
+		!strings.Contains(prompt, "[GUMP:step:green]") && !strings.Contains(prompt, "[GUMP:step:green]") {
 		_ = os.MkdirAll(cwd, 0755)
 		wroteAllowed := false
 		// For cross-provider tests, the allowed files are communicated via the provider context file.

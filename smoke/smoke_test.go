@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	pkgcontext "github.com/isomorphx/gump/internal/context"
 )
 
 const (
@@ -32,65 +34,72 @@ Each function must have comprehensive tests.`
 	specTrickyReverse = `Implement ` + "`ReverseWords(s string) string`" + ` that reverses the order of words in a string while preserving whitespace. Leading and trailing spaces should be preserved. Multiple spaces between words should be preserved. Create comprehensive tests including edge cases.`
 )
 
-const crossRecipeYAML = `name: cross
-description: Cross-provider smoke test
+const crossWorkflowYAML = `name: cross
 steps:
   - name: decompose
-    agent: claude-sonnet
-    output: plan
-    prompt: |
-      Analyze this spec. Produce a single task with the function name and affected files.
-    gate:
-      - schema: plan
-  - name: implement
-    foreach: decompose
-    steps:
+    type: split
+    get:
+      prompt: |
+        Analyze this spec. Produce a single task with the function name and affected files.
+    run:
+      agent: claude-sonnet
+    gate: [schema]
+    each:
       - name: code
-        agent: gemini
-        prompt: "Implement: {item.description}. Files: {item.files}"
+        type: code
+        get:
+          prompt: "Implement: {task.description}. Files: {task.files}"
+        run:
+          agent: gemini
         gate:
           - compile
           - test
 `
 
-const sessionRecipeYAML = `name: session-test
-description: Session reuse smoke test
+const sessionWorkflowYAML = `name: session-test
 steps:
   - name: write-tests
-    agent: claude-sonnet
-    session: fresh
-    prompt: |
-      Write tests for a Calculator struct with Add and Subtract methods.
-      Only create test files.
-    gate:
-      - compile
+    type: code
+    get:
+      prompt: |
+        Write tests for a Calculator struct with Add and Subtract methods.
+        Only create test files.
+      session: new
+    run:
+      agent: claude-haiku
+    gate: [compile]
   - name: implement
-    agent: claude-sonnet
-    session: reuse
-    prompt: |
-      Implement the Calculator struct to make all tests pass.
-      Do NOT modify test files.
+    type: code
+    get:
+      prompt: |
+        Implement the Calculator struct to make all tests pass.
+        Do NOT modify test files.
+      session:
+        from: write-tests
+    run:
+      agent: claude-haiku
     gate:
       - compile
       - test
 `
 
-const retryRecipeYAML = `name: retry-test
-description: Retry smoke test
+const retryWorkflowYAML = `name: retry-test
 steps:
   - name: code
-    agent: claude-haiku
-    prompt: |
-      {spec}
-      IMPORTANT: You must also handle edge cases like empty strings and single characters.
+    type: code
+    get:
+      prompt: |
+        {spec}
+        IMPORTANT: You must also handle edge cases like empty strings and single characters.
+    run:
+      agent: claude-haiku
     gate:
       - compile
       - test
-    on_failure:
-      retry: 3
-      strategy:
-        - same
-        - escalate: claude-sonnet
+    retry:
+      - attempt: 2
+        agent: claude-sonnet
+      - exit: 3
 `
 
 // TestSmokeDoctor checks that gump doctor runs and reports git and installed agents.
@@ -110,14 +119,14 @@ func TestSmokeDoctor(t *testing.T) {
 			t.Errorf("stdout should contain %q: %s", label, stdout)
 		}
 	}
-	re := regexp.MustCompile(`recipes\s+✓\s+(\d+)\s+built-in recipes loaded`)
+	re := regexp.MustCompile(`workflows\s+✓\s+(\d+)\s+built-in workflows loaded`)
 	m := re.FindStringSubmatch(stdout)
 	if len(m) != 2 {
-		t.Errorf("stdout should contain recipes count (e.g. 'recipes ✓ N built-in recipes loaded'): %s", stdout)
+		t.Errorf("stdout should contain workflows count (e.g. 'workflows ✓ N built-in workflows loaded'): %s", stdout)
 	} else {
 		n, err := strconv.Atoi(m[1])
 		if err != nil || n <= 0 {
-			t.Errorf("built-in recipes count should be > 0, got %q (err=%v): %s", m[1], err, stdout)
+			t.Errorf("built-in workflows count should be > 0, got %q (err=%v): %s", m[1], err, stdout)
 		}
 	}
 }
@@ -194,13 +203,13 @@ func TestSmokeFreeform(t *testing.T) {
 	}
 }
 
-// TestSmokeSimple verifies the simple recipe (decompose + implement) and that the
+// TestSmokeSimple verifies the simple workflow (split decompose + each code) and that the
 // ledger records plan step and at least two step_started events.
 func TestSmokeSimple(t *testing.T) {
 	requireAgent(t, "claude")
 	dir := setupSmokeRepo(t)
 	writeSpec(t, dir, specMathLib)
-	stdout, stderr, code := runGump(t, dir, "run", "spec.md", "--workflow", "freeform", "--agent", "claude-sonnet")
+	stdout, stderr, code := runGump(t, dir, "run", "spec.md", "--workflow", "simple", "--agent", "claude-sonnet")
 	if code != 0 {
 		t.Fatalf("run exit %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
@@ -219,7 +228,7 @@ func TestSmokeSimple(t *testing.T) {
 		}
 	}
 	if stepStarted < 2 {
-		t.Errorf("ledger should contain at least 2 step_started (decompose + implement/*), got %d", stepStarted)
+		t.Errorf("ledger should contain at least 2 step_started (decompose + code/*), got %d", stepStarted)
 	}
 	if !hasDecomposeCompleted {
 		t.Error("ledger should contain agent_completed for step decompose")
@@ -232,7 +241,7 @@ func TestSmokeSimple(t *testing.T) {
 }
 
 // TestSmokeTDD runs the full TDD flow (decompose → red → green → final-check) to
-// ensure the recipe and validators behave; non-deterministic agent failures are accepted.
+// ensure the workflow and validators behave; non-deterministic agent failures are accepted.
 // final-check runs lint; if golangci-lint is not installed, the validator is skipped (spec: skip-lint-if-not-installed).
 // TDD is informational like Retry: we do not Fatal on run failure (e.g. timeout or untouched violation).
 func TestSmokeTDD(t *testing.T) {
@@ -306,8 +315,8 @@ func TestSmokeCrossProvider(t *testing.T) {
 	}
 	dir := setupSmokeRepo(t)
 	writeSpec(t, dir, specGreet)
-	recipe := strings.ReplaceAll(crossRecipeYAML, "agent: gemini\n", "agent: "+second+"\n")
-	writeRecipe(t, dir, "cross", recipe)
+	wfYAML := strings.ReplaceAll(crossWorkflowYAML, "agent: gemini\n", "agent: "+second+"\n")
+	writeWorkflow(t, dir, "cross", wfYAML)
 	stdout, _, code := runGump(t, dir, "run", "spec.md", "--workflow", "cross")
 	if code != 0 {
 		t.Fatalf("run exit %d: %s", code, stdout)
@@ -347,10 +356,10 @@ func TestSmokeSessionReuse(t *testing.T) {
 	requireAgent(t, "claude")
 	dir := setupSmokeRepo(t)
 	writeSpec(t, dir, specCalc)
-	writeRecipe(t, dir, "session-test", sessionRecipeYAML)
-	stdout, _, code := runGump(t, dir, "run", "spec.md", "--workflow", "session-test")
+	writeWorkflow(t, dir, "session-test", sessionWorkflowYAML)
+	stdout, stderr, code := runGump(t, dir, "run", "spec.md", "--workflow", "session-test")
 	if code != 0 {
-		t.Fatalf("run exit %d: %s", code, stdout)
+		t.Fatalf("run exit %d:\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
 	assertRunPass(t, dir)
 	ledger := readLedger(t, dir)
@@ -397,7 +406,7 @@ func TestSmokeGC(t *testing.T) {
 	runsDir := filepath.Join(dir, ".gump", "runs")
 	entries, err := os.ReadDir(runsDir)
 	if err != nil {
-		t.Fatalf("list cooks: %v", err)
+		t.Fatalf("list runs: %v", err)
 	}
 	var dirs int
 	for _, e := range entries {
@@ -419,7 +428,7 @@ func TestSmokeRetry(t *testing.T) {
 	requireAgent(t, "claude")
 	dir := setupSmokeRepo(t)
 	writeSpec(t, dir, specTrickyReverse)
-	writeRecipe(t, dir, "retry-test", retryRecipeYAML)
+	writeWorkflow(t, dir, "retry-test", retryWorkflowYAML)
 	stdout, _, code := runGump(t, dir, "run", "spec.md", "--workflow", "retry-test")
 	if code == 0 {
 		assertRunPass(t, dir)
@@ -452,26 +461,31 @@ func TestSmokeParallelArtifact(t *testing.T) {
 	requireAgent(t, "claude")
 	dir := setupSmokeRepo(t)
 	writeSpec(t, dir, "Write a haiku about Go.")
-	recipeYAML := `name: parallel-art
-description: Parallel artifact smoke test
+	parallelWorkflowYAML := `name: parallel-art
 steps:
   - name: generate
     parallel: true
     steps:
       - name: review-1
-        agent: claude-sonnet
-        output: artifact
-        prompt: |
-          Write a brief code review of this spec. Write your review to .gump/out/artifact.txt.
-          {spec}
+        type: artifact
+        get:
+          prompt: |
+            Write a brief code review of this spec. Write your review to .gump/out/artifact.txt.
+            {spec}
+        run:
+          agent: claude-sonnet
+        gate: [compile]
       - name: review-2
-        agent: claude-haiku
-        output: artifact
-        prompt: |
-          Write a brief code review of this spec. Write your review to .gump/out/artifact.txt.
-          {spec}
+        type: artifact
+        get:
+          prompt: |
+            Write a brief code review of this spec. Write your review to .gump/out/artifact.txt.
+            {spec}
+        run:
+          agent: claude-haiku
+        gate: [compile]
 `
-	writeRecipe(t, dir, "parallel-art", recipeYAML)
+	writeWorkflow(t, dir, "parallel-art", parallelWorkflowYAML)
 	stdout, _, code := runGump(t, dir, "run", "spec.md", "--workflow", "parallel-art")
 	if code != 0 {
 		t.Fatalf("run exit %d: %s", code, stdout)
@@ -532,21 +546,27 @@ steps:
 	}
 }
 
-// TestSmokeReplay: replay resumes from the chosen step only; step-a is skipped, step-b runs with the fixed recipe (no validator so stub passes).
+// TestSmokeReplay: replay resumes from the chosen step only; step-a is skipped, step-b runs with the fixed workflow (no validator so stub passes).
 func TestSmokeReplay(t *testing.T) {
 	dir := setupSmokeRepo(t)
 	writeSpec(t, dir, "Create hello.go")
 
-	// Recipe 1: step-b always fails (bash exit 1)
-	writeRecipe(t, dir, "replay-test", `name: replay-test
-description: Replay smoke test
+	// Pass 1: step-b always fails (bash exit 1)
+	writeWorkflow(t, dir, "replay-test", `name: replay-test
 steps:
   - name: step-a
-    agent: stub
-    prompt: "Create hello.go"
+    type: code
+    get:
+      prompt: "Create hello.go"
+    run:
+      agent: stub
+    gate: [compile]
   - name: step-b
-    agent: stub
-    prompt: "Create goodbye.go"
+    type: code
+    get:
+      prompt: "Create goodbye.go"
+    run:
+      agent: stub
     gate:
       - bash: "exit 1"
 `)
@@ -556,16 +576,23 @@ steps:
 		t.Fatal("first run should fail (step-b has bash exit 1)")
 	}
 
-	// Recipe 2: step-b without validator passes as soon as stub completes
-	writeRecipe(t, dir, "replay-test", `name: replay-test
-description: Replay smoke test
+	// Pass 2: step-b without validator passes as soon as stub completes
+	writeWorkflow(t, dir, "replay-test", `name: replay-test
 steps:
   - name: step-a
-    agent: stub
-    prompt: "Create hello.go"
+    type: code
+    get:
+      prompt: "Create hello.go"
+    run:
+      agent: stub
+    gate: [compile]
   - name: step-b
-    agent: stub
-    prompt: "Create goodbye.go"
+    type: code
+    get:
+      prompt: "Create goodbye.go"
+    run:
+      agent: stub
+    gate: [compile]
 `)
 
 	stdout2, stderr2, code2 := runGump(t, dir, "run", "spec.md", "--workflow", "replay-test", "--replay", "--from-step", "step-b", "--agent-stub")
@@ -613,19 +640,21 @@ func TestSmokeContextFile(t *testing.T) {
 	runGit(t, dir, "add", "context-doc.md")
 	runGit(t, dir, "commit", "-m", "add context doc")
 	writeSpec(t, dir, "Summarize the context document.")
-	recipeYAML := `name: ctx-test
-description: Context file injection smoke test
+	ctxWorkflowYAML := `name: ctx-test
 steps:
   - name: summarize
-    agent: claude-haiku
-    output: artifact
-    context:
-      - file: "context-doc.md"
-    prompt: |
-      Read the context file provided above. Your response MUST include the exact marker string found in context-doc.md.
-      Write your response to .gump/out/artifact.txt.
+    type: artifact
+    get:
+      prompt: |
+        Read the context file provided above. Your response MUST include the exact marker string found in context-doc.md.
+        Write your response to .gump/out/artifact.txt.
+      context:
+        - file: "context-doc.md"
+    run:
+      agent: claude-haiku
+    gate: [compile]
 `
-	writeRecipe(t, dir, "ctx-test", recipeYAML)
+	writeWorkflow(t, dir, "ctx-test", ctxWorkflowYAML)
 	stdout, stderr, code := runGump(t, dir, "run", "spec.md", "--workflow", "ctx-test")
 	if code != 0 {
 		t.Fatalf("run exit %d:\nstdout: %s\nstderr: %s", code, stdout, stderr)
@@ -655,13 +684,15 @@ steps:
 func TestSmokeContextBuilderV4Modes(t *testing.T) {
 	dir := setupSmokeRepo(t)
 	writeSpec(t, dir, "Create a simple Go function.")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files": {"add.go": "package main\n\nfunc Add(a, b int) int { return a + b }\n"}}`)
-	writeRecipe(t, dir, "test-diff", `name: test-diff
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files": {"add.go": "package main\n\nfunc Add(a, b int) int { return a + b }\n"}}`)
+	writeWorkflow(t, dir, "test-diff", `name: test-diff
 steps:
   - name: s
-    agent: claude-haiku
-    output: diff
-    prompt: "x"
+    type: code
+    get:
+      prompt: "x"
+    run:
+      agent: claude-haiku
     gate: [compile]
 `)
 	stdout, stderr, code := runGump(t, dir, "run", "spec.md", "--workflow", "test-diff", "--agent-stub")
@@ -678,13 +709,18 @@ steps:
 	if !strings.Contains(s1, "code step") || !strings.Contains(s1, "git diff") {
 		t.Errorf("diff mode: expected code step and git diff markers")
 	}
-	writeRecipe(t, dir, "test-review", `name: test-review
+	// WHY: validate/review steps are no_write outside .gump/out; leftover stub fixtures from the diff run would trip no_write.
+	writeFile(t, dir, ".gump-test-scenario.json", `{"_":"cleared-after-diff"}`)
+	writeWorkflow(t, dir, "test-review", `name: test-review
 steps:
   - name: r
-    agent: claude-haiku
-    output: review
-    prompt: "Review"
-    gate: [compile]
+    type: code
+    get:
+      prompt: "Review"
+    run:
+      agent: claude-haiku
+    gate:
+      - "schema: review"
 `)
 	stdout, stderr, code = runGump(t, dir, "run", "spec.md", "--workflow", "test-review", "--agent-stub")
 	if code != 0 {
@@ -697,36 +733,28 @@ steps:
 		t.Fatal(err)
 	}
 	s2 := string(data2)
-	if !strings.Contains(s2, "review step") || !strings.Contains(s2, "review.json") {
-		t.Errorf("review mode: expected review step and review.json markers")
+	if !strings.Contains(s2, "validate step") || !strings.Contains(s2, "validate.json") {
+		t.Errorf("review mode: expected validate step and validate.json markers")
 	}
-	writeRecipe(t, dir, "test-plan", `name: test-plan
-steps:
-  - name: p
-    agent: claude-haiku
-    output: plan
-    prompt: "Plan"
-`)
-	stdout, stderr, code = runGump(t, dir, "run", "spec.md", "--workflow", "test-plan", "--agent-stub")
-	if code != 0 {
-		t.Fatalf("run exit %d: %s %s", code, stdout, stderr)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"_":"cleared-after-review"}`)
+	// WHY: a split parent and its each-children share one worktree; reading CLAUDE.md after the run sees the last child, not the planner. Plan wording is asserted from the same builder the engine uses.
+	s3 := pkgcontext.BuildAgentContext(pkgcontext.ContextParams{
+		StepType: "split",
+		Prompt:   "Plan",
+		Spec:     "Create a simple Go function.",
+	})
+	if !strings.Contains(s3, "split (plan)") || !strings.Contains(s3, ".gump/out/plan.json") {
+		t.Errorf("plan mode: expected split (plan) wording and plan.json path")
 	}
-	runID3 := filepath.Base(latestRunDir(t, dir))
-	wtDir3 := filepath.Join(dir, ".gump", "worktrees", "run-"+runID3)
-	data3, err := os.ReadFile(filepath.Join(wtDir3, "CLAUDE.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	s3 := string(data3)
-	if !strings.Contains(s3, "plan step") || !strings.Contains(s3, ".gump/out/plan.json") {
-		t.Errorf("plan mode: expected plan step and plan.json markers")
-	}
-	writeRecipe(t, dir, "test-artifact", `name: test-artifact
+	writeFile(t, dir, ".gump-test-scenario.json", `{"_":"cleared-after-plan"}`)
+	writeWorkflow(t, dir, "test-artifact", `name: test-artifact
 steps:
   - name: a
-    agent: claude-haiku
-    output: artifact
-    prompt: "Write artifact"
+    type: artifact
+    get:
+      prompt: "Write artifact"
+    run:
+      agent: claude-haiku
     gate: [compile]
 `)
 	stdout, stderr, code = runGump(t, dir, "run", "spec.md", "--workflow", "test-artifact", "--agent-stub")
@@ -749,22 +777,26 @@ steps:
 func TestSmokeBlastRadius(t *testing.T) {
 	dir := setupSmokeRepo(t)
 	writeSpec(t, dir, "Create hello.go")
-	writeRecipe(t, dir, "foreach-blast", `name: foreach-blast
+	writeWorkflow(t, dir, "foreach-blast", `name: foreach-blast
 steps:
   - name: plan
-    agent: stub
-    output: plan
-    prompt: "Plan"
-  - name: impl
-    foreach: plan
-    steps:
+    type: split
+    get:
+      prompt: "Plan"
+    run:
+      agent: stub
+    gate: [schema]
+    each:
       - name: code
-        agent: stub
-        output: diff
-        prompt: "Implement"
+        type: code
+        get:
+          prompt: "Implement"
+        run:
+          agent: stub
+        gate: [compile]
 `)
-	writeFile(t, dir, ".pudding-test-plan.json", `[{"name": "task-1", "description": "One task", "files": ["hello.go"]}]`)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_step":{"code":{"files":{"hello.go":"package main\n\nfunc Hello() {}\n","extra.go":"package main\n\nfunc Extra() {}\n"}}}}`)
+	writeFile(t, dir, ".gump-test-plan.json", `[{"name": "task-1", "description": "One task", "files": ["hello.go"]}]`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"by_step":{"code":{"files":{"hello.go":"package main\n\nfunc Hello() {}\n","extra.go":"package main\n\nfunc Extra() {}\n"}}}}`)
 	stdout, stderr, code := runGump(t, dir, "run", "spec.md", "--workflow", "foreach-blast", "--agent-stub")
 	if code == 0 {
 		t.Fatal("expected non-zero exit on blast radius violation")
@@ -772,57 +804,6 @@ steps:
 	combined := stdout + stderr
 	if !strings.Contains(combined, "blast radius") {
 		t.Errorf("output should contain blast radius: %s", combined)
-	}
-}
-
-// TestSmokeSessionReuseOnRetry: reuse-on-retry must start fresh then resume the same session on retry so long conversations are preserved without storing session in state bag.
-func TestSmokeSessionReuseOnRetry(t *testing.T) {
-	dir := setupSmokeRepo(t)
-	writeSpec(t, dir, "Create math.go")
-	writeRecipe(t, dir, "retry-session-test", `name: retry-session-test
-description: reuse-on-retry smoke test
-steps:
-  - name: code
-    agent: stub
-    session: reuse-on-retry
-    prompt: "Implement math.go"
-    gate:
-      - compile
-      - test
-    on_failure:
-      retry: 2
-      strategy:
-        - same
-`)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"1":{"files":{"math.go":"package main\n\nfunc Add(a, b int) int { return 0 }\n"}},"2":{"files":{"math.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}},"files":{"math_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { if Add(1, 2) != 3 { t.Fatal() } }\n"}}`)
-	_, stderr, code := runGump(t, dir, "run", "spec.md", "--workflow", "retry-session-test", "--agent-stub")
-	if code != 0 {
-		t.Fatalf("run exit %d: %s", code, stderr)
-	}
-	ledger := readLedger(t, dir)
-	var launchedCode []map[string]interface{}
-	for _, ev := range ledger {
-		if ev["type"] == "agent_launched" {
-			step, _ := ev["step"].(string)
-			if strings.Contains(step, "code") {
-				launchedCode = append(launchedCode, ev)
-			}
-		}
-	}
-	if len(launchedCode) < 2 {
-		t.Fatalf("expected at least 2 agent_launched for code step, got %d", len(launchedCode))
-	}
-	sid1, _ := launchedCode[0]["session_id"].(string)
-	sid2, _ := launchedCode[1]["session_id"].(string)
-	if sid1 != "" {
-		t.Errorf("attempt 1 should have empty session_id (fresh), got %q", sid1)
-	}
-	if sid2 == "" {
-		t.Error("attempt 2 should have non-empty session_id (reuse)")
-	}
-	cli2, _ := launchedCode[1]["cli"].(string)
-	if !strings.Contains(cli2, "resume") && !strings.Contains(cli2, "session") {
-		t.Errorf("attempt 2 cli should contain resume or session: %s", cli2)
 	}
 }
 
@@ -852,16 +833,15 @@ func TestSmokeGumpStatus(t *testing.T) {
 	}
 }
 
-// TestSmokeRecipeComposition: recipe: must expand the referenced recipe so composed recipes run the full sub-recipe, not a single no-op step.
-func TestSmokeRecipeComposition(t *testing.T) {
+// TestSmokeSubworkflowReference: a step with workflow: must run the referenced workflow (not a single no-op placeholder).
+func TestSmokeSubworkflowReference(t *testing.T) {
 	requireAgent(t, "claude")
 	dir := setupSmokeRepo(t)
 	writeSpec(t, dir, specAdd)
-	writeRecipe(t, dir, "compose-test", `name: compose-test
-description: Recipe composition smoke test
+	writeWorkflow(t, dir, "compose-test", `name: compose-test
 steps:
   - name: implement
-    recipe: freeform
+    workflow: freeform
 `)
 	_, _, code := runGump(t, dir, "run", "spec.md", "--workflow", "compose-test", "--agent", "claude-sonnet")
 	if code != 0 {
@@ -925,15 +905,18 @@ func TestSmokeEscapingLive(t *testing.T) {
 	dir := setupSmokeRepo(t)
 	writeSpec(t, dir, "Ensure escaped braces survive templating.")
 	writeFile(t, dir, "context-doc.md", "literal {{json_example}} marker")
-	writeRecipe(t, dir, "escape-live", `name: escape-live
+	writeWorkflow(t, dir, "escape-live", `name: escape-live
 steps:
   - name: echo
-    agent: stub
-    output: artifact
-    context:
-      - file: "context-doc.md"
-    prompt: |
-      Keep this literal token: {{json_example}}
+    type: artifact
+    get:
+      prompt: |
+        Keep this literal token: {{json_example}}
+      context:
+        - file: "context-doc.md"
+    run:
+      agent: stub
+    gate: [compile]
 `)
 	_, stderr, code := runGump(t, dir, "run", "spec.md", "--workflow", "escape-live", "--agent-stub")
 	if code != 0 {
@@ -1061,8 +1044,8 @@ func TestSmokeFullV03(t *testing.T) {
 		t.Fatalf("expected stream marker [gump] in stderr: %s", stderr)
 	}
 	runDir := latestRunDir(t, dir)
-	if _, err := os.Stat(filepath.Join(runDir, "state-bag.json")); err != nil {
-		t.Fatalf("state-bag.json missing: %v", err)
+	if _, err := os.Stat(filepath.Join(runDir, "state.json")); err != nil {
+		t.Fatalf("state.json missing: %v", err)
 	}
 	reportOut, _, rc := runGump(t, dir, "report")
 	if rc != 0 {
@@ -1114,12 +1097,14 @@ func TestSmokeStateBagMetricsLive(t *testing.T) {
 		t.Skip("live run failed; skipping metrics assertions")
 	}
 	runDir := latestRunDir(t, dir)
-	data, err := os.ReadFile(filepath.Join(runDir, "state-bag.json"))
+	data, err := os.ReadFile(filepath.Join(runDir, "state.json"))
 	if err != nil {
-		t.Fatalf("read state-bag.json: %v", err)
+		t.Fatalf("read state.json: %v", err)
 	}
-	if !strings.Contains(string(data), `"run"`) || !strings.Contains(string(data), `"entries"`) {
-		t.Fatalf("state-bag should contain run and entries sections: %s", string(data))
+	s := string(data)
+	// WHY: v0.0.4 state is a flat key map (run.* and step.*), not nested run/entries JSON.
+	if !strings.Contains(s, `"run.cost"`) || !strings.Contains(s, `"execute.`) {
+		t.Fatalf("state should contain run metrics and step-scoped keys: %s", s)
 	}
 }
 
@@ -1128,17 +1113,17 @@ func TestSmokeWorkflowComposition(t *testing.T) {
 	requireAgent(t, "claude")
 	dir := setupSmokeRepo(t)
 	writeSpec(t, dir, "Say hello.")
-	writeRecipe(t, dir, "sub-smoke", `name: sub-smoke
-inputs:
-  msg:
-    required: true
+	writeWorkflow(t, dir, "sub-smoke", `name: sub-smoke
 steps:
   - name: echo
-    agent: claude-haiku
-    output: artifact
-    prompt: "{msg}"
+    type: artifact
+    get:
+      prompt: "{msg}"
+    run:
+      agent: claude-haiku
+    gate: [compile]
 `)
-	writeRecipe(t, dir, "parent-smoke", `name: parent-smoke
+	writeWorkflow(t, dir, "parent-smoke", `name: parent-smoke
 steps:
   - name: call-sub
     workflow: sub-smoke
@@ -1157,14 +1142,17 @@ func TestSmokeGuardMaxTurnsLive(t *testing.T) {
 	requireAgent(t, "claude")
 	dir := setupSmokeRepo(t)
 	writeSpec(t, dir, "Create a one-line summary.")
-	writeRecipe(t, dir, "guard-max-turns-live", `name: guard-max-turns-live
+	writeWorkflow(t, dir, "guard-max-turns-live", `name: guard-max-turns-live
 steps:
   - name: summarize
-    agent: claude-haiku
-    output: artifact
-    prompt: "{spec}"
-    guard:
-      max_turns: 100
+    type: artifact
+    get:
+      prompt: "{spec}"
+    run:
+      agent: claude-haiku
+      guard:
+        max_turns: 100
+    gate: [compile]
 `)
 	stdout, stderr, code := runGump(t, dir, "run", "spec.md", "--workflow", "guard-max-turns-live")
 	if code != 0 {
@@ -1177,16 +1165,24 @@ steps:
 func TestSmokeResumeLive(t *testing.T) {
 	dir := setupSmokeRepo(t)
 	writeSpec(t, dir, "resume smoke")
-	writeRecipe(t, dir, "smoke-resume", `name: smoke-resume
+	writeWorkflow(t, dir, "smoke-resume", `name: smoke-resume
 steps:
   - name: one
-    agent: stub
+    type: code
+    get:
+      prompt: "one"
+    run:
+      agent: stub
     gate: [compile]
   - name: two
-    agent: stub
+    type: code
+    get:
+      prompt: "two"
+    run:
+      agent: stub
     gate: [compile]
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "files": {"main.go": "package main\n\nfunc main() {}\n"},
   "by_attempt": {
     "2": {"files": {"z.go": "package main\n\nfunc Z() { !!! }\n"}},
@@ -1204,50 +1200,24 @@ steps:
 	assertRunPass(t, dir)
 }
 
-// TestSmokeOnFailureConditionalLive exercises conditional on_failure with the stub agent.
-func TestSmokeOnFailureConditionalLive(t *testing.T) {
-	dir := setupSmokeRepo(t)
-	writeSpec(t, dir, "conditional smoke")
-	writeRecipe(t, dir, "smoke-cond", `name: smoke-cond
-steps:
-  - name: code
-    agent: stub
-    gate: [compile]
-    on_failure:
-      gate_fail:
-        retry: 2
-        strategy: [same]
-      guard_fail:
-        retry: 1
-        strategy: [same]
-`)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
-  "files": {"main.go": "package main\n\nfunc main() {}\n"},
-  "by_attempt": {
-    "1": {"files": {"b.go": "package main\n\nfunc B() { !!! }\n"}},
-    "2": {"files": {"b.go": "package main\n\nfunc B() {}\n"}}
-  }
-}`)
-	_, stderr, code := runGump(t, dir, "run", "spec.md", "--workflow", "smoke-cond", "--agent-stub")
-	if code != 0 {
-		t.Fatalf("run failed %d: %s", code, stderr)
-	}
-}
-
 // TestSmokeReportDetailLive checks report --detail after a stub run with retries.
 func TestSmokeReportDetailLive(t *testing.T) {
 	dir := setupSmokeRepo(t)
 	writeSpec(t, dir, "detail smoke")
-	writeRecipe(t, dir, "smoke-det", `name: smoke-det
+	writeWorkflow(t, dir, "smoke-det", `name: smoke-det
 steps:
   - name: impl
-    agent: stub
+    type: code
+    get:
+      prompt: "impl"
+    run:
+      agent: stub
     gate: [compile]
-    on_failure:
-      retry: 2
-      strategy: [same]
+    retry:
+      - attempt: 2
+      - exit: 2
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "files": {"main.go": "package main\n\nfunc main() {}\n"},
   "by_attempt": {
     "1": {"files": {"q.go": "package main\n\nfunc Q() { !!! }\n"}},

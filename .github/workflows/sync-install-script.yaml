@@ -19,7 +19,7 @@ jobs:
           API_TOKEN_GITHUB: ${{ secrets.WEB_REPO_TOKEN }}
         with:
           source_file: install.sh
-          destination_repo: isomorphx/pudding-web
+          destination_repo: isomorphx/gump-web
           destination_folder: public/
           user_email: "41898282+github-actions[bot]@users.noreply.github.com"
           user_name: "github-actions[bot]"

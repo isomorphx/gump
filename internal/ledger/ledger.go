@@ -15,23 +15,23 @@ const manifestName = "manifest.ndjson"
 const artifactsDir = "artifacts"
 
 // Ledger appends events to manifest.ndjson so every transition is traceable without storing heavy payloads inline.
-// We use a single append-only file so that crash recovery never loses committed events and report can aggregate by reading one file per cook.
+// We use a single append-only file so that crash recovery never loses committed events and report can aggregate by reading one file per run.
 type Ledger struct {
-	cookDir   string
+	runDir    string
 	file      *os.File
-	cookID    string
+	runID     string
 	startedAt time.Time
 	mu        sync.Mutex
 }
 
-// New creates a ledger for a cook and opens manifest.ndjson append-only so crashes don't lose prior events.
-func New(cookDir string, cookID string) (*Ledger, error) {
-	manifestPath := filepath.Join(cookDir, manifestName)
+// New creates a ledger for a run and opens manifest.ndjson append-only so crashes don't lose prior events.
+func New(runDir string, runID string) (*Ledger, error) {
+	manifestPath := filepath.Join(runDir, manifestName)
 	f, err := os.OpenFile(manifestPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
 	if err != nil {
 		return nil, err
 	}
-	return &Ledger{cookDir: cookDir, file: f, cookID: cookID, startedAt: time.Now()}, nil
+	return &Ledger{runDir: runDir, file: f, runID: runID, startedAt: time.Now()}, nil
 }
 
 // Emit writes one NDJSON line with ts and type first so cat manifest.ndjson is human-readable; goroutine-safe.
@@ -81,9 +81,9 @@ func (l *Ledger) Close() error {
 	return err
 }
 
-// ArtifactPath returns the absolute path for an artifact name under this cook's artifacts dir.
+// ArtifactPath returns the absolute path for an artifact name under this run's artifacts dir.
 func (l *Ledger) ArtifactPath(name string) string {
-	return filepath.Join(l.cookDir, artifactsDir, name)
+	return filepath.Join(l.runDir, artifactsDir, name)
 }
 
 // WriteArtifact writes content under artifacts/ and returns the relative path for the ledger (artifacts/<name>).
@@ -92,7 +92,7 @@ func (l *Ledger) WriteArtifact(name string, content []byte) (string, error) {
 	if l == nil {
 		return "", nil
 	}
-	dir := filepath.Join(l.cookDir, artifactsDir)
+	dir := filepath.Join(l.runDir, artifactsDir)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", err
 	}
@@ -103,12 +103,12 @@ func (l *Ledger) WriteArtifact(name string, content []byte) (string, error) {
 	return filepath.Join(artifactsDir, name), nil
 }
 
-// CookDir returns the cook directory path.
-func (l *Ledger) CookDir() string {
+// RunDir returns the run directory path.
+func (l *Ledger) RunDir() string {
 	if l == nil {
 		return ""
 	}
-	return l.cookDir
+	return l.runDir
 }
 
 // SanitizeStepPath turns a step path like "implement/task-1/red" into a safe filename prefix "implement-task-1-red".

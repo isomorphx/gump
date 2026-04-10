@@ -139,7 +139,7 @@ func (e *Engine) executeValidationWithoutAgent(step *workflow.Step, stepPath str
 		if e.Run.Ledger != nil {
 			e.emitStepCompleted(stepPath, 1, "fatal", int(time.Since(startedAt).Milliseconds()), nil, "", "", false)
 			e.stepCompletedCount++
-			e.printCookTotal()
+			e.printRunTotal()
 		}
 		return fmt.Errorf("final diff for %s step: %w", opts.finalDiffErrLabel, err)
 	}
@@ -155,7 +155,7 @@ func (e *Engine) executeValidationWithoutAgent(step *workflow.Step, stepPath str
 			_ = e.Run.Ledger.Emit(ledger.StepCompleted{Step: lp, Status: "pass", DurationMs: int(time.Since(startedAt).Milliseconds()), Commit: commit})
 			e.stepCompletedCount++
 		}
-		e.printCookTotal()
+		e.printRunTotal()
 		tn := taskContextName(taskContext)
 		e.Steps = append(e.Steps, StepExecution{StepPath: stepPath, StepName: step.Name, TaskName: tn, Attempt: 1, Status: StepPass, StartedAt: startedAt, FinishedAt: time.Now()})
 		_, nSkipped := countValidationPassedSkipped(vr)
@@ -202,7 +202,7 @@ func (e *Engine) executeValidationWithoutAgent(step *workflow.Step, stepPath str
 		commit, _ := sandbox.HeadCommit(e.Run.WorktreeDir)
 		_ = e.Run.Ledger.Emit(ledger.StepCompleted{Step: lp, Status: "fatal", DurationMs: int(time.Since(startedAt).Milliseconds()), Commit: commit})
 		e.stepCompletedCount++
-		e.printCookTotal()
+		e.printRunTotal()
 	}
 	tn := taskContextName(taskContext)
 	e.Steps = append(e.Steps, StepExecution{StepPath: stepPath, StepName: step.Name, TaskName: tn, Attempt: 1, Status: StepFatal, StartedAt: startedAt, FinishedAt: time.Now(), ValidateError: strings.Join(errParts, "\n---\n"), ValidateDiff: dc.Patch})
@@ -314,7 +314,7 @@ func (e *Engine) runStepGateAfterAgent(step *workflow.Step, stepPath string, att
 }
 
 // writeValidationArtifact persists validation result under the step’s artifact dir so the ledger can reference it.
-func writeValidationArtifact(cookDir, stepPath string, attempt int, vr *validate.ValidationResult) {
+func writeValidationArtifact(runDir, stepPath string, attempt int, vr *validate.ValidationResult) {
 	type resultRow struct {
 		Validator  string `json:"validator"`
 		Pass       bool   `json:"pass"`
@@ -334,7 +334,7 @@ func writeValidationArtifact(cookDir, stepPath string, attempt int, vr *validate
 		return
 	}
 	name := ledger.ArtifactName(stepPath, attempt, "validation", "json")
-	dir := filepath.Join(cookDir, "artifacts")
+	dir := filepath.Join(runDir, "artifacts")
 	_ = os.MkdirAll(dir, 0755)
 	_ = os.WriteFile(filepath.Join(dir, name), data, 0644)
 }

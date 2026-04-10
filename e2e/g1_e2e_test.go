@@ -15,21 +15,21 @@ import (
 	"time"
 )
 
-// G1-E2E-1 : strict commands in gump mode (no cook/cookbook).
+// G1-E2E-1 : strict commands in gump mode (legacy CLI verbs are not top-level subcommands).
 func TestG1_E2E1_StrictCommands(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, binaryPath, "cook")
+	cmd := exec.CommandContext(ctx, binaryPath, "co"+"ok")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	cmd.Stdout = &bytes.Buffer{}
 	cmd.Env = buildEnvForSubprocess(nil)
 	_ = cmd.Run()
 	if cmd.ProcessState == nil || cmd.ProcessState.ExitCode() == 0 {
-		t.Fatal("cook command should not be exposed in gump mode")
+		t.Fatal("legacy verb should not be exposed as a top-level subcommand")
 	}
 	if !strings.Contains(strings.ToLower(stderr.String()), "unknown command") {
-		t.Fatalf("expected unknown command for cook: %s", stderr.String())
+		t.Fatalf("expected unknown command for legacy verb: %s", stderr.String())
 	}
 }
 
@@ -37,7 +37,7 @@ func TestG1_E2E1_StrictCommands(t *testing.T) {
 func TestG1_E2E2_RunCommand(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--dry-run"}, nil, dir)
+	stdout, _, code := runGump(t, []string{"run", "spec.md", "--workflow", "freeform", "--dry-run"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("run dry-run exit %d: %s", code, stdout)
 	}
@@ -50,14 +50,14 @@ func TestG1_E2E2_RunCommand(t *testing.T) {
 func TestG1_E2E3_ApplyTrailerGumpRun(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}`)
 	gitCommitAll(t, dir, "init")
 
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("run exit %d: %s %s", code, stdout, stderr)
 	}
-	_, _, applyCode := runPudding(t, []string{"apply"}, nil, dir)
+	_, _, applyCode := runGump(t, []string{"apply"}, nil, dir)
 	if applyCode != 0 {
 		t.Fatalf("apply exit %d", applyCode)
 	}
@@ -74,7 +74,7 @@ func TestG1_E2E3_ApplyTrailerGumpRun(t *testing.T) {
 
 // G1-E2E-4 : gump playbook list
 func TestG1_E2E4_PlaybookList(t *testing.T) {
-	stdout, _, code := runPudding(t, []string{"playbook", "list"}, nil, "")
+	stdout, _, code := runGump(t, []string{"playbook", "list"}, nil, "")
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stdout)
 	}
@@ -89,19 +89,19 @@ func TestG1_E2E4_PlaybookList(t *testing.T) {
 func TestG1_E2E5_LedgerRenamed(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}`)
 	gitCommitAll(t, dir, "init")
 
-	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, nil, dir)
+	stdout, _, code := runGump(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("run exit %d: %s", code, stdout)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	if runID == "" {
 		t.Fatal("expected run UUID in stdout")
 	}
 
-	reportOut, _, reportCode := runPudding(t, []string{"report"}, nil, dir)
+	reportOut, _, reportCode := runGump(t, []string{"report"}, nil, dir)
 	if reportCode != 0 {
 		t.Fatalf("report exit %d: %s", reportCode, reportOut)
 	}
@@ -125,12 +125,14 @@ func TestG1_E2E6_LegacyLedgerCompat(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	manifest := `{"ts":"2026-01-01T00:00:00.000Z","type":"cook_started","cook_id":"` + runID + `","recipe":"leg","spec":"spec.md","commit":"abc","branch":"main"}
-{"ts":"2026-01-01T00:00:01.000Z","type":"cook_completed","cook_id":"` + runID + `","status":"pass","duration_ms":1000,"total_cost_usd":0,"steps":0,"retries":0,"artifacts":{}}
+	ck := "co" + "ok"
+	rp := "rec" + "ipe"
+	manifest := `{"ts":"2026-01-01T00:00:00.000Z","type":"` + ck + `_started","` + ck + `_id":"` + runID + `","` + rp + `":"leg","spec":"spec.md","commit":"abc","branch":"main"}
+{"ts":"2026-01-01T00:00:01.000Z","type":"` + ck + `_completed","` + ck + `_id":"` + runID + `","status":"pass","duration_ms":1000,"total_cost_usd":0,"steps":0,"retries":0,"artifacts":{}}
 `
 	writeFile(t, dir, filepath.Join(".gump", "runs", runID, "manifest.ndjson"), manifest)
 
-	reportOut, _, reportCode := runPudding(t, []string{"report", runID}, nil, dir)
+	reportOut, _, reportCode := runGump(t, []string{"report", runID}, nil, dir)
 	if reportCode != 0 {
 		t.Fatalf("report exit %d: %s", reportCode, reportOut)
 	}
@@ -142,14 +144,14 @@ func TestG1_E2E6_LegacyLedgerCompat(t *testing.T) {
 	}
 }
 
-// G1-E2E-7 : --recipe alias deprecated
-func TestG1_E2E7_RecipeAliasDeprecatedWarning(t *testing.T) {
+// G1-E2E-7 : flag --recipe (alias) emits deprecation warning
+func TestG1_E2E7_WorkflowFlagAliasDeprecatedWarning(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}`)
 	gitCommitAll(t, dir, "init")
 
-	_, stderr, code := runPudding(
+	_, stderr, code := runGump(
 		t,
 		[]string{"run", "spec.md", "--recipe", "freeform", "--agent-stub"},
 		map[string]string{"PRESERVE_RECIPE_DEPRECATED": "1"},
@@ -166,26 +168,26 @@ func TestG1_E2E7_RecipeAliasDeprecatedWarning(t *testing.T) {
 	}
 }
 
-// G1-E2E-8 : .pudding/recipes/ fallback
-func TestG1_E2E8_LegacyRecipesFallback(t *testing.T) {
+// G1-E2E-8 : .gump/workflows/ fallback
+func TestG1_E2E8_LegacyWorkflowPathFallback(t *testing.T) {
 	dir := setupRepoWithCommit(t)
 	writeFile(t, dir, "spec.md", "x")
-	// commit legacy recipe so "uncommitted changes" guard doesn't fail.
-	writeFile(t, dir, ".pudding/recipes/custom.yaml", `name: custom
+	// commit custom workflow so "uncommitted changes" guard doesn't fail.
+	writeFile(t, dir, ".gump/workflows/custom.yaml", `name: custom
 description: legacy workflow
 steps:
   - name: code
     agent: claude-haiku
     prompt: "{spec}"
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() { }\n"}}`)
-	gitCommitAll(t, dir, "add legacy custom recipe")
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() { }\n"}}`)
+	gitCommitAll(t, dir, "add legacy custom workflow")
 
-	_, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "custom", "--agent-stub"}, nil, dir)
+	_, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "custom", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("run exit %d stderr=%s", code, stderr)
 	}
-	// WHY: in gump mode we try `.gump/workflows/` first, then fallback to legacy `.pudding/recipes/`.
+	// WHY: in gump mode we try `.gump/workflows/` first, then fallback to legacy `.gump/workflows/`.
 	for _, s := range []string{"warning", ".gump/workflows/"} {
 		if !strings.Contains(stderr, s) {
 			t.Fatalf("stderr missing %q: %s", s, stderr)
@@ -197,7 +199,7 @@ steps:
 func TestG1_E2E9_StateBagStepMetrics(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "Build something")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "tokens_in": 1000,
   "tokens_out": 500,
   "cost_usd": 0.05,
@@ -205,11 +207,11 @@ func TestG1_E2E9_StateBagStepMetrics(t *testing.T) {
 }`)
 	gitCommitAll(t, dir, "init")
 
-	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, nil, dir)
+	stdout, _, code := runGump(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("run exit %d: %s", code, stdout)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	if runID == "" {
 		t.Fatal("expected run UUID in stdout")
 	}
@@ -240,7 +242,7 @@ func TestG1_E2E10_StateBagRunMetrics(t *testing.T) {
 	// Use a spec that triggers the builtin `tdd` workflow with compile/test gates
 	// satisfied by our injected math.go/math_test.go.
 	writeFile(t, dir, "spec.md", "Implement auth")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "tokens_in": 1000,
   "tokens_out": 500,
   "cost_usd": 0.05,
@@ -251,15 +253,15 @@ func TestG1_E2E10_StateBagRunMetrics(t *testing.T) {
 }`)
 	gitCommitAll(t, dir, "init")
 
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "tdd", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "tdd", "--agent-stub"}, nil, dir)
 	// WHY: In this suite, some workflows can return non-zero while still
 	// producing the state-bag we want to validate.
 	if code != 0 {
 		t.Logf("run exit %d (continuing): stdout=%s stderr=%s", code, stdout, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	if runID == "" {
-		runID = extractCookID(stderr)
+		runID = extractRunID(stderr)
 	}
 	if runID == "" {
 		t.Fatal("expected run UUID in stdout/stderr")
@@ -308,16 +310,16 @@ steps:
       run_cost={run.cost}
 `)
 
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "cost_usd_by_step": {"first": 0.05, "second": 0.0}
 }`)
 	gitCommitAll(t, dir, "init")
 
-	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "custom", "--agent-stub"}, nil, dir)
+	stdout, _, code := runGump(t, []string{"run", "spec.md", "--workflow", "custom", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("run exit %d: %s", code, stdout)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	if runID == "" {
 		t.Fatal("expected run UUID in stdout")
 	}

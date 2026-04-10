@@ -10,13 +10,13 @@ import (
 
 func TestLedger_EmitAndClose(t *testing.T) {
 	dir := t.TempDir()
-	l, err := New(dir, "test-cook-id")
+	l, err := New(dir, "test-run-id")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer l.Close()
 
-	if err := l.Emit(RunStarted{RunID: "test-cook-id", Workflow: "tdd", Spec: "spec.md", Commit: "abc", Branch: "main", AgentsCLI: map[string]string{"claude": "1.0"}}); err != nil {
+	if err := l.Emit(RunStarted{RunID: "test-run-id", Workflow: "tdd", Spec: "spec.md", Commit: "abc", Branch: "main", AgentsCLI: map[string]string{"claude": "1.0"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := l.Emit(StepStarted{Step: "code", Agent: "claude", Attempt: 1}); err != nil {
@@ -46,7 +46,7 @@ func TestLedger_EmitAndClose(t *testing.T) {
 
 func TestLedger_WriteArtifact(t *testing.T) {
 	dir := t.TempDir()
-	l, err := New(dir, "cook-1")
+	l, err := New(dir, "run-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestArtifactName(t *testing.T) {
 
 func TestLedger_NDJSONRemainsValidWithControlChars(t *testing.T) {
 	dir := t.TempDir()
-	l, err := New(dir, "cook-ctrl")
+	l, err := New(dir, "run-ctrl")
 	if err != nil {
 		t.Fatal(err)
 	}

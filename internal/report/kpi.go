@@ -29,7 +29,7 @@ func TTFDForDiff(turns []Turn) int {
 	return len(turns)
 }
 
-// AggregateStall sums stall metrics (tool errors are already cook-level in our model).
+// AggregateStall sums stall metrics (tool errors are already attributed at run level in our model).
 func AggregateStall(m []StallMetrics) StallMetrics {
 	var out StallMetrics
 	for _, x := range m {

@@ -35,7 +35,7 @@ func HasUncommittedChanges(dir string) (bool, error) {
 		if line == "" {
 			continue
 		}
-		if strings.Contains(line, ".gump/") || strings.Contains(line, ".pudding/") {
+		if strings.Contains(line, ".gump/") {
 			continue
 		}
 		return true, nil
@@ -53,7 +53,7 @@ func CurrentBranch(dir string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// HeadCommit returns the full hash of HEAD in dir. Frozen at cook creation for FinalDiff.
+// HeadCommit returns the full hash of HEAD in dir. Frozen at worktree creation for FinalDiff.
 func HeadCommit(dir string) (string, error) {
 	cmd := exec.Command("git", "-C", dir, "rev-parse", "HEAD")
 	out, err := cmd.Output()
@@ -64,7 +64,7 @@ func HeadCommit(dir string) (string, error) {
 }
 
 // CreateWorktree adds a new worktree at worktreeDir and creates branch branchName from HEAD.
-// The dev repo stays untouched; all cook work happens in the new worktree.
+// The dev repo stays untouched; all agent work happens in the new worktree.
 func CreateWorktree(repoRoot, worktreeDir, branchName string) error {
 	if err := os.MkdirAll(filepath.Dir(worktreeDir), 0755); err != nil {
 		return err

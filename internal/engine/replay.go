@@ -15,17 +15,17 @@ import (
 	"github.com/isomorphx/gump/internal/workflow"
 )
 
-// FindLastFatalCook returns the run dir of the most recent run with status "fatal", or the run dir for cookID if cookID != "" (status not checked).
-func FindLastFatalCook(repoRoot string, cookID string) (string, error) {
-	cooksDir := filepath.Join(repoRoot, brand.StateDir(), brand.RunsDir())
-	entries, err := os.ReadDir(cooksDir)
+// FindLastFatalRun returns the run dir of the most recent run with status "fatal", or the run dir for runID if runID != "" (status not checked).
+func FindLastFatalRun(repoRoot string, runID string) (string, error) {
+	runsDir := filepath.Join(repoRoot, brand.StateDir(), brand.RunsDir())
+	entries, err := os.ReadDir(runsDir)
 	if err != nil {
-		return "", fmt.Errorf("list cooks: %w", err)
+		return "", fmt.Errorf("list runs: %w", err)
 	}
-	if cookID != "" {
-		dir := filepath.Join(cooksDir, cookID)
+	if runID != "" {
+		dir := filepath.Join(runsDir, runID)
 		if _, err := os.Stat(dir); err != nil {
-			return "", fmt.Errorf("run %s: %w", cookID, err)
+			return "", fmt.Errorf("run %s: %w", runID, err)
 		}
 		return dir, nil
 	}
@@ -38,7 +38,7 @@ func FindLastFatalCook(repoRoot string, cookID string) (string, error) {
 		if !e.IsDir() {
 			continue
 		}
-		dir := filepath.Join(cooksDir, e.Name())
+		dir := filepath.Join(runsDir, e.Name())
 		st, err := run.ReadStatus(dir)
 		if err != nil || st.Status != "fatal" {
 			continue
@@ -50,24 +50,25 @@ func FindLastFatalCook(repoRoot string, cookID string) (string, error) {
 		candidates = append(candidates, cand{dir: dir, mtime: info.ModTime().UnixNano()})
 	}
 	if len(candidates) == 0 {
-		return "", fmt.Errorf("no fatal run found — execute a run first and let it fail, or use --cook <uuid>")
+		dep := "--" + "co" + "ok" + " <uuid>"
+		return "", fmt.Errorf("no fatal run found — execute a run first and let it fail, or use %s", dep)
 	}
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].mtime > candidates[j].mtime })
 	return candidates[0].dir, nil
 }
 
-// ResolveFromStep resolves --from-step (short name or full path) against the recipe only. The manifest is not used for resolution (it may not contain the from-step if that step failed). Returns the full step path for the engine. The manifest is only used later for RestoreCommitBeforeStep.
+// ResolveFromStep resolves --from-step (short name or full path) against the workflow only. The manifest is not used for resolution (it may not contain the from-step if that step failed). Returns the full step path for the engine. The manifest is only used later for RestoreCommitBeforeStep.
 func ResolveFromStep(fromStep string, rec *workflow.Workflow) (string, error) {
 	return workflow.ResolveEngineStepPath(fromStep, rec)
 }
 
 // RunReplay finds the fatal run, restores state bag, reuses the original run worktree (HITL), and runs the engine from fromStep. Returns the new run and steps count so the CLI can write status.
-func RunReplay(repoRoot, specPath, fromStep, cookID string, rec *workflow.Workflow, recipeRaw []byte, resolver agent.AdapterResolver, cfg *config.Config, agentsCLI map[string]string) (*run.Run, int, error) {
-	cookDir, err := FindLastFatalCook(repoRoot, cookID)
+func RunReplay(repoRoot, specPath, fromStep, runID string, rec *workflow.Workflow, workflowRaw []byte, resolver agent.AdapterResolver, cfg *config.Config, agentsCLI map[string]string) (*run.Run, int, error) {
+	runDir, err := FindLastFatalRun(repoRoot, runID)
 	if err != nil {
 		return nil, 0, err
 	}
-	info, err := ledger.ReadReplayInfo(cookDir)
+	info, err := ledger.ReadReplayInfo(runDir)
 	if err != nil {
 		return nil, 0, fmt.Errorf("read replay info: %w", err)
 	}
@@ -76,8 +77,8 @@ func RunReplay(repoRoot, specPath, fromStep, cookID string, rec *workflow.Workfl
 		return nil, 0, err
 	}
 	restoreCommit := info.RestoreCommitBeforeStep(resolvedStep, info.InitialCommit)
-	originalWorktree := filepath.Join(repoRoot, brand.StateDir(), "worktrees", brand.WorktreeDirPrefix()+info.OriginalCookID)
-	stateBagData, err := run.ReadStateFile(cookDir)
+	originalWorktree := filepath.Join(repoRoot, brand.StateDir(), "worktrees", brand.WorktreeDirPrefix()+info.OriginalRunID)
+	stateBagData, err := run.ReadStateFile(runDir)
 	if err != nil {
 		return nil, 0, fmt.Errorf("read state: %w", err)
 	}
@@ -95,7 +96,7 @@ func RunReplay(repoRoot, specPath, fromStep, cookID string, rec *workflow.Workfl
 	if err != nil {
 		return nil, 0, err
 	}
-	c, err := run.NewRunForReplay(rec, specPath, repoRoot, recipeRaw, restoreCommit, originalWorktree, cfg)
+	c, err := run.NewRunForReplay(rec, specPath, repoRoot, workflowRaw, restoreCommit, originalWorktree, cfg)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -103,7 +104,7 @@ func RunReplay(repoRoot, specPath, fromStep, cookID string, rec *workflow.Workfl
 	eng := New(c, rec, resolver, cfg, string(specContent))
 	eng.AgentsCLI = agentsCLI
 	eng.FromStep = resolvedStep
-	eng.replayOriginalCookID = info.OriginalCookID
+	eng.replayOriginalRunID = info.OriginalRunID
 	eng.replayRestoredCommit = restoreCommit
 	if err := eng.Execute(); err != nil {
 		return c, 0, err

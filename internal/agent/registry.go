@@ -19,7 +19,7 @@ func AgentPrefix(agentName string) string {
 }
 
 // Registry resolves agent name (prefix before first '-') to an adapter.
-// We resolve per step so a single recipe can mix providers (e.g. plan with gemini, code with codex) without engine changes.
+// We resolve per step so a single workflow can mix providers (e.g. plan with gemini, code with codex) without engine changes.
 type Registry struct {
 	Claude   AgentAdapter
 	Codex    AgentAdapter

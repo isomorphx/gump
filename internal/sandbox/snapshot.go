@@ -70,7 +70,7 @@ func Snapshot(worktreeDir, stepName, taskName string, attempt int) (*diff.DiffCo
 }
 
 // FinalDiff returns the total diff between initialCommit and current HEAD in worktreeDir.
-// Uses the frozen initial commit (not merge-base) so branch evolution during the cook does not change the diff.
+// Uses the frozen initial commit (not merge-base) so branch evolution during the run does not change the diff.
 func FinalDiff(worktreeDir, initialCommit string) (*diff.DiffContract, error) {
 	patchCmd := exec.Command("git", "diff", initialCommit, "HEAD")
 	patchCmd.Dir = worktreeDir

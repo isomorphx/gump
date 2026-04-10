@@ -42,7 +42,7 @@ type Run struct {
 }
 
 // NewRun creates a worktree, run directory, initial state, and ledger; fails if the repo is dirty or not a git checkout.
-func NewRun(rec *workflow.Workflow, specPath string, repoRoot string, recipeRaw []byte, cfg *config.Config) (*Run, error) {
+func NewRun(rec *workflow.Workflow, specPath string, repoRoot string, workflowRaw []byte, cfg *config.Config) (*Run, error) {
 	root, err := sandbox.GitRepoRoot(repoRoot)
 	if err != nil {
 		return nil, fmt.Errorf("gump run must be executed inside a git repository")
@@ -78,12 +78,12 @@ func NewRun(rec *workflow.Workflow, specPath string, repoRoot string, recipeRaw 
 		_ = sandbox.RemoveWorktree(root, worktreeDir, branchName)
 		return nil, err
 	}
-	if len(recipeRaw) > 0 {
-		_ = WriteRecipeSnapshot(runDir, recipeRaw)
+	if len(workflowRaw) > 0 {
+		_ = WriteWorkflowSnapshot(runDir, workflowRaw)
 	}
 	ctx := &ContextSnapshot{
-		CookID:          id,
-		Recipe:          rec.Name,
+		RunID:           id,
+		Workflow:        rec.Name,
 		Spec:            filepath.Base(specPath),
 		RepoRoot:        root,
 		Branch:          origBranch,
@@ -132,7 +132,7 @@ func NewRun(rec *workflow.Workflow, specPath string, repoRoot string, recipeRaw 
 }
 
 // NewRunForReplay creates a new run for replay or resume. If originalWorktreeDir is non-empty, that worktree is reused; otherwise a new worktree is created at restoreCommit.
-func NewRunForReplay(rec *workflow.Workflow, specPath string, repoRoot string, recipeRaw []byte, restoreCommit string, originalWorktreeDir string, cfg *config.Config) (*Run, error) {
+func NewRunForReplay(rec *workflow.Workflow, specPath string, repoRoot string, workflowRaw []byte, restoreCommit string, originalWorktreeDir string, cfg *config.Config) (*Run, error) {
 	root, err := sandbox.GitRepoRoot(repoRoot)
 	if err != nil {
 		return nil, fmt.Errorf("gump run must be executed inside a git repository")
@@ -170,8 +170,8 @@ func NewRunForReplay(rec *workflow.Workflow, specPath string, repoRoot string, r
 		}
 		return nil, err
 	}
-	if len(recipeRaw) > 0 {
-		_ = WriteRecipeSnapshot(runDir, recipeRaw)
+	if len(workflowRaw) > 0 {
+		_ = WriteWorkflowSnapshot(runDir, workflowRaw)
 	}
 	if err := WriteStatus(runDir, "running"); err != nil {
 		if originalWorktreeDir == "" {
@@ -294,7 +294,7 @@ func ensureGitignoreStateDir(worktreeDir string) error {
 	return nil
 }
 
-// Apply merges the cook branch into the current branch of the main repo and runs teardown on success.
+// Apply merges the run branch into the current branch of the main repo and runs teardown on success.
 // The trailer is brand-aware (e.g. Gump-Run:) so merge commits stay traceable after rebranding.
 func (r *Run) Apply() error {
 	dirty, err := sandbox.HasUncommittedChanges(r.RepoRoot)

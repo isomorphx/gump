@@ -27,12 +27,12 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("gump status must be executed inside a git repository: %w", err)
 	}
-	cookDir := ledger.FindInProgressCook(repoRoot)
-	if cookDir == "" {
+	runDir := ledger.FindInProgressRun(repoRoot)
+	if runDir == "" {
 		fmt.Println("No run in progress.")
 		return nil
 	}
-	snap, err := ledger.ReadStatus(cookDir)
+	snap, err := ledger.ReadStatus(runDir)
 	if err != nil {
 		return fmt.Errorf("read status: %w", err)
 	}
@@ -40,7 +40,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	if snap.LastEventAt.IsZero() {
 		dur = 0
 	}
-	fmt.Printf("Run %s (%s) — in progress\n", snap.CookID[:8], snap.Recipe)
+	fmt.Printf("Run %s (%s) — in progress\n", snap.RunID[:8], snap.Workflow)
 	fmt.Printf("Spec: %s\n", snap.Spec)
 	fmt.Printf("Duration: %s\n", formatDurationStatus(dur))
 	fmt.Printf("Cost: $%.2f\n\n", snap.TotalCostUSD)

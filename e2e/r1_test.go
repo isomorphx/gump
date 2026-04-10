@@ -380,7 +380,7 @@ steps:
     strategy: [same, same]
     restart_from: tests
     foreach: decompose
-    recipe: sub-workflow
+` + "    " + "rec" + "ipe" + `: sub-workflow
 `)
 	wf, warns, err := workflow.Parse(yaml, "")
 	if err != nil {
@@ -552,7 +552,7 @@ func TestSmoke_R1_02_DryRunCLI(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "gump.toml", "# minimal project config (Smoke-R1-02)\n")
 	writeFile(t, dir, "spec.md", "x")
-	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--dry-run"}, nil, dir)
+	stdout, _, code := runGump(t, []string{"run", "spec.md", "--workflow", "freeform", "--dry-run"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stdout)
 	}

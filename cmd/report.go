@@ -42,9 +42,9 @@ func runReport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no %s/%s directory — run a run first", brand.StateDir(), brand.RunsDir())
 	}
 
-	var cookIDs []string
+	var runIDs []string
 	if len(args) == 1 {
-		cookIDs = []string{args[0]}
+		runIDs = []string{args[0]}
 	} else {
 		entries, err := ledger.ReadIndex(projectRoot)
 		if err != nil {
@@ -58,20 +58,20 @@ func runReport(cmd *cobra.Command, args []string) error {
 		if from < 0 {
 			from = 0
 		}
-		for i := len(entries) - 1; i >= from && len(cookIDs) < n; i-- {
-			cookIDs = append([]string{entries[i].CookID}, cookIDs...)
+		for i := len(entries) - 1; i >= from && len(runIDs) < n; i-- {
+			runIDs = append([]string{entries[i].RunID}, runIDs...)
 		}
-		if len(cookIDs) == 0 {
+		if len(runIDs) == 0 {
 			return fmt.Errorf("no runs found — execute gump run first")
 		}
 	}
 
 	if reportDetail != "" {
-		if len(cookIDs) != 1 {
+		if len(runIDs) != 1 {
 			return fmt.Errorf("--detail expects a single run")
 		}
-		cookDir := filepath.Join(runsDir, cookIDs[0])
-		detail, err := report.BuildStepDetail(cookDir, reportDetail)
+		runDir := filepath.Join(runsDir, runIDs[0])
+		detail, err := report.BuildStepDetail(runDir, reportDetail)
 		if err != nil {
 			return err
 		}
@@ -80,10 +80,10 @@ func runReport(cmd *cobra.Command, args []string) error {
 	}
 
 	// Single-run TUI: one id and not a multi-run aggregate request (--last 2+).
-	if len(cookIDs) == 1 && (reportLastN <= 1 || len(args) == 1) {
-		return reportSingle(filepath.Join(runsDir, cookIDs[0]))
+	if len(runIDs) == 1 && (reportLastN <= 1 || len(args) == 1) {
+		return reportSingle(filepath.Join(runsDir, runIDs[0]))
 	}
-	ar, err := report.BuildAggregateReport(projectRoot, cookIDs)
+	ar, err := report.BuildAggregateReport(projectRoot, runIDs)
 	if err != nil {
 		return err
 	}
@@ -92,15 +92,15 @@ func runReport(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func reportSingle(cookDir string) error {
-	if st, err := os.Stat(filepath.Join(cookDir, "manifest.ndjson")); err != nil || st.IsDir() {
+func reportSingle(runDir string) error {
+	if st, err := os.Stat(filepath.Join(runDir, "manifest.ndjson")); err != nil || st.IsDir() {
 		return fmt.Errorf("run not found or no manifest")
 	}
-	cr, err := report.BuildCookReport(cookDir)
+	cr, err := report.BuildRunReport(runDir)
 	if err != nil {
 		return err
 	}
 	opts := report.TerminalRenderOpts()
-	fmt.Print(report.RenderCookReport(cr, opts))
+	fmt.Print(report.RenderRunReport(cr, opts))
 	return nil
 }

@@ -51,13 +51,13 @@ func TestE2E_R7_01_BuiltinsParseValidate(t *testing.T) {
 func TestE2E_R7_02_FreeformFullRun(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "do something")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main(){}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main(){}\n"}}`)
 	gitCommitAll(t, dir, "init")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	if runID == "" {
 		t.Fatal("no run id")
 	}
@@ -76,11 +76,11 @@ func TestE2E_R7_02_FreeformFullRun(t *testing.T) {
 func TestE2E_R7_03_TDD_SplitEachRedGreen(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "feature")
-	writeFile(t, dir, ".pudding-test-plan.json", `[
+	writeFile(t, dir, ".gump-test-plan.json", `[
   {"name":"t1","description":"d1","files":["t1.go","t1_test.go"]},
   {"name":"t2","description":"d2","files":["t2.go","t2_test.go"]}
 ]`)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "by_task_step": {
     "t1": {
       "red": {"files": {
@@ -103,11 +103,11 @@ func TestE2E_R7_03_TDD_SplitEachRedGreen(t *testing.T) {
   }
 }`)
 	gitCommitAll(t, dir, "init")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "tdd", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "tdd", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	st := readRunState(t, dir, runID)
 	for _, p := range []string{
 		"decompose/t1/red.output", "decompose/t1/green.output",
@@ -127,8 +127,8 @@ func TestE2E_R7_03_TDD_SplitEachRedGreen(t *testing.T) {
 func TestE2E_R7_04_TDD_GreenRetryPrompt(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-plan.json", `[{"name":"z","description":"dz","files":["z.go","z_test.go"]}]`)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-plan.json", `[{"name":"z","description":"dz","files":["z.go","z_test.go"]}]`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "by_step": {
     "red": {"files": {
       "z_test.go": "package main\nimport \"testing\"\nfunc TestZ(t *testing.T) { if Z()!=1 { t.Fatal() } }\n",
@@ -147,11 +147,11 @@ func TestE2E_R7_04_TDD_GreenRetryPrompt(t *testing.T) {
   }
 }`)
 	gitCommitAll(t, dir, "init")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "tdd", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "tdd", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	st := readRunState(t, dir, runID)
 	if st["decompose/z/green.attempt"] != "2" {
 		t.Fatalf("expected green retry attempt 2, got %q", st["decompose/z/green.attempt"])
@@ -161,9 +161,9 @@ func TestE2E_R7_04_TDD_GreenRetryPrompt(t *testing.T) {
 func TestE2E_R7_05_Cheap2SotaEscalation(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-plan.json", `[{"name":"x","description":"ix","files":["x.go"]}]`)
+	writeFile(t, dir, ".gump-test-plan.json", `[{"name":"x","description":"ix","files":["x.go"]}]`)
 	// cheap2sota.yaml: impl attempts 1–2 qwen, 3 haiku, 4 claude-sonnet; stub skips counter for root `decompose` plan so by_attempt keys match workflow attempts.
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "by_attempt": {
     "1": {"files": {"x.go": "package main\n\nfunc X() { !!! }\n"}},
     "2": {"files": {"x.go": "package main\n\nfunc X() { !!! }\n"}},
@@ -172,11 +172,11 @@ func TestE2E_R7_05_Cheap2SotaEscalation(t *testing.T) {
   }
 }`)
 	gitCommitAll(t, dir, "init")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "cheap2sota", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "cheap2sota", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	st := readRunState(t, dir, runID)
 	if st["decompose/x/impl.status"] != "pass" {
 		t.Fatalf("expected impl pass, got status %q", st["decompose/x/impl.status"])
@@ -193,11 +193,11 @@ func TestE2E_R7_05_Cheap2SotaEscalation(t *testing.T) {
 func TestE2E_R7_06_ParallelTasks(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-plan.json", `[
+	writeFile(t, dir, ".gump-test-plan.json", `[
   {"name":"a","description":"impl a","files":["a.go","a_test.go"]},
   {"name":"b","description":"impl b","files":["b.go","b_test.go"]}
 ]`)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "by_task_step": {
     "a": {"impl": {"files": {
       "a.go": "package main\n\nfunc A() int { return 1 }\n",
@@ -210,11 +210,11 @@ func TestE2E_R7_06_ParallelTasks(t *testing.T) {
   }
 }`)
 	gitCommitAll(t, dir, "init")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "parallel-tasks", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "parallel-tasks", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	st := readRunState(t, dir, runID)
 	if st["decompose/a/impl.output"] == "" || st["decompose/b/impl.output"] == "" {
 		t.Fatalf("expected both impl outputs: a=%q b=%q", st["decompose/a/impl.output"], st["decompose/b/impl.output"])
@@ -270,8 +270,8 @@ func TestE2E_R7_07_ImplementSpecReviewRetry(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "spec body")
 	writeFile(t, dir, "docs/architecture.md", "# arch\n")
-	writeFile(t, dir, ".pudding-test-plan.json", `[{"name":"only","description":"task one","files":["main.go","main_test.go"]}]`)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-plan.json", `[{"name":"only","description":"task one","files":["main.go","main_test.go"]}]`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "review_by_attempt": {
     "1": "{\"pass\":false,\"comments\":\"missing error handling\"}",
     "2": "{\"pass\":true,\"comments\":\"ok\"}"
@@ -285,11 +285,11 @@ func TestE2E_R7_07_ImplementSpecReviewRetry(t *testing.T) {
   }
 }`)
 	gitCommitAll(t, dir, "init")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "implement-spec", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "implement-spec", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	gumpDir := filepath.Join(dir, ".gump")
 	if !worktreeTreeContains(t, gumpDir, "Deviations remain: missing error handling") {
 		t.Fatal("retry converge prompt should appear under .gump (runs/worktrees/context)")
@@ -334,8 +334,8 @@ func TestE2E_R7_08_ImplementSpecOpusAttempt4(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
 	writeFile(t, dir, "docs/architecture.md", "# a\n")
-	writeFile(t, dir, ".pudding-test-plan.json", `[{"name":"z","description":"z","files":["z.go","z_test.go"]}]`)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-plan.json", `[{"name":"z","description":"z","files":["z.go","z_test.go"]}]`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "review_by_attempt": {
     "1": "{\"pass\":false,\"comments\":\"r1\"}",
     "2": "{\"pass\":false,\"comments\":\"r2\"}",
@@ -348,11 +348,11 @@ func TestE2E_R7_08_ImplementSpecOpusAttempt4(t *testing.T) {
   }
 }`)
 	gitCommitAll(t, dir, "init")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "implement-spec", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "implement-spec", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	st := readRunState(t, dir, runID)
 	if st["decompose/z/converge.agent"] != "claude-opus" {
 		t.Fatalf("attempt 4 should escalate to claude-opus, got %q", st["decompose/z/converge.agent"])
@@ -367,15 +367,15 @@ func TestE2E_R7_08_ImplementSpecOpusAttempt4(t *testing.T) {
 func TestE2E_R7_09_BugfixReproducePatch(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "bug.md", "bug")
-	writeFile(t, dir, ".pudding-test-plan.json", `[{"name":"bug","description":"repro","files":["fix.go"]}]`)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-plan.json", `[{"name":"bug","description":"repro","files":["fix.go"]}]`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "by_step": {
     "reproduce": {"files": {"fix_test.go": "package main\nimport \"testing\"\nfunc TestBug(t *testing.T) { t.Fatal(\"fail\") }\n"}},
     "patch": {"files": {"fix.go": "package main\n\nfunc Fix() bool { return true }\n","fix_test.go": "package main\nimport \"testing\"\nfunc TestBug(t *testing.T) { if !Fix() { t.Fatal() } }\n"}}
   }
 }`)
 	gitCommitAll(t, dir, "init")
-	stdout, stderr, code := runPudding(t, []string{"run", "bug.md", "--workflow", "bugfix", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "bug.md", "--workflow", "bugfix", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
@@ -386,10 +386,10 @@ func TestE2E_R7_09_BugfixReproducePatch(t *testing.T) {
 func TestE2E_R7_10_RefactorTwoTasks(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "refactor")
-	writeFile(t, dir, ".pudding-test-plan.json", `[{"name":"p","description":"dp","files":["p.go"]},{"name":"q","description":"dq","files":["q.go"]}]`)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_step":{"apply":{"files":{"p.go":"package main\n\nfunc P() {}\n","q.go":"package main\n\nfunc Q() {}\n"}}}}`)
+	writeFile(t, dir, ".gump-test-plan.json", `[{"name":"p","description":"dp","files":["p.go"]},{"name":"q","description":"dq","files":["q.go"]}]`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"by_step":{"apply":{"files":{"p.go":"package main\n\nfunc P() {}\n","q.go":"package main\n\nfunc Q() {}\n"}}}}`)
 	gitCommitAll(t, dir, "init")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "refactor", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "refactor", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
@@ -400,13 +400,13 @@ func TestE2E_R7_10_RefactorTwoTasks(t *testing.T) {
 func TestE2E_R7_11_ArchReviewStandaloneBuiltin(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "ignored")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"review_by_step":{"review":"{\"pass\":true,\"comments\":\"Approved\"}"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"review_by_step":{"review":"{\"pass\":true,\"comments\":\"Approved\"}"}}`)
 	gitCommitAll(t, dir, "init")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "validators/arch-review", "--set", `diff=some diff`, "--set", `spec=some spec`, "--set", "agent=claude-opus", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "validators/arch-review", "--set", `diff=some diff`, "--set", `spec=some spec`, "--set", "agent=claude-opus", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	st := readRunState(t, dir, runID)
 	if st["review.output"] != "true" {
 		t.Fatalf("review.output=%q", st["review.output"])
@@ -425,7 +425,7 @@ func TestE2E_R7_13_DryRunImplementSpec(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
 	gitCommitAll(t, dir, "init")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "implement-spec", "--dry-run"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "implement-spec", "--dry-run"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
@@ -457,7 +457,7 @@ steps:
 `)
 	writeFile(t, dir, "spec.md", "x")
 	gitCommitAll(t, dir, "init")
-	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--dry-run"}, nil, dir)
+	stdout, _, code := runGump(t, []string{"run", "spec.md", "--workflow", "freeform", "--dry-run"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stdout)
 	}
@@ -470,7 +470,7 @@ func TestE2E_R7_15_ValidatorProjectOverridesBuiltin(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "s")
 	writeFile(t, dir, "docs/architecture.md", "# a\n")
-	writeFile(t, dir, ".pudding-test-plan.json", `[{"name":"only","description":"x","files":["m.go"]}]`)
+	writeFile(t, dir, ".gump-test-plan.json", `[{"name":"only","description":"x","files":["m.go"]}]`)
 	os.MkdirAll(filepath.Join(dir, ".gump", "validators"), 0755)
 	writeFile(t, dir, ".gump/validators/arch-review.yaml", `name: arch-review
 steps:
@@ -481,9 +481,9 @@ steps:
     run:
       agent: "{agent}"
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"review_by_step":{"review":"{\"pass\":true,\"comments\":\"ok\"}"},"by_step":{"converge":{"files":{"m.go":"package main\n","m_test.go":"package main\nimport \"testing\"\nfunc TestM(t *testing.T){}\n"}},"smoke":{"files":{"m.go":"package main\n"}}}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"review_by_step":{"review":"{\"pass\":true,\"comments\":\"ok\"}"},"by_step":{"converge":{"files":{"m.go":"package main\n","m_test.go":"package main\nimport \"testing\"\nfunc TestM(t *testing.T){}\n"}},"smoke":{"files":{"m.go":"package main\n"}}}}`)
 	gitCommitAll(t, dir, "init")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "implement-spec", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "implement-spec", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}

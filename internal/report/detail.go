@@ -36,8 +36,8 @@ type StepAttempt struct {
 	Error     string
 }
 
-func BuildStepDetail(cookDir, stepQuery string) (*StepDetail, error) {
-	manifestPath := filepath.Join(cookDir, "manifest.ndjson")
+func BuildStepDetail(runDir, stepQuery string) (*StepDetail, error) {
+	manifestPath := filepath.Join(runDir, "manifest.ndjson")
 	manifest, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return nil, err
@@ -119,7 +119,7 @@ func BuildStepDetail(cookDir, stepQuery string) (*StepDetail, error) {
 			}
 			if arts, ok := ev["artifacts"].(map[string]interface{}); ok {
 				if rel, _ := arts["diff"].(string); rel != "" {
-					diffPath := filepath.Join(cookDir, filepath.FromSlash(rel))
+					diffPath := filepath.Join(runDir, filepath.FromSlash(rel))
 					if b, err := os.ReadFile(diffPath); err == nil {
 						detail.Files = extractFilesFromPatch(string(b))
 					}
@@ -128,7 +128,7 @@ func BuildStepDetail(cookDir, stepQuery string) (*StepDetail, error) {
 		}
 	}
 
-	if b, err := run.ReadStateFile(cookDir); err == nil {
+	if b, err := run.ReadStateFile(runDir); err == nil {
 		if st, err := state.Restore(b); err == nil && st != nil {
 			prefix := target + "."
 			for _, k := range st.Keys() {

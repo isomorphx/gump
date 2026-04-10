@@ -8,18 +8,18 @@ import (
 )
 
 func TestVersion(t *testing.T) {
-	stdout, _, code := runPudding(t, []string{"--version"}, nil, "")
+	stdout, _, code := runGump(t, []string{"--version"}, nil, "")
 	if code != 0 {
 		t.Errorf("exit code %d", code)
 	}
 	// WHY: Without ldflags, we expect the "dev" build format defined by internal/version.
-	if !strings.Contains(stdout, "dev") || (!strings.Contains(stdout, "gump") && !strings.Contains(stdout, "pudding")) {
+	if !strings.Contains(stdout, "dev") || !strings.Contains(stdout, "gump") {
 		t.Errorf("stdout %q", stdout)
 	}
 }
 
-func TestCookRequiresArgs(t *testing.T) {
-	_, stderr, code := runPudding(t, []string{"run"}, nil, "")
+func TestRunRequiresArgs(t *testing.T) {
+	_, stderr, code := runGump(t, []string{"run"}, nil, "")
 	if code == 0 {
 		t.Error("expected non-zero exit")
 	}
@@ -28,9 +28,9 @@ func TestCookRequiresArgs(t *testing.T) {
 	}
 }
 
-func TestCookSpecNotFound(t *testing.T) {
+func TestRunSpecNotFound(t *testing.T) {
 	dir := setupRepo(t)
-	_, stderr, code := runPudding(t, []string{"run", "nonexistent.md", "--workflow", "tdd"}, nil, dir)
+	_, stderr, code := runGump(t, []string{"run", "nonexistent.md", "--workflow", "tdd"}, nil, dir)
 	if code == 0 {
 		t.Error("expected non-zero exit")
 	}
@@ -42,10 +42,10 @@ func TestCookSpecNotFound(t *testing.T) {
 	}
 }
 
-func TestCookRecipeNotFound(t *testing.T) {
+func TestRunWorkflowNotFound(t *testing.T) {
 	dir := setupRepo(t)
 	writeFile(t, dir, "spec.md", "hello")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "doesnotexist"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "doesnotexist"}, nil, dir)
 	_ = stdout
 	if code == 0 {
 		t.Error("expected non-zero exit")
@@ -58,10 +58,10 @@ func TestCookRecipeNotFound(t *testing.T) {
 	}
 }
 
-func TestCookDryRunTDD(t *testing.T) {
+func TestRunDryRunTDD(t *testing.T) {
 	dir := setupRepo(t)
 	writeFile(t, dir, "spec.md", "Implement a hello world function")
-	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "tdd", "--dry-run"}, nil, dir)
+	stdout, _, code := runGump(t, []string{"run", "spec.md", "--workflow", "tdd", "--dry-run"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stdout)
 	}
@@ -72,10 +72,10 @@ func TestCookDryRunTDD(t *testing.T) {
 	}
 }
 
-func TestCookDryRunFreeform(t *testing.T) {
+func TestRunDryRunFreeform(t *testing.T) {
 	dir := setupRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--dry-run"}, nil, dir)
+	stdout, _, code := runGump(t, []string{"run", "spec.md", "--workflow", "freeform", "--dry-run"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stdout)
 	}
@@ -86,8 +86,8 @@ func TestCookDryRunFreeform(t *testing.T) {
 	}
 }
 
-func TestCookbookList(t *testing.T) {
-	stdout, _, code := runPudding(t, []string{"playbook", "list"}, nil, "")
+func TestPlaybookList(t *testing.T) {
+	stdout, _, code := runGump(t, []string{"playbook", "list"}, nil, "")
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stdout)
 	}
@@ -98,8 +98,8 @@ func TestCookbookList(t *testing.T) {
 	}
 }
 
-func TestCookbookShowTDD(t *testing.T) {
-	stdout, _, code := runPudding(t, []string{"playbook", "show", "tdd"}, nil, "")
+func TestPlaybookShowTDD(t *testing.T) {
+	stdout, _, code := runGump(t, []string{"playbook", "show", "tdd"}, nil, "")
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stdout)
 	}
@@ -120,7 +120,7 @@ func TestCookbookShowTDD(t *testing.T) {
 	}
 }
 
-func TestCookbookProjectOverridesBuiltin(t *testing.T) {
+func TestPlaybookProjectOverridesBuiltin(t *testing.T) {
 	dir := setupRepo(t)
 	os.MkdirAll(filepath.Join(dir, ".gump", "workflows"), 0755)
 	writeFile(t, dir, ".gump/workflows/tdd.yaml", `name: tdd
@@ -132,7 +132,7 @@ steps:
     gate: [compile]
 `)
 	writeFile(t, dir, "spec.md", "x")
-	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "tdd", "--dry-run"}, nil, dir)
+	stdout, _, code := runGump(t, []string{"run", "spec.md", "--workflow", "tdd", "--dry-run"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stdout)
 	}
@@ -150,7 +150,7 @@ func TestConfigProject(t *testing.T) {
 [validation]
 compile_cmd = "make build"
 `)
-	stdout, _, code := runPudding(t, []string{"config"}, nil, dir)
+	stdout, _, code := runGump(t, []string{"config"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stdout)
 	}
@@ -162,7 +162,7 @@ compile_cmd = "make build"
 func TestConfigEnvOverridesFile(t *testing.T) {
 	dir := setupRepo(t)
 	writeFile(t, dir, "gump.toml", `default_agent = "file-agent"`)
-	stdout, _, code := runPudding(t, []string{"config"}, map[string]string{"GUMP_DEFAULT_AGENT": "env-agent"}, dir)
+	stdout, _, code := runGump(t, []string{"config"}, map[string]string{"GUMP_DEFAULT_AGENT": "env-agent"}, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stdout)
 	}
@@ -171,7 +171,7 @@ func TestConfigEnvOverridesFile(t *testing.T) {
 	}
 }
 
-func TestCookInvalidRecipeYAML(t *testing.T) {
+func TestRunInvalidWorkflowYAML(t *testing.T) {
 	dir := setupRepo(t)
 	_ = os.MkdirAll(filepath.Join(dir, ".gump", "workflows"), 0755)
 	writeFile(t, dir, ".gump/workflows/bad.yaml", `name: bad
@@ -187,7 +187,7 @@ steps:
         prompt: "x"
 `)
 	writeFile(t, dir, "spec.md", "x")
-	_, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "bad"}, nil, dir)
+	_, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "bad"}, nil, dir)
 	if code == 0 {
 		t.Error("expected non-zero exit")
 	}
@@ -196,10 +196,10 @@ steps:
 	}
 }
 
-func TestCookbookListIncludesProjectRecipes(t *testing.T) {
+func TestPlaybookListIncludesProjectWorkflows(t *testing.T) {
 	dir := setupRepo(t)
 	writeFile(t, dir, ".gump/workflows/custom.yaml", `name: custom
-description: My custom recipe
+description: My custom workflow
 steps:
   - name: s
     type: code
@@ -207,11 +207,11 @@ steps:
     prompt: p
 review: []
 `)
-	stdout, _, code := runPudding(t, []string{"playbook", "list"}, nil, dir)
+	stdout, _, code := runGump(t, []string{"playbook", "list"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stdout)
 	}
-	if !strings.Contains(stdout, "custom") || !strings.Contains(stdout, "My custom recipe") {
+	if !strings.Contains(stdout, "custom") || !strings.Contains(stdout, "My custom workflow") {
 		t.Errorf("stdout %q", stdout)
 	}
 	if !strings.Contains(stdout, "tdd") || !strings.Contains(stdout, "bugfix") {
@@ -219,7 +219,7 @@ review: []
 	}
 }
 
-func TestCookStrategyShorthandParsed(t *testing.T) {
+func TestRunStrategyShorthandParsed(t *testing.T) {
 	dir := setupRepo(t)
 	writeFile(t, dir, ".gump/workflows/shorthand.yaml", `name: shorthand
 steps:
@@ -231,7 +231,7 @@ steps:
       - exit: 5
 `)
 	writeFile(t, dir, "spec.md", "x")
-	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "shorthand", "--dry-run"}, nil, dir)
+	stdout, _, code := runGump(t, []string{"run", "spec.md", "--workflow", "shorthand", "--dry-run"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stdout)
 	}

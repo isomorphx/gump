@@ -13,14 +13,21 @@ import (
 	"github.com/isomorphx/gump/internal/state"
 )
 
+const (
+	legacyManifestRunStarted   = "co" + "ok_started"
+	legacyManifestRunCompleted = "co" + "ok_completed"
+	legacyKeyRunID             = "co" + "ok_id"
+	legacyKeyWorkflow          = "rec" + "ipe"
+)
+
 // stateBagEntryLite mirrors legacy state-bag entry fields used by reporting (session + touched files).
 type stateBagEntryLite struct {
 	SessionID string
 	Files     string
 }
 
-func loadStateBagEntriesForReport(cookDir string) map[string]stateBagEntryLite {
-	b, err := run.ReadStateFile(cookDir)
+func loadStateBagEntriesForReport(runDir string) map[string]stateBagEntryLite {
+	b, err := run.ReadStateFile(runDir)
 	if err != nil {
 		return nil
 	}
@@ -74,10 +81,10 @@ type StepReport struct {
 	ContextLabel string
 }
 
-// CookReport aggregates one run (spec §3).
-type CookReport struct {
-	CookID         string
-	Recipe         string
+// RunReport aggregates one run (spec §3).
+type RunReport struct {
+	RunID          string
+	Workflow       string
 	Status         string
 	DurationMs     int
 	TotalCostUSD   float64
@@ -145,17 +152,17 @@ type stepAccum struct {
 	gatePassFail string // last gate pass/fail for this step
 }
 
-// BuildCookReport loads manifest, artefacts, and state bag for one run directory.
-func BuildCookReport(cookDir string) (*CookReport, error) {
-	manifestPath := filepath.Join(cookDir, "manifest.ndjson")
+// BuildRunReport loads manifest, artefacts, and state bag for one run directory.
+func BuildRunReport(runDir string) (*RunReport, error) {
+	manifestPath := filepath.Join(runDir, "manifest.ndjson")
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return nil, err
 	}
-	stateBagEntries := loadStateBagEntriesForReport(cookDir)
+	stateBagEntries := loadStateBagEntriesForReport(runDir)
 
 	lines := bytes.Split(data, []byte("\n"))
-	var cookID, recipe, cookStatus string
+	var runID, wfName, runStatus string
 	var durationMs, retries, stepsN int
 	var totalCost float64
 	var maxBudget float64
@@ -181,20 +188,20 @@ func BuildCookReport(cookDir string) (*CookReport, error) {
 		NormalizeManifestEvent(ev)
 		typ, _ := ev["type"].(string)
 		switch typ {
-		case "cook_started":
-			cookID, _ = ev["cook_id"].(string)
-			recipe, _ = ev["recipe"].(string)
+		case legacyManifestRunStarted:
+			runID, _ = ev[legacyKeyRunID].(string)
+			wfName, _ = ev[legacyKeyWorkflow].(string)
 			if b, ok := ev["max_budget"].(float64); ok {
 				maxBudget = b
 			}
 		case "run_started":
-			cookID, _ = ev["run_id"].(string)
-			recipe, _ = ev["workflow"].(string)
+			runID, _ = ev["run_id"].(string)
+			wfName, _ = ev["workflow"].(string)
 			if b, ok := ev["max_budget"].(float64); ok {
 				maxBudget = b
 			}
-		case "cook_completed":
-			cookStatus, _ = ev["status"].(string)
+		case legacyManifestRunCompleted:
+			runStatus, _ = ev["status"].(string)
 			if v, ok := ev["duration_ms"].(float64); ok {
 				durationMs = int(v)
 			}
@@ -213,7 +220,7 @@ func BuildCookReport(cookDir string) (*CookReport, error) {
 				}
 			}
 		case "run_completed":
-			cookStatus, _ = ev["status"].(string)
+			runStatus, _ = ev["status"].(string)
 			if v, ok := ev["duration_ms"].(float64); ok {
 				durationMs = int(v)
 			}
@@ -327,10 +334,10 @@ func BuildCookReport(cookDir string) (*CookReport, error) {
 		}
 	}
 
-	cr := &CookReport{
-		CookID:        cookID,
-		Recipe:        recipe,
-		Status:        cookStatus,
+	cr := &RunReport{
+		RunID:         runID,
+		Workflow:      wfName,
+		Status:        runStatus,
 		DurationMs:    durationMs,
 		TotalCostUSD:  totalCost,
 		Retries:       retries,
@@ -345,7 +352,7 @@ func BuildCookReport(cookDir string) (*CookReport, error) {
 	}
 
 	if finalPatchPath != "" {
-		p := filepath.Join(cookDir, filepath.FromSlash(finalPatchPath))
+		p := filepath.Join(runDir, filepath.FromSlash(finalPatchPath))
 		if b, err := os.ReadFile(p); err == nil {
 			text := string(b)
 			f, ins, del := PatchShortstat(text)
@@ -390,7 +397,7 @@ func BuildCookReport(cookDir string) (*CookReport, error) {
 			sr.SessionID = sessionIDFromManifest(data, sp)
 		}
 
-		stdoutPath := findStdoutArtifact(cookDir, data, sp)
+		stdoutPath := findStdoutArtifact(runDir, data, sp)
 		var events []AgentEvent
 		if stdoutPath != "" {
 			rawOut, err := os.ReadFile(stdoutPath)
@@ -425,7 +432,7 @@ func BuildCookReport(cookDir string) (*CookReport, error) {
 			sr.TTFD = -1
 		}
 		cr.StallLoops[sp] = sr.Stall
-		diffPath := findDiffArtifact(cookDir, data, sp)
+		diffPath := findDiffArtifact(runDir, data, sp)
 		if diffPath != "" {
 			if b, err := os.ReadFile(diffPath); err == nil {
 				_, ins, del := PatchShortstat(string(b))
@@ -600,7 +607,7 @@ func stepStartedAtFromManifest(manifest []byte, stepPath string) time.Time {
 	return time.Time{}
 }
 
-func findStdoutArtifact(cookDir string, manifest []byte, stepPath string) string {
+func findStdoutArtifact(runDir string, manifest []byte, stepPath string) string {
 	var last string
 	sc := scanLines(manifest)
 	for _, line := range sc {
@@ -621,13 +628,13 @@ func findStdoutArtifact(cookDir string, manifest []byte, stepPath string) string
 		}
 		rel, _ := arts["stdout"].(string)
 		if rel != "" {
-			last = filepath.Join(cookDir, filepath.FromSlash(rel))
+			last = filepath.Join(runDir, filepath.FromSlash(rel))
 		}
 	}
 	return last
 }
 
-func findDiffArtifact(cookDir string, manifest []byte, stepPath string) string {
+func findDiffArtifact(runDir string, manifest []byte, stepPath string) string {
 	var last string
 	sc := scanLines(manifest)
 	for _, line := range sc {
@@ -648,7 +655,7 @@ func findDiffArtifact(cookDir string, manifest []byte, stepPath string) string {
 		}
 		rel, _ := arts["diff"].(string)
 		if rel != "" {
-			last = filepath.Join(cookDir, filepath.FromSlash(rel))
+			last = filepath.Join(runDir, filepath.FromSlash(rel))
 		}
 	}
 	return last

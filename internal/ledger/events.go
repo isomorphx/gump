@@ -6,7 +6,7 @@ type Event interface {
 }
 
 // RunStarted is emitted at the very start of a run so the ledger has full run context.
-// WHY: G1 rebrands ledger domain objects from cook->run.
+// WHY: G1 aligns ledger payloads with the run/workflow vocabulary used elsewhere in the CLI.
 type RunStarted struct {
 	RunID       string            `json:"run_id"`
 	Workflow    string            `json:"workflow"`
@@ -124,7 +124,7 @@ type GuardTriggered struct {
 
 func (GuardTriggered) EventType() string { return "guard_triggered" }
 
-// HITLPaused is emitted when the cook blocks for human review before continuing.
+// HITLPaused is emitted when the run blocks for human review before continuing.
 type HITLPaused struct {
 	Step     string `json:"step"`
 	Position string `json:"position,omitempty"`
@@ -176,10 +176,10 @@ type StepCompleted struct {
 
 func (StepCompleted) EventType() string { return "step_completed" }
 
-// ReplayStarted is emitted at the start of a replay run; references the original fatal cook.
+// ReplayStarted is emitted at the start of a replay run; references the original fatal run.
 type ReplayStarted struct {
-	OriginalCookID string `json:"original_cook_id"`
-	FromStep       string `json:"from_step"`
+	OriginalRunID string `json:"original_run_id"`
+	FromStep      string `json:"from_step"`
 	RestoredCommit string `json:"restored_commit"`
 }
 
@@ -231,6 +231,3 @@ type RunCompleted struct {
 
 func (RunCompleted) EventType() string { return "run_completed" }
 
-// Legacy aliases kept to avoid breaking non-G1 internal call sites.
-type CookStarted = RunStarted
-type CookCompleted = RunCompleted

@@ -27,7 +27,7 @@ func (e ValidationError) Error() string {
 	return e.Message
 }
 
-var validStepTypes = map[string]bool{"code": true, "split": true, "validate": true}
+var validStepTypes = map[string]bool{"code": true, "split": true, "validate": true, "artifact": true}
 var validHitl = map[string]bool{"": true, "before_gate": true, "after_gate": true}
 var validGateTypes = map[string]bool{
 	"compile": true, "test": true, "lint": true, "schema": true,
@@ -190,7 +190,7 @@ func validateStep(s *Step, path, scopePath string, seenNames map[string]bool, st
 		// WHY: workflow-call and parallel containers omit type: by design (spec §5, E2E-R1-14/R1-15).
 	} else {
 		if strings.TrimSpace(s.Type) == "" || !validStepTypes[s.Type] {
-			errs = append(errs, ValidationError{Path: path + ".type", Message: "type must be code, split, or validate"})
+			errs = append(errs, ValidationError{Path: path + ".type", Message: "type must be code, split, validate, or artifact"})
 		}
 	}
 

@@ -108,13 +108,13 @@ steps:
         agent: claude-opus
       - exit: 5
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"1":{"files":{"add.go":"package main\n\nfunc Add( { }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add( { }\n"}},"3":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}},"files":{"add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) {\n\tif Add(1, 2) != 3 { t.Fatal() }\n}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"by_attempt":{"1":{"files":{"add.go":"package main\n\nfunc Add( { }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add( { }\n"}},"3":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}},"files":{"add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) {\n\tif Add(1, 2) != 3 { t.Fatal() }\n}\n"}}`)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r4-01", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r4-01", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	agents := agentsLaunchedForStep(t, dir, runID, "impl")
 	if len(agents) < 3 {
 		t.Fatalf("want >=3 launches, got %v", agents)
@@ -156,13 +156,13 @@ steps:
         agent: claude-opus
       - exit: 6
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"add.go":"package main\n\nfunc Add( { }\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"add.go":"package main\n\nfunc Add( { }\n"}}`)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r4-02", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r4-02", "--agent-stub"}, envWithStubPath(), dir)
 	if code == 0 {
 		t.Fatalf("expected fatal stderr=%s", stderr)
 	}
-	runID := extractCookID(stdout + stderr)
+	runID := extractRunID(stdout + stderr)
 	agents := agentsLaunchedForStep(t, dir, runID, "impl")
 	// WHY: exit:6 allows attempts 1–6; the 7th scheduling call is fatal without a 7th launch.
 	want := []string{"claude-sonnet", "claude-sonnet-thinking", "claude-sonnet-thinking", "claude-opus", "claude-opus", "claude-opus"}
@@ -192,13 +192,13 @@ steps:
         agent: claude-opus
       - exit: 4
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"1":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n","add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { t.Fatal(\"fail\") }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n","add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { if Add(1,2)!=3 { t.Fatal() } }\n"}}}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"by_attempt":{"1":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n","add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { t.Fatal(\"fail\") }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n","add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { if Add(1,2)!=3 { t.Fatal() } }\n"}}}}`)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r4-03", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r4-03", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	agents := agentsLaunchedForStep(t, dir, runID, "impl")
 	if len(agents) < 2 || agents[1] != "claude-opus" {
 		t.Fatalf("agents: %v", agents)
@@ -221,13 +221,13 @@ steps:
         agent: claude-opus
       - exit: 3
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n","add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { t.Fatal(\"fail\") }\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n","add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { t.Fatal(\"fail\") }\n"}}`)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r4-04", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r4-04", "--agent-stub"}, envWithStubPath(), dir)
 	if code == 0 {
 		t.Fatalf("expected fail stderr=%s", stderr)
 	}
-	runID := extractCookID(stdout + stderr)
+	runID := extractRunID(stdout + stderr)
 	agents := agentsLaunchedForStep(t, dir, runID, "impl")
 	if len(agents) < 2 || agents[1] != "claude-sonnet" {
 		t.Fatalf("second launch should stay sonnet: %v", agents)
@@ -255,13 +255,13 @@ steps:
           Fix these issues only.
       - exit: 3
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"1":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n","add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { if Add(1,2)!=3 { t.Fatal() } }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n","add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { if Add(1,2)!=3 { t.Fatal() } }\n",".gump/e2e-r4-05-ok":"ok"}}}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"by_attempt":{"1":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n","add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { if Add(1,2)!=3 { t.Fatal() } }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n","add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { if Add(1,2)!=3 { t.Fatal() } }\n",".gump/e2e-r4-05-ok":"ok"}}}}`)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r4-gate-meta", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r4-gate-meta", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	launched := parseLedgerLaunchedByStep(t, filepath.Join(dir, ".gump", "runs", runID))
 	wt2 := nthLaunchedWorktree(launched, "impl", 2)
 	if wt2 == "" {
@@ -295,13 +295,13 @@ steps:
         agent: claude-opus
       - exit: 5
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"1":{"files":{"add.go":"package main\n\nfunc Add( { }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}},"files":{"add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) {\n\tif Add(1, 2) != 3 { t.Fatal() }\n}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"by_attempt":{"1":{"files":{"add.go":"package main\n\nfunc Add( { }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}},"files":{"add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) {\n\tif Add(1, 2) != 3 { t.Fatal() }\n}\n"}}`)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r4-06", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r4-06", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	launched := parseLedgerLaunchedByStep(t, filepath.Join(dir, ".gump", "runs", runID))
 	wt2 := nthLaunchedWorktree(launched, "impl", 2)
 	if wt2 == "" {
@@ -329,13 +329,13 @@ steps:
         agent: claude-opus
       - exit: 4
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"1":{"files":{"add.go":"package main\n\nfunc Add( { }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"by_attempt":{"1":{"files":{"add.go":"package main\n\nfunc Add( { }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}}}`)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r4-07", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r4-07", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	rt := lastRetryTriggered(t, dir, runID, "impl")
 	ov, _ := rt["overrides"].(map[string]interface{})
 	if ov == nil || ov["session"] != "new" {
@@ -363,9 +363,9 @@ steps:
         session: new
       - exit: 4
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"1":{"files":{"add.go":"package main\n\nfunc Add( { }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"by_attempt":{"1":{"files":{"add.go":"package main\n\nfunc Add( { }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}}}`)
 	gitCommitAll(t, dir, "wf")
-	_, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r4-08", "--agent-stub"}, envWithStubPath(), dir)
+	_, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r4-08", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
@@ -390,13 +390,13 @@ steps:
         worktree: reset
       - exit: 3
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"1":{"files":{"foo.go":"package main\n\nfunc Foo() {}\n","add.go":"package main\n\nfunc Add( { }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"by_attempt":{"1":{"files":{"foo.go":"package main\n\nfunc Foo() {}\n","add.go":"package main\n\nfunc Add( { }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}}}`)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r4-09", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r4-09", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	wt := filepath.Join(dir, ".gump", "worktrees", "run-"+runID)
 	if _, err := os.Stat(filepath.Join(wt, "foo.go")); err == nil {
 		t.Fatal("foo.go should be gone after reset")
@@ -420,9 +420,9 @@ steps:
         worktree: reset
       - exit: 3
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"1":{"files":{"add.go":"package main\n\nfunc Add( { }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"by_attempt":{"1":{"files":{"add.go":"package main\n\nfunc Add( { }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}}}`)
 	gitCommitAll(t, dir, "wf")
-	_, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r4-10", "--agent-stub"}, envWithStubPath(), dir)
+	_, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r4-10", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
@@ -450,9 +450,9 @@ steps:
         agent: claude-opus
       - exit: 4
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"add.go":"package main\n\nfunc Add( { }\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"add.go":"package main\n\nfunc Add( { }\n"}}`)
 	gitCommitAll(t, dir, "wf")
-	_, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r4-11", "--agent-stub"}, envWithStubPath(), dir)
+	_, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r4-11", "--agent-stub"}, envWithStubPath(), dir)
 	if code == 0 {
 		t.Fatalf("expected failure")
 	}
@@ -492,13 +492,13 @@ steps:
         worktree: reset
       - exit: 5
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"add.go":"package main\n\nfunc Add( { }\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"add.go":"package main\n\nfunc Add( { }\n"}}`)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r4-multi-entries", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r4-multi-entries", "--agent-stub"}, envWithStubPath(), dir)
 	if code == 0 {
 		t.Fatalf("expected fatal exit, stderr=%s", stderr)
 	}
-	runID := extractCookID(stdout + stderr)
+	runID := extractRunID(stdout + stderr)
 	agents := agentsLaunchedForStep(t, dir, runID, "impl")
 	wantAgents := []string{"claude-sonnet", "claude-sonnet", "claude-sonnet", "claude-opus", "claude-opus"}
 	if len(agents) != len(wantAgents) {
@@ -580,13 +580,13 @@ steps:
   - name: quality
     gate: [compile, lint, test]
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"1":{"files":{"add.go":"package main\n\nfunc Add( { }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add( { }\n"}},"3":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}},"files":{"add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) {\n\tif Add(1, 2) != 3 { t.Fatal() }\n}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"by_attempt":{"1":{"files":{"add.go":"package main\n\nfunc Add( { }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add( { }\n"}},"3":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}},"files":{"add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) {\n\tif Add(1, 2) != 3 { t.Fatal() }\n}\n"}}`)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "impl-simple", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "impl-simple", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	agents := agentsLaunchedForStep(t, dir, runID, "impl")
 	if len(agents) != 3 || agents[0] != "claude-sonnet" || agents[1] != "claude-sonnet" || agents[2] != "claude-opus" {
 		t.Fatalf("impl agents: %v", agents)
@@ -650,13 +650,13 @@ steps:
         worktree: reset
       - exit: 5
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"1":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n","add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { t.Fatal(\"fail\") }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n","add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { t.Fatal(\"fail\") }\n"}},"3":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n","add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { if Add(1,2)!=3 { t.Fatal() } }\n"}}}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"by_attempt":{"1":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n","add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { t.Fatal(\"fail\") }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n","add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { t.Fatal(\"fail\") }\n"}},"3":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n","add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { if Add(1,2)!=3 { t.Fatal() } }\n"}}}}`)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r4-13", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r4-13", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	agents := agentsLaunchedForStep(t, dir, runID, "impl")
 	if len(agents) < 2 || agents[1] != "claude-opus" {
 		t.Fatalf("agents: %v", agents)
@@ -678,13 +678,13 @@ steps:
     retry:
       - exit: 3
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"1":{"files":{"add.go":"package main\n\nfunc Add( { }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}},"files":{"add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) {\n\tif Add(1, 2) != 3 { t.Fatal() }\n}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"by_attempt":{"1":{"files":{"add.go":"package main\n\nfunc Add( { }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}},"files":{"add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) {\n\tif Add(1, 2) != 3 { t.Fatal() }\n}\n"}}`)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r4-14", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r4-14", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	rts := retryTriggeredEventsForStep(t, dir, runID, "execute")
 	if len(rts) == 0 {
 		t.Fatal("no retry_triggered for execute")
@@ -721,21 +721,21 @@ steps:
         agent: claude-opus
       - exit: 2
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"2":{"files":{"bad.go":"package main\n\nfunc X() { SYNTAXERROR }\n"}}},"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"by_attempt":{"2":{"files":{"bad.go":"package main\n\nfunc X() { SYNTAXERROR }\n"}}},"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}`)
 	gitCommitAll(t, dir, "wf")
-	stdout1, stderr1, code1 := runPudding(t, []string{"run", "spec.md", "--workflow", "r4-15", "--agent-stub"}, envWithStubPath(), dir)
+	stdout1, stderr1, code1 := runGump(t, []string{"run", "spec.md", "--workflow", "r4-15", "--agent-stub"}, envWithStubPath(), dir)
 	if code1 == 0 {
 		t.Fatalf("expected fatal: %s", stderr1)
 	}
-	runID := extractCookID(stdout1 + stderr1)
+	runID := extractRunID(stdout1 + stderr1)
 	agents1 := agentsLaunchedForStep(t, dir, runID, "impl")
 	if len(agents1) < 2 {
 		t.Fatalf("first run: %v", agents1)
 	}
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n","bad.go":"package main\n\nfunc X() {}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n","bad.go":"package main\n\nfunc X() {}\n"}}`)
 	wt := filepath.Join(dir, ".gump", "worktrees", "run-"+runID)
 	writeFile(t, wt, "bad.go", "package main\n\nfunc X() {}\n")
-	stdout2, stderr2, code2 := runPudding(t, []string{"run", "--resume", "--agent-stub"}, envWithStubPath(), dir)
+	stdout2, stderr2, code2 := runGump(t, []string{"run", "--resume", "--agent-stub"}, envWithStubPath(), dir)
 	if code2 != 0 {
 		t.Fatalf("resume exit %d: %s", code2, stderr2)
 	}

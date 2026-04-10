@@ -14,38 +14,38 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var cookbookCmd = &cobra.Command{
+var playbookRootCmd = &cobra.Command{
 	Use:   "playbook",
 	Short: "List or show workflows",
 }
 
-var cookbookListCmd = &cobra.Command{
+var playbookListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List all available recipes (project, user, built-in)",
-	RunE:  runCookbookList,
+	Short: "List all available workflows (project, user, built-in)",
+	RunE:  runPlaybookList,
 }
 
-var cookbookShowCmd = &cobra.Command{
+var playbookShowCmd = &cobra.Command{
 	Use:   "show [name]",
-	Short: "Show recipe YAML by name",
+	Short: "Show workflow YAML by name",
 	Args:  cobra.ExactArgs(1),
-	RunE:  runCookbookShow,
+	RunE:  runPlaybookShow,
 }
 
 func init() {
-	cookbookCmd.AddCommand(cookbookListCmd, cookbookShowCmd)
-	rootCmd.AddCommand(cookbookCmd)
+	playbookRootCmd.AddCommand(playbookListCmd, playbookShowCmd)
+	rootCmd.AddCommand(playbookRootCmd)
 }
 
-type recipeMeta struct {
+type workflowListEntry struct {
 	name        string
 	description string
 	source      string
 }
 
-func runCookbookList(cmd *cobra.Command, args []string) error {
+func runPlaybookList(cmd *cobra.Command, args []string) error {
 	projectRoot := config.ProjectRoot()
-	byName := make(map[string]recipeMeta)
+	byName := make(map[string]workflowListEntry)
 	// Built-in first so project/user can override.
 	for name, raw := range workflow.BuiltinWorkflows {
 		base := strings.TrimSuffix(name, ".yaml")
@@ -54,7 +54,7 @@ func runCookbookList(cmd *cobra.Command, args []string) error {
 			Description string `yaml:"description"`
 		}
 		_ = yaml.Unmarshal(raw, &r)
-		byName[base] = recipeMeta{name: base, description: r.Description, source: "built-in"}
+		byName[base] = workflowListEntry{name: base, description: r.Description, source: "built-in"}
 	}
 
 	home, _ := os.UserHomeDir()
@@ -76,7 +76,7 @@ func runCookbookList(cmd *cobra.Command, args []string) error {
 				Description string `yaml:"description"`
 			}
 			_ = yaml.Unmarshal(b, &r)
-			byName[base] = recipeMeta{name: base, description: r.Description, source: "user"}
+			byName[base] = workflowListEntry{name: base, description: r.Description, source: "user"}
 		}
 	}
 	if projectRoot != "" {
@@ -97,7 +97,7 @@ func runCookbookList(cmd *cobra.Command, args []string) error {
 				Description string `yaml:"description"`
 			}
 			_ = yaml.Unmarshal(b, &r)
-			byName[base] = recipeMeta{name: base, description: r.Description, source: "project"}
+			byName[base] = workflowListEntry{name: base, description: r.Description, source: "project"}
 		}
 	}
 	var names []string
@@ -114,7 +114,7 @@ func runCookbookList(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runCookbookShow(cmd *cobra.Command, args []string) error {
+func runPlaybookShow(cmd *cobra.Command, args []string) error {
 	name := args[0]
 	projectRoot := config.ProjectRoot()
 	resolved, err := workflow.Resolve(name, projectRoot)

@@ -33,7 +33,7 @@ var updateCheckWhitelist = map[string]bool{
 var rootCmd = &cobra.Command{
 	Use:   "gump",
 	Short: "Orchestrate code agents via declarative workflows",
-	Long:  "Gump runs workflows defined in YAML recipes: plan, code steps, validation, and review.",
+	Long:  "Gump runs workflows defined in YAML: plan, code steps, validation, and review.",
 }
 
 func init() {
@@ -81,7 +81,7 @@ func init() {
 			updateCh <- latest
 			close(updateCh)
 		}()
-		// WHY: for very fast commands (like "cookbook list") we want the scheduler
+		// WHY: for very fast commands (like "playbook list") we want the scheduler
 		// to run the update goroutine before PostRunE performs a non-blocking
 		// receive. This keeps the CLI responsive while making the best-effort
 		// message deterministic in practice.

@@ -47,7 +47,7 @@ func stepAtPathParts(steps []Step, parts []string, idx int) *Step {
 	return nil
 }
 
-// MatchSplitEachQualifiedPath reports whether path looks like <splitPath>/<task>/<eachStep> for this recipe.
+// MatchSplitEachQualifiedPath reports whether path looks like <splitPath>/<task>/<eachStep> for this workflow.
 func MatchSplitEachQualifiedPath(wf *Workflow, path string) bool {
 	if wf == nil || path == "" {
 		return false
@@ -127,7 +127,7 @@ func ResolveEngineStepPath(fromStep string, rec *Workflow) (string, error) {
 				return fromStep, nil
 			}
 		}
-		return "", fmt.Errorf("step %q not found in recipe %q", fromStep, rec.Name)
+		return "", fmt.Errorf("step %q not found in workflow %q", fromStep, rec.Name)
 	}
 	if shortNameUsedInAnySplitEach(rec.Steps, fromStep) {
 		return "", fmt.Errorf("ambiguous step reference — use qualified path like '<split>/<task>/%s'", fromStep)
@@ -146,7 +146,7 @@ func ResolveEngineStepPath(fromStep string, rec *Workflow) (string, error) {
 		for _, l := range withName {
 			paths = append(paths, leafFullPath(l))
 		}
-		return "", fmt.Errorf("step %q is ambiguous in recipe %q. Use full path: %s", fromStep, rec.Name, strings.Join(paths, ", "))
+		return "", fmt.Errorf("step %q is ambiguous in workflow %q. Use full path: %s", fromStep, rec.Name, strings.Join(paths, ", "))
 	}
-	return "", fmt.Errorf("step %q not found in recipe %q", fromStep, rec.Name)
+	return "", fmt.Errorf("step %q not found in workflow %q", fromStep, rec.Name)
 }

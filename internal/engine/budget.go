@@ -17,16 +17,16 @@ func (e *BudgetExceededError) Error() string { return e.Msg }
 
 // BudgetTracker enforces run- and step-level max_budget after each agent run (no pre-flight prediction).
 type BudgetTracker struct {
-	CookBudget  float64
+	RunBudget   float64
 	StepBudgets map[string]float64
-	CookSpent   float64
+	RunSpent    float64
 	StepSpent   map[string]float64
 	mu          sync.Mutex
 }
 
-func NewBudgetTracker(cookBudget float64) *BudgetTracker {
+func NewBudgetTracker(maxRunBudget float64) *BudgetTracker {
 	return &BudgetTracker{
-		CookBudget:  cookBudget,
+		RunBudget:   maxRunBudget,
 		StepBudgets: make(map[string]float64),
 		StepSpent:   make(map[string]float64),
 	}
@@ -44,15 +44,15 @@ func (bt *BudgetTracker) SetStepBudget(step string, budget float64) {
 func (bt *BudgetTracker) AddCost(step string, costUSD float64) error {
 	bt.mu.Lock()
 	defer bt.mu.Unlock()
-	bt.CookSpent += costUSD
+	bt.RunSpent += costUSD
 	if bt.StepSpent == nil {
 		bt.StepSpent = make(map[string]float64)
 	}
 	bt.StepSpent[step] += costUSD
-	if bt.CookBudget > 0 && bt.CookSpent > bt.CookBudget {
+	if bt.RunBudget > 0 && bt.RunSpent > bt.RunBudget {
 		return &BudgetExceededError{
-			Event: ledger.BudgetExceeded{Step: "", Scope: "cook", MaxUSD: bt.CookBudget, SpentUSD: bt.CookSpent},
-			Msg:   fmt.Sprintf("run budget exceeded: spent $%.2f of $%.2f max", bt.CookSpent, bt.CookBudget),
+			Event: ledger.BudgetExceeded{Step: "", Scope: "run", MaxUSD: bt.RunBudget, SpentUSD: bt.RunSpent},
+			Msg:   fmt.Sprintf("run budget exceeded: spent $%.2f of $%.2f max", bt.RunSpent, bt.RunBudget),
 		}
 	}
 	if lim := bt.StepBudgets[step]; lim > 0 && bt.StepSpent[step] > lim {

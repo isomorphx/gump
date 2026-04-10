@@ -13,8 +13,8 @@ import (
 
 // AggregateReport is the cross-run summary (spec §8).
 type AggregateReport struct {
-	N             int
-	RecipeHeader  string
+	N              int
+	WorkflowHeader string
 	PassCount     int
 	TotalRuns     int
 	AvgDurationMs int
@@ -53,25 +53,25 @@ type aggRow struct {
 }
 
 // BuildAggregateReport loads manifests for the given run IDs (chronological order).
-func BuildAggregateReport(repoRoot string, cookIDs []string) (*AggregateReport, error) {
-	cooksDir := filepath.Join(repoRoot, brand.StateDir(), brand.RunsDir())
-	type cookMeta struct {
+func BuildAggregateReport(repoRoot string, runIDs []string) (*AggregateReport, error) {
+	runsDir := filepath.Join(repoRoot, brand.StateDir(), brand.RunsDir())
+	type runMeta struct {
 		id       string
-		recipe   string
+		wf       string
 		status   string
 		duration int
 		cost     float64
 		retries  float64
 	}
-	var cooks []cookMeta
-	recipes := map[string]int{}
-	for _, id := range cookIDs {
-		p := filepath.Join(cooksDir, id, "manifest.ndjson")
+	var runs []runMeta
+	workflows := map[string]int{}
+	for _, id := range runIDs {
+		p := filepath.Join(runsDir, id, "manifest.ndjson")
 		data, err := os.ReadFile(p)
 		if err != nil {
 			continue
 		}
-		var cg cookMeta
+		var cg runMeta
 		cg.id = id
 		for _, line := range scanLines(data) {
 			var ev map[string]interface{}
@@ -80,11 +80,11 @@ func BuildAggregateReport(repoRoot string, cookIDs []string) (*AggregateReport, 
 			}
 			NormalizeManifestEvent(ev)
 			switch ev["type"] {
-			case "cook_started":
-				cg.recipe, _ = ev["recipe"].(string)
+			case legacyManifestRunStarted:
+				cg.wf, _ = ev[legacyKeyWorkflow].(string)
 			case "run_started":
-				cg.recipe, _ = ev["workflow"].(string)
-			case "cook_completed":
+				cg.wf, _ = ev["workflow"].(string)
+			case legacyManifestRunCompleted:
 				cg.status, _ = ev["status"].(string)
 				if v, ok := ev["duration_ms"].(float64); ok {
 					cg.duration = int(v)
@@ -108,28 +108,28 @@ func BuildAggregateReport(repoRoot string, cookIDs []string) (*AggregateReport, 
 				}
 			}
 		}
-		cooks = append(cooks, cg)
-		if cg.recipe != "" {
-			recipes[cg.recipe]++
+		runs = append(runs, cg)
+		if cg.wf != "" {
+			workflows[cg.wf]++
 		}
 	}
-	if len(cooks) == 0 {
+	if len(runs) == 0 {
 		return nil, fmt.Errorf("no run data")
 	}
 	ar := &AggregateReport{
-		N:         len(cooks),
-		TotalRuns: len(cooks),
+		N:         len(runs),
+		TotalRuns: len(runs),
 	}
-	if len(recipes) == 1 {
-		for r := range recipes {
-			ar.RecipeHeader = r
+	if len(workflows) == 1 {
+		for w := range workflows {
+			ar.WorkflowHeader = w
 		}
 	} else {
-		ar.RecipeHeader = "mixed"
+		ar.WorkflowHeader = "mixed"
 	}
 	var pass int
 	var durSum, costSum, retSum float64
-	for _, c := range cooks {
+	for _, c := range runs {
 		if c.status == "pass" {
 			pass++
 		}
@@ -138,12 +138,12 @@ func BuildAggregateReport(repoRoot string, cookIDs []string) (*AggregateReport, 
 		retSum += c.retries
 	}
 	ar.PassCount = pass
-	ar.AvgDurationMs = int(durSum / float64(len(cooks)))
-	ar.AvgCostUSD = costSum / float64(len(cooks))
+	ar.AvgDurationMs = int(durSum / float64(len(runs)))
+	ar.AvgCostUSD = costSum / float64(len(runs))
 	ar.TotalCostUSD = costSum
-	ar.AvgRetries = retSum / float64(len(cooks))
+	ar.AvgRetries = retSum / float64(len(runs))
 
-	for i, c := range cooks {
+	for i, c := range runs {
 		ar.CostByRun = append(ar.CostByRun, struct {
 			Label string
 			USD   float64
@@ -151,9 +151,9 @@ func BuildAggregateReport(repoRoot string, cookIDs []string) (*AggregateReport, 
 	}
 
 	rows := map[aggKey]*aggRow{}
-	for _, c := range cooks {
-		dir := filepath.Join(cooksDir, c.id)
-		cr, err := BuildCookReport(dir)
+	for _, c := range runs {
+		dir := filepath.Join(runsDir, c.id)
+		cr, err := BuildRunReport(dir)
 		if err != nil {
 			continue
 		}
@@ -243,7 +243,7 @@ func RenderAggregateReport(ar *AggregateReport, o RenderOpts) string {
 	fmt.Fprintf(&b, "%s%s%s\n", o.topLeft(), h, o.topRight())
 	nStr := fmt.Sprintf("%d", ar.N)
 	fmt.Fprintf(&b, "%s  Gump Report — Last %s runs%*s%s\n", o.vBar(), nStr, boxWidth-22-len(nStr), "", o.vBar())
-	fmt.Fprintf(&b, "%s  Recipe: %-*s%s\n", o.vBar(), boxWidth-10, ar.RecipeHeader, o.vBar())
+	fmt.Fprintf(&b, "%s  Workflow: %-*s%s\n", o.vBar(), boxWidth-12, ar.WorkflowHeader, o.vBar())
 	fmt.Fprintf(&b, "%s%s%s\n", o.botLeft(), h, o.botRight())
 
 	pct := 0

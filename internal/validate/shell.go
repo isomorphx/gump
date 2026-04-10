@@ -116,7 +116,7 @@ func runShellValidatorWithAvailabilityCheck(cfg *config.Config, alias, command s
 	return r
 }
 
-// RunCompileValidator resolves compile command and runs it so recipes can stay stack-agnostic.
+// RunCompileValidator resolves compile command and runs it so workflows can stay stack-agnostic.
 func RunCompileValidator(cfg *config.Config, worktreeDir string) *SingleResult {
 	cmd, err := ResolveCommand("compile", cfg, worktreeDir)
 	if err != nil {

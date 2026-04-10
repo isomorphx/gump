@@ -47,7 +47,7 @@ func TestBuild_PlanContainsPlanJSON(t *testing.T) {
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
 	s := string(data)
-	if !strings.Contains(s, ".gump/out/plan.json") && !strings.Contains(s, ".pudding/out/plan.json") {
+	if !strings.Contains(s, ".gump/out/plan.json") && !strings.Contains(s, ".gump/out/plan.json") {
 		t.Error("plan must reference plan.json")
 	}
 	if !strings.Contains(s, "SPEC_BODY") {
@@ -76,7 +76,7 @@ func TestBuild_BlastRadius(t *testing.T) {
 
 func TestBuild_ConventionsDiffOnly(t *testing.T) {
 	dir := t.TempDir()
-	convDir := filepath.Join(dir, ".pudding")
+	convDir := filepath.Join(dir, ".gump")
 	if err := os.MkdirAll(convDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestBuild_ConventionsDiffOnly(t *testing.T) {
 
 func TestBuild_PlanOmitsConventions(t *testing.T) {
 	dir := t.TempDir()
-	convDir := filepath.Join(dir, ".pudding")
+	convDir := filepath.Join(dir, ".gump")
 	if err := os.MkdirAll(convDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestBuild_ArtifactContainsArtifactTxt(t *testing.T) {
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
 	s := string(data)
-	if !strings.Contains(s, "artifact step") || (!strings.Contains(s, ".gump/out/artifact.txt") && !strings.Contains(s, ".pudding/out/artifact.txt")) {
+	if !strings.Contains(s, "artifact step") || (!strings.Contains(s, ".gump/out/artifact.txt") && !strings.Contains(s, ".gump/out/artifact.txt")) {
 		t.Errorf("artifact template: %s", s)
 	}
 	if !strings.Contains(s, "Summarize the spec") {

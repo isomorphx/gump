@@ -11,8 +11,8 @@ import (
 func TestE2E_R6_01_SplitEachSequentialTwoTasks(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "feature")
-	writeFile(t, dir, ".pudding-test-plan.json", `[{"name":"auth","description":"Add auth"},{"name":"api","description":"Add API"}]`)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_step":{"impl":{"files":{"auth.go":"package main\n","api.go":"package main\n"}}}}`)
+	writeFile(t, dir, ".gump-test-plan.json", `[{"name":"auth","description":"Add auth"},{"name":"api","description":"Add API"}]`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"by_step":{"impl":{"files":{"auth.go":"package main\n","api.go":"package main\n"}}}}`)
 	os.MkdirAll(filepath.Join(dir, ".gump", "workflows"), 0755)
 	writeFile(t, dir, ".gump/workflows/r6-01.yaml", `name: r6-01
 steps:
@@ -29,11 +29,11 @@ steps:
         gate: [compile]
 `)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r6-01", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r6-01", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stdout=%s stderr=%s", code, stdout, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	st := readRunState(t, dir, runID)
 	if st["decompose/auth/impl.output"] == "" || st["decompose/api/impl.output"] == "" {
 		t.Fatalf("expected qualified outputs, got auth=%q api=%q", st["decompose/auth/impl.output"], st["decompose/api/impl.output"])
@@ -48,8 +48,8 @@ steps:
 func TestE2E_R6_02_TaskVarsInPrompt(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-plan.json", `[{"name":"auth","description":"Add auth"},{"name":"api","description":"Add API"}]`)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_step":{"impl":{"files":{"auth.go":"package main\n","api.go":"package main\n"}}}}`)
+	writeFile(t, dir, ".gump-test-plan.json", `[{"name":"auth","description":"Add auth"},{"name":"api","description":"Add API"}]`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"by_step":{"impl":{"files":{"auth.go":"package main\n","api.go":"package main\n"}}}}`)
 	os.MkdirAll(filepath.Join(dir, ".gump", "workflows"), 0755)
 	writeFile(t, dir, ".gump/workflows/r6-02.yaml", `name: r6-02
 steps:
@@ -66,14 +66,14 @@ steps:
         gate: [compile]
 `)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r6-02", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r6-02", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
-	cookDir := filepath.Join(dir, ".gump", "runs", runID)
+	runID := extractRunID(stdout)
+	runDir := filepath.Join(dir, ".gump", "runs", runID)
 	var sawAuth, sawAPI bool
-	_ = filepath.Walk(filepath.Join(cookDir, "artifacts"), func(path string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(filepath.Join(runDir, "artifacts"), func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil
 		}
@@ -96,7 +96,7 @@ steps:
 func TestE2E_R6_08_ParallelGroup(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "review")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{}`)
 	os.MkdirAll(filepath.Join(dir, ".gump", "workflows"), 0755)
 	writeFile(t, dir, ".gump/workflows/r6-08.yaml", `name: r6-08
 steps:
@@ -113,11 +113,11 @@ steps:
         agent: claude-sonnet
 `)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r6-08", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r6-08", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	runID := extractCookID(stdout)
+	runID := extractRunID(stdout)
 	st := readRunState(t, dir, runID)
 	if st["reviews/arch-review.output"] == "" || st["reviews/security-review.output"] == "" {
 		t.Fatalf("expected parallel group outputs in state: %+v", map[string]string{
@@ -130,7 +130,7 @@ steps:
 func TestE2E_R6_10_SplitZeroTasks(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-plan.json", `[]`)
+	writeFile(t, dir, ".gump-test-plan.json", `[]`)
 	os.MkdirAll(filepath.Join(dir, ".gump", "workflows"), 0755)
 	writeFile(t, dir, ".gump/workflows/r6-10.yaml", `name: r6-10
 steps:
@@ -147,7 +147,7 @@ steps:
         gate: [compile]
 `)
 	gitCommitAll(t, dir, "wf")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r6-10", "--agent-stub"}, envWithStubPath(), dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r6-10", "--agent-stub"}, envWithStubPath(), dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
@@ -162,8 +162,8 @@ func TestE2E_R6_12_ReplayQualifiedTask(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "bad_test.go", "package main\n\nimport \"testing\"\n\nfunc TestAlwaysFail(t *testing.T) { t.Fatal(\"fail\") }\n")
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-plan.json", `[{"name":"auth","description":"A"},{"name":"api","description":"B"}]`)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_step":{"impl":{"files":{"a.go":"package main\n","b.go":"package main\n"}}}}`)
+	writeFile(t, dir, ".gump-test-plan.json", `[{"name":"auth","description":"A"},{"name":"api","description":"B"}]`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"by_step":{"impl":{"files":{"a.go":"package main\n","b.go":"package main\n"}}}}`)
 	os.MkdirAll(filepath.Join(dir, ".gump", "workflows"), 0755)
 	writeFile(t, dir, ".gump/workflows/r6-12.yaml", `name: r6-12
 steps:
@@ -182,11 +182,11 @@ steps:
     gate: [compile, test]
 `)
 	gitCommitAll(t, dir, "wf")
-	stdout1, stderr1, code1 := runPudding(t, []string{"run", "spec.md", "--workflow", "r6-12", "--agent-stub"}, envWithStubPath(), dir)
+	stdout1, stderr1, code1 := runGump(t, []string{"run", "spec.md", "--workflow", "r6-12", "--agent-stub"}, envWithStubPath(), dir)
 	if code1 == 0 {
 		t.Fatalf("expected fatal at quality, got pass stderr=%s", stderr1)
 	}
-	origID := extractCookID(stdout1)
+	origID := extractRunID(stdout1)
 	if origID == "" {
 		t.Fatal("no run id")
 	}
@@ -195,16 +195,16 @@ steps:
 	if authOut == "" {
 		t.Fatalf("first run should record auth impl: %+v", st1)
 	}
-	_, _, _ = runPudding(t, []string{"run", "spec.md", "--workflow", "r6-12", "--replay", "--from-step", "decompose/api/impl", "--agent-stub"}, envWithStubPath(), dir)
-	cooksDir := filepath.Join(dir, ".gump", "runs")
-	entries, _ := os.ReadDir(cooksDir)
+	_, _, _ = runGump(t, []string{"run", "spec.md", "--workflow", "r6-12", "--replay", "--from-step", "decompose/api/impl", "--agent-stub"}, envWithStubPath(), dir)
+	runsDir := filepath.Join(dir, ".gump", "runs")
+	entries, _ := os.ReadDir(runsDir)
 	var replayID string
 	var replayMtime int64
 	for _, e := range entries {
 		if !e.IsDir() || e.Name() == origID {
 			continue
 		}
-		info, err := os.Stat(filepath.Join(cooksDir, e.Name(), "manifest.ndjson"))
+		info, err := os.Stat(filepath.Join(runsDir, e.Name(), "manifest.ndjson"))
 		if err != nil {
 			continue
 		}
@@ -226,8 +226,8 @@ steps:
 func TestE2E_R6_07_ParallelMergeConflictMessage(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-plan.json", `[{"name":"t1","description":"one","files":["shared.go"]},{"name":"t2","description":"two","files":["shared.go"]}]`)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_step":{"impl":{"files":{"shared.go":"package main\n\nvar X = 1\n"}}}}`)
+	writeFile(t, dir, ".gump-test-plan.json", `[{"name":"t1","description":"one","files":["shared.go"]},{"name":"t2","description":"two","files":["shared.go"]}]`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"by_step":{"impl":{"files":{"shared.go":"package main\n\nvar X = 1\n"}}}}`)
 	os.MkdirAll(filepath.Join(dir, ".gump", "workflows"), 0755)
 	writeFile(t, dir, ".gump/workflows/r6-07.yaml", `name: r6-07
 steps:
@@ -245,7 +245,7 @@ steps:
         gate: [compile]
 `)
 	gitCommitAll(t, dir, "wf")
-	_, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "r6-07", "--agent-stub"}, envWithStubPath(), dir)
+	_, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "r6-07", "--agent-stub"}, envWithStubPath(), dir)
 	if code == 0 {
 		t.Fatal("expected merge conflict fatal")
 	}

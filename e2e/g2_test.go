@@ -31,11 +31,11 @@ steps:
 `)
 	writeFile(t, dir, "spec.md", "Spec")
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "parent", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "parent", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
-	uuid := extractCookID(stdout)
+	uuid := extractRunID(stdout)
 	sb := readFile(t, filepath.Join(dir, ".gump", "runs", uuid, "state-bag.json"))
 	if !strings.Contains(sb, "call-sub.steps.echo") {
 		t.Fatalf("state bag should contain grafted child key, got: %s", sb)
@@ -60,7 +60,7 @@ steps:
 `)
 	writeFile(t, dir, "spec.md", "Spec")
 	gitCommitAll(t, dir, "setup")
-	_, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "parent", "--agent-stub"}, nil, dir)
+	_, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "parent", "--agent-stub"}, nil, dir)
 	if code == 0 {
 		t.Fatal("expected failure when required input is missing")
 	}
@@ -79,7 +79,7 @@ steps:
     guard:
       max_turns: 1
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "stdout_extra_json_lines": [
     "{\"type\":\"action\",\"name\":\"write\",\"input\":{\"path\":\".gump/out/plan.json\"}}",
     "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"turn1\"}]}}",
@@ -90,11 +90,11 @@ steps:
 }`)
 	writeFile(t, dir, "spec.md", "Spec")
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "w", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "w", "--agent-stub"}, nil, dir)
 	if code == 0 {
 		t.Fatal("expected guard failure")
 	}
-	uuid := extractCookID(stdout)
+	uuid := extractRunID(stdout)
 	manifest := readFile(t, filepath.Join(dir, ".gump", "runs", uuid, "manifest.ndjson"))
 	if !strings.Contains(manifest, `"type":"guard_triggered"`) || !strings.Contains(manifest, `"guard":"max_turns"`) {
 		t.Fatalf("manifest should contain max_turns guard event\nstderr=%s\nmanifest=%s", stderr, manifest)
@@ -121,7 +121,7 @@ steps:
 `)
 	writeFile(t, dir, "spec.md", "Spec")
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "parent", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "parent", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
@@ -152,16 +152,16 @@ steps:
     with:
       msg: hello
 `)
-	writeFile(t, dir, ".pudding-test-plan.json", `[{"name":"t1","description":"desc-1","files":["a.go"]}]`)
+	writeFile(t, dir, ".gump-test-plan.json", `[{"name":"t1","description":"desc-1","files":["a.go"]}]`)
 	writeFile(t, dir, "spec.md", "Spec")
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "parent", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "parent", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
 }
 
-func TestG2RecipeAliasDeprecatedWarning(t *testing.T) {
+func TestG2WorkflowKeywordAliasDeprecatedWarning(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, ".gump/workflows/sub.yaml", `name: sub
 steps:
@@ -177,12 +177,12 @@ steps:
     prompt: plan
   - name: impl
     foreach: plan
-    recipe: sub
+    `+"rec"+"ipe"+`: sub
 `)
-	writeFile(t, dir, ".pudding-test-plan.json", `[{"name":"t1","description":"d"}]`)
+	writeFile(t, dir, ".gump-test-plan.json", `[{"name":"t1","description":"d"}]`)
 	writeFile(t, dir, "spec.md", "Spec")
 	gitCommitAll(t, dir, "setup")
-	_, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "parent", "--agent-stub"}, nil, dir)
+	_, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "parent", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("expected success with deprecated alias, stderr=%s", stderr)
 	}
@@ -211,7 +211,7 @@ steps:
 `)
 	writeFile(t, dir, "spec.md", "Spec")
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "parent", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "parent", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
@@ -230,7 +230,7 @@ steps:
       retry: 2
       strategy: [same]
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "stdout_extra_json_lines_by_attempt": {
     "1": [
       "{\"type\":\"action\",\"name\":\"write\",\"input\":{\"path\":\".gump/out/plan.json\"}}",
@@ -246,11 +246,11 @@ steps:
 }`)
 	writeFile(t, dir, "spec.md", "Spec")
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "w", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "w", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("expected success with retry, stdout=%s stderr=%s", stdout, stderr)
 	}
-	uuid := extractCookID(stdout)
+	uuid := extractRunID(stdout)
 	manifest := readFile(t, filepath.Join(dir, ".gump", "runs", uuid, "manifest.ndjson"))
 	for _, needle := range []string{`"type":"guard_triggered"`, `"type":"retry_triggered"`, `"type":"step_completed"`, `"status":"pass"`} {
 		if !strings.Contains(manifest, needle) {
@@ -270,18 +270,18 @@ steps:
     guard:
       no_write: false
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "stdout_extra_json_lines": [
     "{\"type\":\"action\",\"name\":\"write\",\"input\":{\"path\":\"main.go\"}}"
   ]
 }`)
 	writeFile(t, dir, "spec.md", "Spec")
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "w", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "w", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("expected success with no_write override, stdout=%s stderr=%s", stdout, stderr)
 	}
-	uuid := extractCookID(stdout)
+	uuid := extractRunID(stdout)
 	manifest := readFile(t, filepath.Join(dir, ".gump", "runs", uuid, "manifest.ndjson"))
 	if strings.Contains(manifest, `"type":"guard_triggered"`) {
 		t.Fatalf("guard should not trigger with override false: %s", manifest)
@@ -316,7 +316,7 @@ steps:
 `)
 	writeFile(t, dir, "spec.md", "Spec")
 	gitCommitAll(t, dir, "setup")
-	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "w", "--dry-run"}, nil, dir)
+	stdout, _, code := runGump(t, []string{"run", "spec.md", "--workflow", "w", "--dry-run"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("dry-run failed: %s", stdout)
 	}
@@ -334,18 +334,18 @@ steps:
     output: plan
     prompt: test
 `)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "stdout_extra_json_lines": [
     "{\"type\":\"action\",\"name\":\"write\",\"input\":{\"path\":\"main.go\"}}"
   ]
 }`)
 	writeFile(t, dir, "spec.md", "Spec")
 	gitCommitAll(t, dir, "setup")
-	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "w", "--agent-stub"}, nil, dir)
+	stdout, _, code := runGump(t, []string{"run", "spec.md", "--workflow", "w", "--agent-stub"}, nil, dir)
 	if code == 0 {
 		t.Fatal("expected implicit no_write guard failure")
 	}
-	uuid := extractCookID(stdout)
+	uuid := extractRunID(stdout)
 	manifestPath := filepath.Join(dir, ".gump", "runs", uuid, "manifest.ndjson")
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {

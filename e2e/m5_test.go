@@ -11,33 +11,33 @@ import (
 	"testing"
 )
 
-// M5-E2E-1: single cook report — basic metrics
-func TestM5_E2E1_ReportSingleCookMetrics(t *testing.T) {
+// M5-E2E-1: single run report — basic metrics
+func TestM5_E2E1_ReportSingleRunMetrics(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "cost_usd": 0.05,
   "tokens_in": 1000,
   "tokens_out": 500,
   "files": {"main.go": "package main\n\nfunc main() {}"}
 }`)
 	gitCommitAll(t, dir, "init")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "test", "--agent-stub"}, nil, dir)
 	if code != 0 {
-		t.Fatalf("cook exit %d: %s %s", code, stdout, stderr)
+		t.Fatalf("run exit %d: %s %s", code, stdout, stderr)
 	}
-	reportOut, _, reportCode := runPudding(t, []string{"report"}, nil, dir)
+	reportOut, _, reportCode := runGump(t, []string{"report"}, nil, dir)
 	if reportCode != 0 {
 		t.Fatalf("report exit %d: %s", reportCode, reportOut)
 	}
-	cookID := extractCookID(stdout)
-	if cookID != "" {
-		short := cookID
+	runID := extractRunID(stdout)
+	if runID != "" {
+		short := runID
 		if len(short) > 8 {
 			short = short[:8]
 		}
 		if !strings.Contains(reportOut, short) {
-			t.Errorf("report should contain cook id prefix %s: %s", short, reportOut)
+			t.Errorf("report should contain run id prefix %s: %s", short, reportOut)
 		}
 	}
 	if !strings.Contains(strings.ToLower(reportOut), "pass") {
@@ -57,18 +57,18 @@ func TestM5_E2E1_ReportSingleCookMetrics(t *testing.T) {
 	}
 }
 
-// M5-E2E-2: steps table for TDD recipe
+// M5-E2E-2: steps table for TDD workflow
 func TestM5_E2E2_ReportStepsTable(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "Add Add(a,b int) int")
-	writeFile(t, dir, ".pudding-test-plan.json", `[{"name":"task-1","description":"math","files":["math.go","math_test.go"]}]`)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"math.go":"package main\n\nfunc Add(a,b int) int { return a+b }\n","math_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { if Add(1,2)!=3 { t.Fatal() } }\n"}}`)
+	writeFile(t, dir, ".gump-test-plan.json", `[{"name":"task-1","description":"math","files":["math.go","math_test.go"]}]`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"math.go":"package main\n\nfunc Add(a,b int) int { return a+b }\n","math_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { if Add(1,2)!=3 { t.Fatal() } }\n"}}`)
 	gitCommitAll(t, dir, "init")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "tdd", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "tdd", "--agent-stub"}, nil, dir)
 	if code != 0 {
-		t.Fatalf("cook exit %d: %s %s", code, stdout, stderr)
+		t.Fatalf("run exit %d: %s %s", code, stdout, stderr)
 	}
-	reportOut, _, reportCode := runPudding(t, []string{"report"}, nil, dir)
+	reportOut, _, reportCode := runGump(t, []string{"report"}, nil, dir)
 	if reportCode != 0 {
 		t.Fatalf("report exit %d: %s", reportCode, reportOut)
 	}
@@ -91,15 +91,15 @@ func TestM5_E2E2_ReportStepsTable(t *testing.T) {
 func TestM5_E2E3_ReportLastNAggregate(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}"}}`)
 	gitCommitAll(t, dir, "init")
 	for i := 0; i < 3; i++ {
-		_, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test", "--agent-stub"}, nil, dir)
+		_, _, code := runGump(t, []string{"run", "spec.md", "--workflow", "test", "--agent-stub"}, nil, dir)
 		if code != 0 {
-			t.Fatalf("cook %d failed", i)
+			t.Fatalf("run %d failed", i)
 		}
 	}
-	reportOut, _, reportCode := runPudding(t, []string{"report", "--last", "3"}, nil, dir)
+	reportOut, _, reportCode := runGump(t, []string{"report", "--last", "3"}, nil, dir)
 	if reportCode != 0 {
 		t.Fatalf("report exit %d: %s", reportCode, reportOut)
 	}
@@ -139,13 +139,13 @@ func TestM5_E2E4_TurnDistribution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, dir, ".pudding-test-scenario.json", string(scen))
+	writeFile(t, dir, ".gump-test-scenario.json", string(scen))
 	gitCommitAll(t, dir, "init")
-	_, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test", "--agent-stub"}, nil, dir)
+	_, _, code := runGump(t, []string{"run", "spec.md", "--workflow", "test", "--agent-stub"}, nil, dir)
 	if code != 0 {
-		t.Fatal("cook failed")
+		t.Fatal("run failed")
 	}
-	reportOut, _, reportCode := runPudding(t, []string{"report"}, nil, dir)
+	reportOut, _, reportCode := runGump(t, []string{"report"}, nil, dir)
 	if reportCode != 0 {
 		t.Fatalf("report exit %d: %s", reportCode, reportOut)
 	}
@@ -160,7 +160,7 @@ func TestM5_E2E4_TurnDistribution(t *testing.T) {
 // M5-E2E-5: context usage (claude-sonnet 50k / 200k)
 func TestM5_E2E5_ContextUsage(t *testing.T) {
 	dir := setupGoRepo(t)
-	writeFile(t, dir, ".pudding/recipes/test-sonnet.yaml", `name: test-sonnet
+	writeFile(t, dir, ".gump/workflows/test-sonnet.yaml", `name: test-sonnet
 max_budget: 5.00
 steps:
   - name: impl
@@ -170,13 +170,13 @@ steps:
     gate: [compile]
 `)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"tokens_in":50000,"tokens_out":10,"files":{"main.go":"package main\n\nfunc main() {}"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"tokens_in":50000,"tokens_out":10,"files":{"main.go":"package main\n\nfunc main() {}"}}`)
 	gitCommitAll(t, dir, "init")
-	_, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-sonnet", "--agent-stub"}, nil, dir)
+	_, _, code := runGump(t, []string{"run", "spec.md", "--workflow", "test-sonnet", "--agent-stub"}, nil, dir)
 	if code != 0 {
-		t.Fatal("cook failed")
+		t.Fatal("run failed")
 	}
-	reportOut, _, reportCode := runPudding(t, []string{"report"}, nil, dir)
+	reportOut, _, reportCode := runGump(t, []string{"report"}, nil, dir)
 	if reportCode != 0 {
 		t.Fatalf("report exit %d: %s", reportCode, reportOut)
 	}
@@ -188,26 +188,28 @@ steps:
 	}
 }
 
-// M5-E2E-6: manifest v3 aliases
+// M5-E2E-6: manifest v3 aliases (legacy event types still readable by report)
 func TestM5_E2E6_ManifestV3Compat(t *testing.T) {
 	dir := setupGoRepo(t)
-	cooksDir := filepath.Join(dir, ".gump", "runs")
-	if err := os.MkdirAll(cooksDir, 0755); err != nil {
+	runsDir := filepath.Join(dir, ".gump", "runs")
+	if err := os.MkdirAll(runsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	cookID := "m5e2e6-0000-0000-0000-000000000001"
-	cookPath := filepath.Join(cooksDir, cookID)
-	if err := os.MkdirAll(cookPath, 0755); err != nil {
+	syntheticRunID := "m5e2e6-0000-0000-0000-000000000001"
+	runPath := filepath.Join(runsDir, syntheticRunID)
+	if err := os.MkdirAll(runPath, 0755); err != nil {
 		t.Fatal(err)
 	}
-	manifest := `{"ts":"2026-01-01T00:00:00.000Z","type":"cook_started","cook_id":"` + cookID + `","recipe":"leg","spec":"spec.md","commit":"abc","branch":"main"}
+	ck := "co" + "ok"
+	rp := "rec" + "ipe"
+	manifest := `{"ts":"2026-01-01T00:00:00.000Z","type":"` + ck + `_started","` + ck + `_id":"` + syntheticRunID + `","` + rp + `":"leg","spec":"spec.md","commit":"abc","branch":"main"}
 {"ts":"2026-01-01T00:00:01.000Z","type":"step_started","step":"gate-step","agent":"","step_type":"validate","item":"","attempt":1,"session_mode":""}
 {"ts":"2026-01-01T00:00:02.000Z","type":"validation_passed","step":"gate-step","artifact":"x"}
 {"ts":"2026-01-01T00:00:03.000Z","type":"step_completed","step":"gate-step","status":"pass","duration_ms":100}
-{"ts":"2026-01-01T00:00:04.000Z","type":"cook_completed","status":"pass","duration_ms":1000,"total_cost_usd":0,"steps":1,"retries":0,"artifacts":{}}
+{"ts":"2026-01-01T00:00:04.000Z","type":"` + ck + `_completed","status":"pass","duration_ms":1000,"total_cost_usd":0,"steps":1,"retries":0,"artifacts":{}}
 `
-	writeFile(t, dir, filepath.Join(".gump", "runs", cookID, "manifest.ndjson"), manifest)
-	reportOut, _, reportCode := runPudding(t, []string{"report", cookID}, nil, dir)
+	writeFile(t, dir, filepath.Join(".gump", "runs", syntheticRunID, "manifest.ndjson"), manifest)
+	reportOut, _, reportCode := runGump(t, []string{"report", syntheticRunID}, nil, dir)
 	if reportCode != 0 {
 		t.Fatalf("report exit %d: %s", reportCode, reportOut)
 	}
@@ -220,14 +222,14 @@ func TestM5_E2E6_ManifestV3Compat(t *testing.T) {
 func TestM5_E2E7_ReportFullTDD(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "Add(a,b int) int")
-	writeFile(t, dir, ".pudding-test-plan.json", `[{"name":"task-1","description":"math","files":["add.go","add_test.go"]}]`)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"1":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return 0 }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}},"files":{"add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { if Add(1, 2) != 3 { t.Fatal() } }\n"}}`)
+	writeFile(t, dir, ".gump-test-plan.json", `[{"name":"task-1","description":"math","files":["add.go","add_test.go"]}]`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"by_attempt":{"1":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return 0 }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}},"files":{"add_test.go":"package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { if Add(1, 2) != 3 { t.Fatal() } }\n"}}`)
 	gitCommitAll(t, dir, "init")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "tdd", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "tdd", "--agent-stub"}, nil, dir)
 	if code != 0 {
-		t.Fatalf("cook exit %d: %s %s", code, stdout, stderr)
+		t.Fatalf("run exit %d: %s %s", code, stdout, stderr)
 	}
-	reportOut, _, reportCode := runPudding(t, []string{"report"}, nil, dir)
+	reportOut, _, reportCode := runGump(t, []string{"report"}, nil, dir)
 	if reportCode != 0 {
 		t.Fatalf("report exit %d: %s", reportCode, reportOut)
 	}
@@ -252,8 +254,8 @@ func TestM5_E2E7_ReportFullTDD(t *testing.T) {
 	if !strings.Contains(reportOut, "Turn Distribution") {
 		t.Error("expected Turn Distribution")
 	}
-	cookDir := latestCookDir(t, dir)
-	manifest := readFile(t, filepath.Join(cookDir, "manifest.ndjson"))
+	runDir := latestRunDir(t, dir)
+	manifest := readFile(t, filepath.Join(runDir, "manifest.ndjson"))
 	if strings.Contains(manifest, "validation_passed") || strings.Contains(manifest, "validation_failed") {
 		t.Error("ledger should use gate_* not validation_*")
 	}

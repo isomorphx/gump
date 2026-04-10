@@ -19,7 +19,7 @@ import (
 	"github.com/isomorphx/gump/internal/workflow"
 )
 
-func findResumableCook(repoRoot, runID string) (string, string, error) {
+func findResumableRun(repoRoot, runID string) (string, string, error) {
 	runsDir := filepath.Join(repoRoot, brand.StateDir(), brand.RunsDir())
 	entries, err := os.ReadDir(runsDir)
 	if err != nil {
@@ -134,15 +134,15 @@ func parseManifestForResume(manifestPath string) (fatalStep string, passed map[s
 
 // RunResume resumes a failed run in-place (worktree preserved).
 func RunResume(repoRoot, runID string, resolver agent.AdapterResolver, cfg *config.Config, agentsCLI map[string]string) (*run.Run, int, error) {
-	cookDir, previousStatus, err := findResumableCook(repoRoot, runID)
+	runDir, previousStatus, err := findResumableRun(repoRoot, runID)
 	if err != nil {
 		return nil, 0, err
 	}
-	stateJSONPath := filepath.Join(cookDir, "state.json")
-	legacyStatePath := filepath.Join(cookDir, "state-bag.json")
-	manifestPath := filepath.Join(cookDir, "manifest.ndjson")
-	workflowPath := filepath.Join(cookDir, "workflow-snapshot.yaml")
-	ctxPath := filepath.Join(cookDir, "context-snapshot.json")
+	stateJSONPath := filepath.Join(runDir, "state.json")
+	legacyStatePath := filepath.Join(runDir, "state-bag.json")
+	manifestPath := filepath.Join(runDir, "manifest.ndjson")
+	workflowPath := filepath.Join(runDir, "workflow-snapshot.yaml")
+	ctxPath := filepath.Join(runDir, "context-snapshot.json")
 	if _, err := os.Stat(stateJSONPath); err != nil {
 		if _, err2 := os.Stat(legacyStatePath); err2 != nil {
 			return nil, 0, fmt.Errorf("resume precondition failed: state.json (or legacy state-bag.json) missing. Fix: re-run from scratch or clean stale runs with `gump gc --keep-last 1`")
@@ -161,7 +161,7 @@ func RunResume(repoRoot, runID string, resolver agent.AdapterResolver, cfg *conf
 	}
 	ctxData, _ := os.ReadFile(ctxPath)
 	_ = json.Unmarshal(ctxData, &ctx)
-	stateData, err := run.ReadStateFile(cookDir)
+	stateData, err := run.ReadStateFile(runDir)
 	if err != nil {
 		return nil, 0, fmt.Errorf("read state: %w", err)
 	}
@@ -184,8 +184,8 @@ func RunResume(repoRoot, runID string, resolver agent.AdapterResolver, cfg *conf
 	if err != nil {
 		return nil, 0, err
 	}
-	cookID := filepath.Base(cookDir)
-	wt := filepath.Join(repoRoot, brand.StateDir(), "worktrees", brand.WorktreeDirPrefix()+cookID)
+	resumeRunID := filepath.Base(runDir)
+	wt := filepath.Join(repoRoot, brand.StateDir(), "worktrees", brand.WorktreeDirPrefix()+resumeRunID)
 	if _, err := os.Stat(wt); err != nil {
 		return nil, 0, fmt.Errorf("resume precondition failed: worktree missing (%s). Fix: clear stale runs with `gump gc --keep-last 1`", wt)
 	}
@@ -198,9 +198,9 @@ func RunResume(repoRoot, runID string, resolver agent.AdapterResolver, cfg *conf
 	wtHead, _ := sandbox.HeadCommit(wt)
 	branchName, _ := sandbox.CurrentBranch(wt)
 	if strings.TrimSpace(branchName) == "" {
-		branchName = brand.WorktreeBranchPrefix() + cookID
+		branchName = brand.WorktreeBranchPrefix() + resumeRunID
 	}
-	led, err := ledger.New(cookDir, cookID)
+	led, err := ledger.New(runDir, resumeRunID)
 	if err != nil {
 		return nil, 0, fmt.Errorf("open ledger: %w", err)
 	}
@@ -209,7 +209,7 @@ func RunResume(repoRoot, runID string, resolver agent.AdapterResolver, cfg *conf
 		return nil, 0, err
 	}
 	c := &run.Run{
-		ID:            cookID,
+		ID:            resumeRunID,
 		Workflow:      rec,
 		WorkflowName:  rec.Name,
 		SpecPath:      specPath,
@@ -220,7 +220,7 @@ func RunResume(repoRoot, runID string, resolver agent.AdapterResolver, cfg *conf
 		BaseCommit:    wtHead,
 		WorktreeDir:   wt,
 		BranchName:    branchName,
-		RunDir:        cookDir,
+		RunDir:        runDir,
 		Status:        "running",
 		StartedAt:     time.Now(),
 		Ledger:        led,

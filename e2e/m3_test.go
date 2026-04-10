@@ -15,9 +15,9 @@ import (
 	"time"
 )
 
-func countStepStartedForName(t *testing.T, cookDir, name string) int {
+func countStepStartedForName(t *testing.T, runDir, name string) int {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(cookDir, "manifest.ndjson"))
+	data, err := os.ReadFile(filepath.Join(runDir, "manifest.ndjson"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,12 +41,12 @@ func countStepStartedForName(t *testing.T, cookDir, name string) int {
 	return n
 }
 
-func latestCookDir(t *testing.T, repoRoot string) string {
+func latestRunDir(t *testing.T, repoRoot string) string {
 	t.Helper()
-	cooksDir := filepath.Join(repoRoot, ".gump", "runs")
-	entries, err := os.ReadDir(cooksDir)
+	runsDir := filepath.Join(repoRoot, ".gump", "runs")
+	entries, err := os.ReadDir(runsDir)
 	if err != nil {
-		t.Fatalf("list cooks: %v", err)
+		t.Fatalf("list runs: %v", err)
 	}
 	type ent struct {
 		name  string
@@ -64,16 +64,16 @@ func latestCookDir(t *testing.T, repoRoot string) string {
 		dirs = append(dirs, ent{e.Name(), info.ModTime()})
 	}
 	if len(dirs) == 0 {
-		t.Fatal("no cook dirs in .pudding/cooks")
+		t.Fatal("no run dirs in .gump/runs")
 	}
 	sort.Slice(dirs, func(i, j int) bool { return dirs[i].mtime.After(dirs[j].mtime) })
-	return filepath.Join(cooksDir, dirs[0].name)
+	return filepath.Join(runsDir, dirs[0].name)
 }
 
 // M3-E2E-1: gate / on_failure — retry v4
 func TestM3_E2E1_GateOnFailureRetry(t *testing.T) {
 	dir := setupGoRepo(t)
-	writeFile(t, dir, ".pudding/recipes/test-m3-r1.yaml", `name: test-m3-r1
+	writeFile(t, dir, ".gump/workflows/test-m3-r1.yaml", `name: test-m3-r1
 description: M3 retry v4
 steps:
   - name: code
@@ -87,15 +87,15 @@ steps:
       strategy: [same]
 `)
 	writeFile(t, dir, "spec.md", "Add")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"1":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { INVALID }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"by_attempt":{"1":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { INVALID }\n"}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}}}`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m3-r1", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "test-m3-r1", "--agent-stub"}, nil, dir)
 	combined := stdout + stderr
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, combined)
 	}
-	cookDir := latestCookDir(t, dir)
-	manifest := readFile(t, filepath.Join(cookDir, "manifest.ndjson"))
+	runDir := latestRunDir(t, dir)
+	manifest := readFile(t, filepath.Join(runDir, "manifest.ndjson"))
 	if !strings.Contains(manifest, "retry_triggered") {
 		t.Error("ledger should contain retry_triggered")
 	}
@@ -110,7 +110,7 @@ steps:
 // M3-E2E-2: restart_from after gate failure — code runs again with prior failure context.
 func TestM3_E2E2_RestartFrom(t *testing.T) {
 	dir := setupGoRepo(t)
-	writeFile(t, dir, ".pudding/recipes/test-m3-rf.yaml", `name: test-m3-rf
+	writeFile(t, dir, ".gump/workflows/test-m3-rf.yaml", `name: test-m3-rf
 steps:
   - name: code
     agent: claude-haiku
@@ -130,7 +130,7 @@ steps:
       restart_from: code
 `)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "files": {"main.go": "package main\n\nfunc main() {}\n"},
   "by_step": {
     "gatefail": {"files": {"bad.go": "package main\n\nfunc x() { BAD }\n"}}
@@ -140,12 +140,12 @@ steps:
   }
 }`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m3-rf", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "test-m3-rf", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}
-	cookDir := latestCookDir(t, dir)
-	if countStepStartedForName(t, cookDir, "code") < 2 {
+	runDir := latestRunDir(t, dir)
+	if countStepStartedForName(t, runDir, "code") < 2 {
 		t.Errorf("expected code to run at least twice after restart_from")
 	}
 }
@@ -153,7 +153,7 @@ steps:
 // M3-E2E-3: output review pass
 func TestM3_E2E3_ReviewPass(t *testing.T) {
 	dir := setupGoRepo(t)
-	writeFile(t, dir, ".pudding/recipes/test-m3-rev.yaml", `name: test-m3-rev
+	writeFile(t, dir, ".gump/workflows/test-m3-rev.yaml", `name: test-m3-rev
 steps:
   - name: impl
     agent: claude-haiku
@@ -166,14 +166,14 @@ steps:
     prompt: "Review"
 `)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m3-rev", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "test-m3-rev", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}
-	cookDir := latestCookDir(t, dir)
-	sb := readFile(t, filepath.Join(cookDir, "state-bag.json"))
+	runDir := latestRunDir(t, dir)
+	sb := readFile(t, filepath.Join(runDir, "state-bag.json"))
 	if !strings.Contains(sb, "check") {
 		t.Error("state-bag should reference check step")
 	}
@@ -182,7 +182,7 @@ steps:
 // M3-E2E-4: review fail → restart_from — review.json per restart cycle, then pass.
 func TestM3_E2E4_ReviewFailRestart(t *testing.T) {
 	dir := setupGoRepo(t)
-	writeFile(t, dir, ".pudding/recipes/test-m3-rvrf.yaml", `name: test-m3-rvrf
+	writeFile(t, dir, ".gump/workflows/test-m3-rvrf.yaml", `name: test-m3-rvrf
 steps:
   - name: code
     agent: claude-haiku
@@ -201,7 +201,7 @@ steps:
       restart_from: code
 `)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "files": {"main.go": "package main\n\nfunc main() {}\n"},
   "review_by_cycle": {
     "0": "{\"pass\":false,\"comment\":\"fix the code\"}",
@@ -209,21 +209,21 @@ steps:
   }
 }`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m3-rvrf", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "test-m3-rvrf", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}
-	cookDir := latestCookDir(t, dir)
-	sb := readFile(t, filepath.Join(cookDir, "state-bag.json"))
+	runDir := latestRunDir(t, dir)
+	sb := readFile(t, filepath.Join(runDir, "state-bag.json"))
 	if !strings.Contains(sb, "fix the code") && !strings.Contains(sb, "pass") {
 		t.Errorf("state-bag should retain failed review output: %s", sb)
 	}
 }
 
-// M3-E2E-5: max_budget cook
-func TestM3_E2E5_MaxBudgetCook(t *testing.T) {
+// M3-E2E-5: max_budget run
+func TestM3_E2E5_MaxBudgetRun(t *testing.T) {
 	dir := setupGoRepo(t)
-	writeFile(t, dir, ".pudding/recipes/test-m3-bud.yaml", `name: test-m3-bud
+	writeFile(t, dir, ".gump/workflows/test-m3-bud.yaml", `name: test-m3-bud
 max_budget: 0.10
 steps:
   - name: code
@@ -232,9 +232,9 @@ steps:
     prompt: "x"
 `)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"cost_usd": 0.15}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"cost_usd": 0.15}`)
 	gitCommitAll(t, dir, "setup")
-	_, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m3-bud", "--agent-stub"}, nil, dir)
+	_, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "test-m3-bud", "--agent-stub"}, nil, dir)
 	if code == 0 {
 		t.Fatal("expected non-zero exit on budget")
 	}
@@ -246,7 +246,7 @@ steps:
 // M3-E2E-6: step max_budget
 func TestM3_E2E6_StepBudget(t *testing.T) {
 	dir := setupGoRepo(t)
-	writeFile(t, dir, ".pudding/recipes/test-m3-sb.yaml", `name: test-m3-sb
+	writeFile(t, dir, ".gump/workflows/test-m3-sb.yaml", `name: test-m3-sb
 steps:
   - name: cheap
     agent: claude-haiku
@@ -255,9 +255,9 @@ steps:
     prompt: "x"
 `)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"cost_usd_by_step":{"cheap":0.08}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"cost_usd_by_step":{"cheap":0.08}}`)
 	gitCommitAll(t, dir, "setup")
-	_, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m3-sb", "--agent-stub"}, nil, dir)
+	_, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "test-m3-sb", "--agent-stub"}, nil, dir)
 	if code == 0 {
 		t.Fatal("expected non-zero exit")
 	}
@@ -269,7 +269,7 @@ steps:
 // M3-E2E-7: HITL pause
 func TestM3_E2E7_HITL(t *testing.T) {
 	dir := setupGoRepo(t)
-	writeFile(t, dir, ".pudding/recipes/test-m3-hitl.yaml", `name: test-m3-hitl
+	writeFile(t, dir, ".gump/workflows/test-m3-hitl.yaml", `name: test-m3-hitl
 steps:
   - name: code
     agent: claude-haiku
@@ -279,7 +279,7 @@ steps:
     gate: [compile]
 `)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files":{"main.go":"package main\n\nfunc main() {}\n"}}`)
 	gitCommitAll(t, dir, "setup")
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -312,7 +312,7 @@ steps:
 // M3-E2E-8: {steps.X.files} in state bag / prompt
 func TestM3_E2E8_StepFiles(t *testing.T) {
 	dir := setupGoRepo(t)
-	writeFile(t, dir, ".pudding/recipes/test-m3-files.yaml", `name: test-m3-files
+	writeFile(t, dir, ".gump/workflows/test-m3-files.yaml", `name: test-m3-files
 steps:
   - name: code
     agent: claude-haiku
@@ -324,21 +324,21 @@ steps:
     prompt: "Files changed: {steps.code.files}"
 `)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_step":{"code":{"files":{"hello.go":"package main\n\nfunc Hello() {}\n","hello_test.go":"package main\n\nimport \"testing\"\n\nfunc TestHello(t *testing.T) {}\n"}}}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"by_step":{"code":{"files":{"hello.go":"package main\n\nfunc Hello() {}\n","hello_test.go":"package main\n\nimport \"testing\"\n\nfunc TestHello(t *testing.T) {}\n"}}}}`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m3-files", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "test-m3-files", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}
-	uuid := extractCookID(stdout)
+	uuid := extractRunID(stdout)
 	wt := filepath.Join(dir, ".gump", "worktrees", "run-"+uuid)
 	claude := filepath.Join(wt, "CLAUDE.md")
 	body := readFile(t, claude)
 	if !strings.Contains(body, "hello.go") || !strings.Contains(body, "hello_test.go") {
 		t.Error("review context should list files from steps.code.files")
 	}
-	cookDir := latestCookDir(t, dir)
-	sb := readFile(t, filepath.Join(cookDir, "state-bag.json"))
+	runDir := latestRunDir(t, dir)
+	sb := readFile(t, filepath.Join(runDir, "state-bag.json"))
 	if !strings.Contains(sb, "hello.go") || !strings.Contains(sb, `"files"`) {
 		t.Errorf("state-bag should list changed files for code: %s", sb)
 	}
@@ -347,7 +347,7 @@ steps:
 // M3-E2E-9: session_id in state bag
 func TestM3_E2E9_SessionIDStateBag(t *testing.T) {
 	dir := setupGoRepo(t)
-	writeFile(t, dir, ".pudding/recipes/test-m3-sid.yaml", `name: test-m3-sid
+	writeFile(t, dir, ".gump/workflows/test-m3-sid.yaml", `name: test-m3-sid
 steps:
   - name: code
     agent: claude-haiku
@@ -359,14 +359,14 @@ steps:
     prompt: "y"
 `)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"session_id_by_step":{"code":"test-session-abc"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"session_id_by_step":{"code":"test-session-abc"}}`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m3-sid", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "test-m3-sid", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}
-	cookDir := latestCookDir(t, dir)
-	sb := readFile(t, filepath.Join(cookDir, "state-bag.json"))
+	runDir := latestRunDir(t, dir)
+	sb := readFile(t, filepath.Join(runDir, "state-bag.json"))
 	if !strings.Contains(sb, "test-session-abc") {
 		t.Error("state-bag should contain code session_id")
 	}
@@ -375,7 +375,7 @@ steps:
 // M3-E2E-10: default session fresh (empty session_id on launch)
 func TestM3_E2E10_SessionFreshDefault(t *testing.T) {
 	dir := setupGoRepo(t)
-	writeFile(t, dir, ".pudding/recipes/test-m3-fresh.yaml", `name: test-m3-fresh
+	writeFile(t, dir, ".gump/workflows/test-m3-fresh.yaml", `name: test-m3-fresh
 steps:
   - name: code
     agent: claude-haiku
@@ -387,14 +387,14 @@ steps:
     prompt: "b"
 `)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"unique_session_each_call": true}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"unique_session_each_call": true}`)
 	gitCommitAll(t, dir, "setup")
-	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m3-fresh", "--agent-stub"}, nil, dir)
+	stdout, _, code := runGump(t, []string{"run", "spec.md", "--workflow", "test-m3-fresh", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stdout)
 	}
-	cookDir := latestCookDir(t, dir)
-	data := readFile(t, filepath.Join(cookDir, "manifest.ndjson"))
+	runDir := latestRunDir(t, dir)
+	data := readFile(t, filepath.Join(runDir, "manifest.ndjson"))
 	// WHY: fresh session omits or zeroes session_id on launch; match either form in NDJSON.
 	nEmpty := strings.Count(data, `"session_id":""`) + strings.Count(data, `"session_id": ""`)
 	if nEmpty < 2 {
@@ -408,7 +408,7 @@ steps:
 // M3-E2E-11: reuse-on-retry + restart_from — second pass through review resumes session when configured.
 func TestM3_E2E11_ReuseOnRetryRestart(t *testing.T) {
 	dir := setupGoRepo(t)
-	writeFile(t, dir, ".pudding/recipes/test-m3-r11.yaml", `name: test-m3-r11
+	writeFile(t, dir, ".gump/workflows/test-m3-r11.yaml", `name: test-m3-r11
 steps:
   - name: code
     agent: claude-haiku
@@ -429,7 +429,7 @@ steps:
       restart_from: code
 `)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "files": {"main.go": "package main\n\nfunc main() {}\n"},
   "session_id_by_step": {"review": "sess-reuse-test"},
   "review_by_cycle": {
@@ -438,12 +438,12 @@ steps:
   }
 }`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m3-r11", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "test-m3-r11", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}
-	cookDir := latestCookDir(t, dir)
-	data := readFile(t, filepath.Join(cookDir, "manifest.ndjson"))
+	runDir := latestRunDir(t, dir)
+	data := readFile(t, filepath.Join(runDir, "manifest.ndjson"))
 	if !strings.Contains(data, "sess-reuse-test") {
 		t.Error("manifest should record review session id for reuse-on-retry")
 	}

@@ -201,7 +201,7 @@ func TestM1_8_TemplateItemVarsRemoved(t *testing.T) {
 func TestM1_9_DryRunFormatV4(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "Implement a hello world function")
-	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "tdd", "--dry-run"}, nil, dir)
+	stdout, _, code := runGump(t, []string{"run", "spec.md", "--workflow", "tdd", "--dry-run"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stdout)
 	}
@@ -227,7 +227,7 @@ steps:
     agent: claude-opus
     prompt: "Use {impl.output}"
 `)
-	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "statebag", "--dry-run"}, nil, dir)
+	stdout, _, code := runGump(t, []string{"run", "spec.md", "--workflow", "statebag", "--dry-run"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stdout)
 	}

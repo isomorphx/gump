@@ -107,8 +107,8 @@ func writeFile(t *testing.T, repoDir, relPath, content string) {
 	runGit(t, repoDir, "commit", "-m", "add "+relPath)
 }
 
-// writeRecipe writes a custom workflow so smoke tests can use their own steps.
-func writeRecipe(t *testing.T, repoDir, name, yaml string) {
+// writeWorkflow writes a custom workflow YAML under .gump/workflows/ for smoke tests.
+func writeWorkflow(t *testing.T, repoDir, name, yaml string) {
 	t.Helper()
 	workflowsDir := filepath.Join(repoDir, ".gump", "workflows")
 	if err := os.MkdirAll(workflowsDir, 0755); err != nil {

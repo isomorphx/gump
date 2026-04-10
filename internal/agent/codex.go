@@ -21,7 +21,7 @@ const (
 	truncTool      = 100
 )
 
-// codexAgentToModel maps recipe agent names to Codex -m flag so users get predictable models without knowing CLI identifiers.
+// codexAgentToModel maps workflow agent names to Codex -m flag so users get predictable models without knowing CLI identifiers.
 var codexAgentToModel = map[string]string{
 	"codex-gpt54":       "gpt-5.4",
 	"codex-gpt54-mini":  "gpt-5.4-mini",

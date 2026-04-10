@@ -9,7 +9,7 @@ import (
 	"github.com/isomorphx/gump/internal/diff"
 )
 
-// RunTouchedValidator ensures at least one file matching the glob was changed so recipes can require test file edits.
+// RunTouchedValidator ensures at least one file matching the glob was changed so workflows can require test file edits.
 func RunTouchedValidator(glob string, dc *diff.DiffContract) *SingleResult {
 	name := "touched: " + glob
 	if dc == nil || len(dc.FilesChanged) == 0 {
@@ -29,7 +29,7 @@ func RunTouchedValidator(glob string, dc *diff.DiffContract) *SingleResult {
 	}
 }
 
-// RunUntouchedValidator ensures no file matching the glob was changed so recipes can forbid editing certain files.
+// RunUntouchedValidator ensures no file matching the glob was changed so workflows can forbid editing certain files.
 func RunUntouchedValidator(glob string, dc *diff.DiffContract) *SingleResult {
 	name := "untouched: " + glob
 	if dc == nil || len(dc.FilesChanged) == 0 {

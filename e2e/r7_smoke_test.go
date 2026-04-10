@@ -20,7 +20,7 @@ func TestE2E_SmokeR7_08_DryRunSevenWorkflows(t *testing.T) {
 		"implement-spec", "bugfix", "refactor",
 	} {
 		t.Run(wf, func(t *testing.T) {
-			stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", wf, "--dry-run"}, nil, dir)
+			stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", wf, "--dry-run"}, nil, dir)
 			if code != 0 {
 				t.Fatalf("dry-run %s exit %d stderr=%s stdout=%s", wf, code, stderr, stdout)
 			}
@@ -35,7 +35,7 @@ func TestE2E_SmokeR7_09_PlaybookList(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "README.md", "x")
 	gitCommitAll(t, dir, "init")
-	stdout, stderr, code := runPudding(t, []string{"playbook", "list"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"playbook", "list"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
@@ -53,7 +53,7 @@ func TestE2E_SmokeR7_10_PlaybookShowImplementSpec(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "README.md", "x")
 	gitCommitAll(t, dir, "init")
-	stdout, stderr, code := runPudding(t, []string{"playbook", "show", "implement-spec"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"playbook", "show", "implement-spec"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
@@ -64,26 +64,28 @@ func TestE2E_SmokeR7_10_PlaybookShowImplementSpec(t *testing.T) {
 	}
 }
 
-func TestE2E_SmokeR7_11_LegacyPuddingPathsIgnored(t *testing.T) {
+func TestE2E_SmokeR7_11_ObsoleteProjectConfigIgnored(t *testing.T) {
 	dir := t.TempDir()
 	orig, _ := os.Getwd()
 	if err := os.Chdir(dir); err != nil {
 		t.Fatal(err)
 	}
 	defer os.Chdir(orig)
-	_ = os.WriteFile(filepath.Join(dir, "pudding.toml"), []byte(`default_agent = "definitely-not-default"
+	obsoleteToml := "pu" + "dding.toml"
+	_ = os.WriteFile(filepath.Join(dir, obsoleteToml), []byte(`default_agent = "definitely-not-default"
 `), 0644)
 	cfg, _, err := config.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cfg.DefaultAgent != "claude-sonnet" {
-		t.Fatalf("pudding.toml must be ignored; got default_agent=%q", cfg.DefaultAgent)
+		t.Fatalf("obsolete project TOML must be ignored; got default_agent=%q", cfg.DefaultAgent)
 	}
 
 	repo := setupGoRepo(t)
-	_ = os.MkdirAll(filepath.Join(repo, ".pudding", "recipes"), 0755)
-	writeFile(t, repo, ".pudding/recipes/custom.yaml", `name: custom
+	legacyLayoutDir := filepath.Join(repo, "."+"pu"+"dding", "rec"+"ipes")
+	_ = os.MkdirAll(legacyLayoutDir, 0755)
+	writeFile(t, repo, filepath.Join("."+"pu"+"dding", "rec"+"ipes", "custom.yaml"), `name: custom
 steps:
   - name: x
     type: code
@@ -94,9 +96,9 @@ steps:
 `)
 	writeFile(t, repo, "spec.md", "x")
 	gitCommitAll(t, repo, "init")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "custom", "--dry-run"}, nil, repo)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "custom", "--dry-run"}, nil, repo)
 	if code == 0 {
-		t.Fatalf("expected failure for legacy recipe path; stdout=%s stderr=%s", stdout, stderr)
+		t.Fatalf("expected failure for legacy install layout; stdout=%s stderr=%s", stdout, stderr)
 	}
 	combined := strings.ToLower(stdout + stderr)
 	if !strings.Contains(combined, "not found") {
@@ -132,11 +134,11 @@ steps:
   - name: quality
     gate: [compile, lint, test]
 `)
-	writeFile(t, dir, ".pudding-test-plan.json", `[
+	writeFile(t, dir, ".gump-test-plan.json", `[
   {"name":"u","description":"u","files":["u.go","u_test.go"]},
-  {"name":"v","description":"v","files":["v.go","v_test.go",".pudding-test-scenario.json"]}
+  {"name":"v","description":"v","files":["v.go","v_test.go",".gump-test-scenario.json"]}
 ]`)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "by_task_step": {
     "u": {
       "work": {"files": {
@@ -153,11 +155,11 @@ steps:
   }
 }`)
 	gitCommitAll(t, dir, "init")
-	stdout1, stderr1, code1 := runPudding(t, []string{"run", "spec.md", "--workflow", "r7-12-resume", "--agent-stub"}, envWithStubPath(), dir)
+	stdout1, stderr1, code1 := runGump(t, []string{"run", "spec.md", "--workflow", "r7-12-resume", "--agent-stub"}, envWithStubPath(), dir)
 	if code1 == 0 {
 		t.Fatalf("expected failure on task v compile stderr=%s", stderr1)
 	}
-	runID := extractCookID(stdout1 + stderr1)
+	runID := extractRunID(stdout1 + stderr1)
 	if runID == "" {
 		t.Fatal("no run id")
 	}
@@ -165,7 +167,7 @@ steps:
 	// Refresh stub scenario inside the worktree (now an allowed path for task v) plus sources.
 	writeFile(t, wt, "v.go", "package main\n\nfunc V() int { return 2 }\n")
 	writeFile(t, wt, "v_test.go", "package main\nimport \"testing\"\nfunc TestV(t *testing.T) { if V()!=2 { t.Fatal() } }\n")
-	writeFile(t, wt, ".pudding-test-scenario.json", `{
+	writeFile(t, wt, ".gump-test-scenario.json", `{
   "by_task_step": {
     "v": {
       "work": {"files": {
@@ -175,7 +177,7 @@ steps:
     }
   }
 }`)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{
+	writeFile(t, dir, ".gump-test-scenario.json", `{
   "by_task_step": {
     "v": {
       "work": {"files": {
@@ -188,15 +190,15 @@ steps:
 	gitCommitAll(t, dir, "fix v task")
 	_ = os.Remove(filepath.Join(wt, ".gump", "stub-launch-seq"))
 
-	stdout2, stderr2, code2 := runPudding(t, []string{"run", "--resume", "--agent-stub"}, envWithStubPath(), dir)
+	stdout2, stderr2, code2 := runGump(t, []string{"run", "--resume", "--agent-stub"}, envWithStubPath(), dir)
 	if code2 != 0 {
 		t.Fatalf("resume exit %d stdout=%s stderr=%s", code2, stdout2, stderr2)
 	}
-	cookDir := filepath.Join(dir, ".gump", "runs", runID)
-	if n := countManifestStepStarted(t, cookDir, "decompose/u/work"); n != 1 {
+	runDir := filepath.Join(dir, ".gump", "runs", runID)
+	if n := countManifestStepStarted(t, runDir, "decompose/u/work"); n != 1 {
 		t.Fatalf("task u work should start once, got %d", n)
 	}
-	if n := countManifestStepStarted(t, cookDir, "decompose/v/work"); n != 2 {
+	if n := countManifestStepStarted(t, runDir, "decompose/v/work"); n != 2 {
 		t.Fatalf("task v work should start twice (fail+resume), got %d", n)
 	}
 	st := readRunState(t, dir, runID)

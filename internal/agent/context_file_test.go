@@ -68,7 +68,7 @@ func TestWriteWithBackup_BackupFilename(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	backupPath := filepath.Join(dir, ".pudding-original-AGENTS.md")
+	backupPath := filepath.Join(dir, ".gump-original-AGENTS.md")
 	data, err := os.ReadFile(backupPath)
 	if err != nil {
 		t.Fatalf("backup should exist: %v", err)
@@ -112,10 +112,10 @@ func TestRemoveOtherContextFiles(t *testing.T) {
 
 func TestRestoreAllContextFiles(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("pudding content"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("legacy agent file body"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	backupPath := filepath.Join(dir, ".pudding-original-AGENTS.md")
+	backupPath := filepath.Join(dir, ".gump-original-AGENTS.md")
 	if err := os.WriteFile(backupPath, []byte("# My Project Rules"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -146,10 +146,10 @@ func TestRestoreAllContextFiles_RemovesCursorRule(t *testing.T) {
 
 func TestRestoreAllContextFiles_LegacyLowercaseBackup(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("pudding content"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("legacy agent file body"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	legacyPath := filepath.Join(dir, ".pudding-original-agents.md")
+	legacyPath := filepath.Join(dir, ".gump-original-agents.md")
 	if err := os.WriteFile(legacyPath, []byte("# Legacy backup"), 0644); err != nil {
 		t.Fatal(err)
 	}

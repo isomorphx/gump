@@ -24,11 +24,11 @@ var liveTurnNumber int
 var liveTurnWidth int
 var carriageReturnEnabled *bool
 
-// CookHeader prints the run box header (Feature 12).
-func CookHeader(recipeName, cookID, spec string) {
-	title := fmt.Sprintf("%s (run %s)", recipeName, cookID)
+// RunHeader prints the run box header (Feature 12).
+func RunHeader(workflowName, runID, spec string) {
+	title := fmt.Sprintf("%s (run %s)", workflowName, runID)
 	if len(title) > 45 {
-		title = recipeName + " (run " + cookID[:8] + "…)"
+		title = workflowName + " (run " + runID[:8] + "…)"
 	}
 	nDash := boxWidth - 4 - len(title) // "╭─ " + title + " " + "╮"
 	if nDash < 0 {
@@ -149,8 +149,8 @@ func RetryTriggerLine(retryInfo string) {
 	}
 }
 
-// CookFooter prints the footer block (pass or fatal). stepTotal 0 means show only N steps.
-func CookFooter(pass bool, totalCost float64, steps, stepTotal, retries int, duration time.Duration, fatalStep, errMsg, worktreePreserved string) {
+// RunFooter prints the footer block (pass or fatal). stepTotal 0 means show only N steps.
+func RunFooter(pass bool, totalCost float64, steps, stepTotal, retries int, duration time.Duration, fatalStep, errMsg, worktreePreserved string) {
 	sep := strings.Repeat("─", 60)
 	fmt.Fprintf(os.Stderr, "%s\n", sep)
 	stepsStr := fmt.Sprintf("%d", steps)
@@ -188,8 +188,8 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%dm%02ds", s/60, s%60)
 }
 
-// CookTotalLine prints a brand-aware running total after each step.
-func CookTotalLine(totalCost float64, steps, stepTotal int) {
+// RunTotalLine prints a brand-aware running total after each step.
+func RunTotalLine(totalCost float64, steps, stepTotal int) {
 	stepsStr := fmt.Sprintf("%d", steps)
 	if stepTotal > 0 {
 		stepsStr = fmt.Sprintf("%d/%d", steps, stepTotal)

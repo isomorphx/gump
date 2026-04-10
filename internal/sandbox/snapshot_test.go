@@ -10,11 +10,11 @@ import (
 func TestSnapshot_NoChanges_ReturnsEmpty(t *testing.T) {
 	repo := t.TempDir()
 	initGitRepo(t, repo)
-	wtDir := filepath.Join(repo, ".pudding", "worktrees", "cook-snap")
-	if err := CreateWorktree(repo, wtDir, "pudding/cook-snap"); err != nil {
+	wtDir := filepath.Join(repo, ".gump", "worktrees", "run-snap")
+	if err := CreateWorktree(repo, wtDir, "gump/run-snap"); err != nil {
 		t.Fatal(err)
 	}
-	defer RemoveWorktree(repo, wtDir, "pudding/cook-snap")
+	defer RemoveWorktree(repo, wtDir, "gump/run-snap")
 	dc, err := Snapshot(wtDir, "plan", "-", 1)
 	if err != nil {
 		t.Fatal(err)
@@ -30,11 +30,11 @@ func TestSnapshot_NoChanges_ReturnsEmpty(t *testing.T) {
 func TestSnapshot_WithChanges_ReturnsDiff(t *testing.T) {
 	repo := t.TempDir()
 	initGitRepo(t, repo)
-	wtDir := filepath.Join(repo, ".pudding", "worktrees", "cook-snap2")
-	if err := CreateWorktree(repo, wtDir, "pudding/cook-snap2"); err != nil {
+	wtDir := filepath.Join(repo, ".gump", "worktrees", "run-snap2")
+	if err := CreateWorktree(repo, wtDir, "gump/run-snap2"); err != nil {
 		t.Fatal(err)
 	}
-	defer RemoveWorktree(repo, wtDir, "pudding/cook-snap2")
+	defer RemoveWorktree(repo, wtDir, "gump/run-snap2")
 	base, _ := HeadCommit(wtDir)
 	if err := os.WriteFile(filepath.Join(wtDir, "new.txt"), []byte("hello"), 0644); err != nil {
 		t.Fatal(err)

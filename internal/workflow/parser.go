@@ -333,7 +333,7 @@ func containsStr(slice []string, s string) bool {
 
 func validateStepType(t, stepName string) error {
 	switch t {
-	case "code", "split", "validate":
+	case "code", "split", "validate", "artifact":
 		return nil
 	case "search", "scrape", "surf", "use", "doc":
 		return fmt.Errorf("step %q: type %q is not yet supported", stepName, t)

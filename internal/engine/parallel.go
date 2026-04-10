@@ -31,14 +31,14 @@ type parallelResult struct {
 // RunParallelGroup runs sub-steps or tasks in parallel worktrees, then merges diff outputs or fails on conflict.
 func RunParallelGroup(e *Engine, step *workflow.Step, stepPath string, subSteps []workflow.Step, planTasks []plan.Task, baseCommit string, lastSessionByAgent map[string]string, parentSession workflow.SessionConfig, groupAgentOverride string, inheritedVars map[string]string) error {
 	repoRoot := e.Run.RepoRoot
-	cookID := e.Run.ID
+	runID := e.Run.ID
 	units := buildParallelUnits(step, stepPath, subSteps, planTasks)
 	results := make([]parallelResult, len(units))
 	var wg sync.WaitGroup
 	for i := range units {
 		u := &units[i]
-		wtDir := filepath.Join(repoRoot, brand.StateDir(), "worktrees", brand.WorktreeDirPrefix()+cookID, "parallel-"+u.Name)
-		brName := brand.WorktreeBranchPrefix() + cookID + "-parallel-" + u.Name
+		wtDir := filepath.Join(repoRoot, brand.StateDir(), "worktrees", brand.WorktreeDirPrefix()+runID, "parallel-"+u.Name)
+		brName := brand.WorktreeBranchPrefix() + runID + "-parallel-" + u.Name
 		if err := sandbox.CreateWorktreeAtCommit(repoRoot, wtDir, brName, baseCommit); err != nil {
 			return fmt.Errorf("parallel worktree %s: %w", u.Name, err)
 		}
@@ -46,7 +46,7 @@ func RunParallelGroup(e *Engine, step *workflow.Step, stepPath string, subSteps 
 		subEng := New(c, e.Workflow, e.Resolver, e.Config, e.SpecContent)
 		subEng.State = e.State
 		subEng.AgentsCLI = e.AgentsCLI
-		subEng.CookAgentOverride = e.CookAgentOverride
+		subEng.RunAgentOverride = e.RunAgentOverride
 		subEng.Run.Ledger = e.Run.Ledger
 		wg.Add(1)
 		go func(idx int, eng *Engine, unit *parallelUnit) {

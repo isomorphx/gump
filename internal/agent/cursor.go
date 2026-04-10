@@ -46,9 +46,6 @@ func cursorBinary() string {
 	if p := os.Getenv("GUMP_E2E_CURSOR_BIN"); p != "" {
 		return p
 	}
-	if p := os.Getenv("PUDDING_E2E_CURSOR_BIN"); p != "" {
-		return p
-	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "cursor-agent"

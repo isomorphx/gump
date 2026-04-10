@@ -13,19 +13,19 @@ const (
 
 // originalBackupByContextFile keeps provider-specific backups so cleanup restores the user's file, not another provider's.
 var originalBackupByContextFile = map[string]string{
-	"CLAUDE.md":                    ".pudding-original-CLAUDE.md",
-	"AGENTS.md":                    ".pudding-original-AGENTS.md",
-	"GEMINI.md":                    ".pudding-original-GEMINI.md",
-	"QWEN.md":                      ".pudding-original-QWEN.md",
-	".cursor/rules/gump-agent.mdc": ".pudding-original-cursor-gump-agent.mdc",
+	"CLAUDE.md":                    ".gump-original-CLAUDE.md",
+	"AGENTS.md":                    ".gump-original-AGENTS.md",
+	"GEMINI.md":                    ".gump-original-GEMINI.md",
+	"QWEN.md":                      ".gump-original-QWEN.md",
+	".cursor/rules/gump-agent.mdc": ".gump-original-cursor-gump-agent.mdc",
 }
 
 // legacyOriginalBackupByContextFile is the pre-spec backup filename (lowercase) per context file.
 var legacyOriginalBackupByContextFile = map[string]string{
-	"CLAUDE.md": ".pudding-original-claude.md",
-	"AGENTS.md": ".pudding-original-agents.md",
-	"GEMINI.md": ".pudding-original-gemini.md",
-	"QWEN.md":   ".pudding-original-qwen.md",
+	"CLAUDE.md": ".gump-original-claude.md",
+	"AGENTS.md": ".gump-original-agents.md",
+	"GEMINI.md": ".gump-original-gemini.md",
+	"QWEN.md":   ".gump-original-qwen.md",
 }
 
 // AllProviderContextFiles lists every context file so we can remove others on cross-provider steps and restore all on cleanup.
@@ -61,7 +61,7 @@ func writeWithBackup(worktreeDir, content, contextFile string) error {
 	}
 	backupName := originalBackupByContextFile[contextFile]
 	if backupName == "" {
-		backupName = ".pudding-original-" + strings.ReplaceAll(contextFile, "/", "-")
+		backupName = ".gump-original-" + strings.ReplaceAll(contextFile, "/", "-")
 	}
 	backupPath := filepath.Join(worktreeDir, backupName)
 	if _, err := os.Stat(path); err == nil {
@@ -99,7 +99,7 @@ func RemoveOtherContextFiles(worktreeDir, keep string) {
 	}
 }
 
-// RestoreAllContextFiles restores any backed-up context file so the worktree ends with the user's originals after cook.
+// RestoreAllContextFiles restores any backed-up context file so the worktree ends with the user's originals after the run.
 func RestoreAllContextFiles(worktreeDir string) {
 	for contextFile, backupName := range originalBackupByContextFile {
 		if contextFile == ".cursor/rules/gump-agent.mdc" {

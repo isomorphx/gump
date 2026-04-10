@@ -14,7 +14,7 @@ func TestPrepareOutputDir(t *testing.T) {
 	}
 	outPath := filepath.Join(dir, ".gump", "out")
 	if st, err := os.Stat(outPath); err != nil || !st.IsDir() {
-		t.Errorf("expected .pudding/out dir: %v", err)
+		t.Errorf("expected .gump/out dir: %v", err)
 	}
 	// Idempotent: empty and recreate
 	if err := PrepareOutputDir(dir); err != nil {

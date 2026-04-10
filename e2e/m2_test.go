@@ -15,7 +15,7 @@ import (
 func TestM2_E2E1_ContextFileDiffMode(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, ".gump/conventions.md", "Use Go 1.22")
-	writeFile(t, dir, ".pudding/recipes/test-m2-diff.yaml", `name: test-m2-diff
+	writeFile(t, dir, ".gump/workflows/test-m2-diff.yaml", `name: test-m2-diff
 description: M2 diff context
 steps:
   - name: code
@@ -25,9 +25,9 @@ steps:
     gate: [compile]
 `)
 	writeFile(t, dir, "spec.md", "Add a function")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files": {"add.go": "package main\n\nfunc Add(a, b int) int { return a + b }\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files": {"add.go": "package main\n\nfunc Add(a, b int) int { return a + b }\n"}}`)
 	env := append(os.Environ(), "GIT_AUTHOR_NAME=a", "GIT_AUTHOR_EMAIL=a@a.com", "GIT_CONFIG_GLOBAL=/dev/null")
-	add := exec.Command("git", "add", "spec.md", ".pudding/recipes/test-m2-diff.yaml", ".pudding-test-scenario.json", "-f", ".gump/conventions.md")
+	add := exec.Command("git", "add", "spec.md", ".gump/workflows/test-m2-diff.yaml", ".gump-test-scenario.json", "-f", ".gump/conventions.md")
 	add.Dir = dir
 	add.Env = env
 	if out, err := add.CombinedOutput(); err != nil {
@@ -39,13 +39,13 @@ steps:
 	if out, err := commit.CombinedOutput(); err != nil {
 		t.Fatalf("git commit: %s: %s", err, out)
 	}
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m2-diff", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "test-m2-diff", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}
-	uuid := extractCookID(stdout)
+	uuid := extractRunID(stdout)
 	if uuid == "" {
-		t.Fatal("no cook id")
+		t.Fatal("no run id")
 	}
 	claude := filepath.Join(dir, ".gump", "worktrees", "run-"+uuid, "CLAUDE.md")
 	body := readFile(t, claude)
@@ -66,7 +66,7 @@ steps:
 // M2-E2E-2: review mode context file.
 func TestM2_E2E2_ContextFileReviewMode(t *testing.T) {
 	dir := setupGoRepo(t)
-	writeFile(t, dir, ".pudding/recipes/test-m2-review.yaml", `name: test-m2-review
+	writeFile(t, dir, ".gump/workflows/test-m2-review.yaml", `name: test-m2-review
 description: M2 review context
 steps:
   - name: rev
@@ -76,13 +76,13 @@ steps:
     gate: [compile]
 `)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files": {"add.go": "package main\n\nfunc Add(a, b int) int { return a + b }\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files": {"add.go": "package main\n\nfunc Add(a, b int) int { return a + b }\n"}}`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m2-review", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "test-m2-review", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}
-	uuid := extractCookID(stdout)
+	uuid := extractRunID(stdout)
 	claude := filepath.Join(dir, ".gump", "worktrees", "run-"+uuid, "CLAUDE.md")
 	body := readFile(t, claude)
 	if !strings.Contains(body, "review step") {
@@ -120,8 +120,8 @@ func TestAdd(t *testing.T) {
 `, hugeMsg)
 	scenario := fmt.Sprintf(`{"by_attempt":{"1":{"files":{"add.go":%q,"add_test.go":%q}},"2":{"files":{"add.go":"package main\n\nfunc Add(a, b int) int { return a + b }\n"}}},"files":{}}`,
 		bigGo, addTest)
-	writeFile(t, dir, ".pudding-test-scenario.json", scenario)
-	writeFile(t, dir, ".pudding/recipes/test-m2-trunc.yaml", `name: test-m2-trunc
+	writeFile(t, dir, ".gump-test-scenario.json", scenario)
+	writeFile(t, dir, ".gump/workflows/test-m2-trunc.yaml", `name: test-m2-trunc
 steps:
   - name: code
     agent: claude-haiku
@@ -133,11 +133,11 @@ steps:
 `)
 	writeFile(t, dir, "spec.md", "Add")
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m2-trunc", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "test-m2-trunc", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}
-	uuid := extractCookID(stdout)
+	uuid := extractRunID(stdout)
 	claude := filepath.Join(dir, ".gump", "worktrees", "run-"+uuid, "CLAUDE.md")
 	body := readFile(t, claude)
 	if !strings.Contains(body, "[... truncated") {
@@ -152,7 +152,7 @@ steps:
 func TestM2_E2E4_ContextSourceFileInjection(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "docs/arch.md", "MARKER_CONTEXT_TEST_12345")
-	writeFile(t, dir, ".pudding/recipes/test-m2-ctx.yaml", `name: test-m2-ctx
+	writeFile(t, dir, ".gump/workflows/test-m2-ctx.yaml", `name: test-m2-ctx
 steps:
   - name: code
     agent: claude-haiku
@@ -163,13 +163,13 @@ steps:
     gate: [compile]
 `)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files": {"add.go": "package main\n\nfunc Add(a, b int) int { return a + b }\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files": {"add.go": "package main\n\nfunc Add(a, b int) int { return a + b }\n"}}`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m2-ctx", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "test-m2-ctx", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}
-	uuid := extractCookID(stdout)
+	uuid := extractRunID(stdout)
 	claude := filepath.Join(dir, ".gump", "worktrees", "run-"+uuid, "CLAUDE.md")
 	body := readFile(t, claude)
 	if !strings.Contains(body, "MARKER_CONTEXT_TEST_12345") {
@@ -183,7 +183,7 @@ steps:
 // M2-E2E-5: codex uses AGENTS.md.
 func TestM2_E2E5_AgentFileCodex(t *testing.T) {
 	dir := setupGoRepo(t)
-	writeFile(t, dir, ".pudding/recipes/test-m2-codex.yaml", `name: test-m2-codex
+	writeFile(t, dir, ".gump/workflows/test-m2-codex.yaml", `name: test-m2-codex
 steps:
   - name: code
     agent: codex
@@ -192,13 +192,13 @@ steps:
     gate: [compile]
 `)
 	writeFile(t, dir, "spec.md", "x")
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"files": {"add.go": "package main\n\nfunc Add(a, b int) int { return a + b }\n"}}`)
+	writeFile(t, dir, ".gump-test-scenario.json", `{"files": {"add.go": "package main\n\nfunc Add(a, b int) int { return a + b }\n"}}`)
 	gitCommitAll(t, dir, "setup")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "test-m2-codex", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runGump(t, []string{"run", "spec.md", "--workflow", "test-m2-codex", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}
-	uuid := extractCookID(stdout)
+	uuid := extractRunID(stdout)
 	wt := filepath.Join(dir, ".gump", "worktrees", "run-"+uuid)
 	agents := filepath.Join(wt, "AGENTS.md")
 	if _, err := os.Stat(agents); err != nil {

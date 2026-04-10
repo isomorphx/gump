@@ -49,7 +49,7 @@ type ContextParams struct {
 	ReplanError string
 }
 
-// ContextSourceResult is one resolved recipe context: entry (file contents or bash stdout).
+// ContextSourceResult is one resolved workflow context: entry (file contents or bash stdout).
 type ContextSourceResult struct {
 	Type    string
 	Label   string
@@ -73,7 +73,7 @@ var originalBackupByContextFile = map[string]string{
 	"AGENTS.md":                    brand.StateDir() + "-original-AGENTS.md",
 	"GEMINI.md":                    brand.StateDir() + "-original-GEMINI.md",
 	"QWEN.md":                      brand.StateDir() + "-original-QWEN.md",
-	".cursor/rules/gump-agent.mdc": ".pudding-original-cursor-gump-agent.mdc",
+	".cursor/rules/gump-agent.mdc": ".gump-original-cursor-gump-agent.mdc",
 }
 
 // BuildAgentContext returns the full markdown for the provider context file (CLAUDE.md, AGENTS.md, …).
@@ -246,7 +246,7 @@ func retrySectionFor(p ContextParams) string {
 	return buildRetryMarkdown(r, p.MaxErrorChars, p.MaxDiffChars, r.ReviewComment)
 }
 
-// buildRetryMarkdown is the default retry UX when the recipe does not override the prompt on that attempt.
+// buildRetryMarkdown is the default retry UX when the workflow does not override the prompt on that attempt.
 func buildRetryMarkdown(r *RetryContext, maxErr, maxDiff int, reviewComment string) string {
 	if maxErr <= 0 {
 		maxErr = 2000
@@ -515,7 +515,7 @@ type BuildOptions struct {
 	SessionReuse bool
 }
 
-// Build resolves recipe context sources, builds the v4 prompt, and writes the provider file in the worktree.
+// Build resolves workflow context sources, builds the v4 prompt, and writes the provider file in the worktree.
 // spec and blastRadius are still required for split-mode specification sections and blast-radius blocks even when the user prompt is pre-resolved upstream.
 func Build(stepType string, prompt string, contextSources []workflow.ContextSource, agentName string, cfg *config.Config, worktreeDir string, spec string, blastRadius []string, contextFile string, retryCtx *RetryContext, opts *BuildOptions) error {
 	_ = agentName // reserved for provider-specific tuning; content stays identical across agents today.
@@ -570,15 +570,15 @@ func readConventions(worktreeDir string) string {
 	if data, err := os.ReadFile(p); err == nil {
 		return string(data)
 	}
-	legacy := filepath.Join(worktreeDir, ".pudding", "conventions.md")
+	legacy := filepath.Join(worktreeDir, ".gump", "conventions.md")
 	if data, err := os.ReadFile(legacy); err == nil {
 		return string(data)
 	}
 	return ""
 }
 
-// resolveContextSources materializes recipe context: files are required; bash failures are dropped with a log line
-// so a flaky diagnostic command does not abort the whole cook.
+// resolveContextSources materializes workflow context: files are required; bash failures are dropped with a log line
+// so a flaky diagnostic command does not abort the whole run.
 func resolveContextSources(contextSources []workflow.ContextSource, worktreeDir string, spec string) ([]ContextSourceResult, error) {
 	pathCtx := &state.ResolveContext{Spec: spec}
 	var out []ContextSourceResult

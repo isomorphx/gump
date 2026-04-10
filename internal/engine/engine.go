@@ -22,11 +22,17 @@ import (
 	"github.com/isomorphx/gump/internal/workflow"
 )
 
-// ErrCookAborted is returned when the user aborts during HITL (Ctrl+C).
-var ErrCookAborted = errors.New("aborted")
+// ErrRunAborted is returned when the user aborts during HITL (Ctrl+C).
+var ErrRunAborted = errors.New("aborted")
 
-// Engine runs the recipe step-by-step; behavior is inferred from fields (no type:) so recipes stay declarative. Flat State holds outputs for v0.0.4 `{step.field}` templates.
-// AgentsCLI is set by the CLI so cook_started can record agent versions; stepCompletedCount, retryTriggeredCount, totalCostUSD, agentsUsed are accumulated for cook_completed and index.
+// groupRetryStrategy names one pass in the group subtree retry loop (v0.0.4 retry: exit: only implies repeated passes with "same" agent/session).
+type groupRetryStrategy struct {
+	typ   string
+	agent string
+}
+
+// Engine runs the workflow step-by-step; behavior is inferred from fields (no type:) so YAML stays declarative. Flat State holds outputs for v0.0.4 `{step.field}` templates.
+// AgentsCLI is set by the CLI so run_started can record agent versions; stepCompletedCount, retryTriggeredCount, totalCostUSD, agentsUsed are accumulated for run_completed and index.
 type Engine struct {
 	Run                  *run.Run
 	Workflow             *workflow.Workflow
@@ -36,19 +42,19 @@ type Engine struct {
 	Steps                []StepExecution
 	State                *state.State
 	AgentsCLI            map[string]string
-	CookAgentOverride    string // CLI --agent overrides step agent when set
+	RunAgentOverride     string // CLI --agent overrides step agent when set
 	FromStep             string // when set (replay), skip steps until we reach this path
 	ResumeMode           bool   // when true, FromStep is only for ledger metadata; skipping uses ResumePassedSteps/state (resume after fatal in each)
 	ResumePassedSteps    map[string]bool
 	ResumePreviousStatus string
-	replayOriginalCookID string // for replay_started event
+	replayOriginalRunID string // for replay_started event
 	replayRestoredCommit string
 	stepCompletedCount   int
 	retryTriggeredCount  int
 	totalCostUSD         float64
 	globalTokens         int
 	agentsUsed           map[string]struct{}
-	cookRunStartedAt     time.Time
+	runStartedAt time.Time
 	lastStep             *lastStepOutcome
 	replayReachedStart   bool // true once we've reached FromStep in executeSteps
 	stepRunIndex         int  // 1-based index of current step for [N/total] header (Feature 12)
@@ -92,7 +98,7 @@ func New(runPtr *run.Run, wf *workflow.Workflow, resolver agent.AdapterResolver,
 // We always run the end-of-run sequence (state-bag, final-diff, run_completed, index, close ledger) so the ledger is complete even on fatal.
 func (e *Engine) Execute() error {
 	defer agent.RestoreAllContextFiles(e.Run.WorktreeDir)
-	e.cookRunStartedAt = time.Now()
+	e.runStartedAt = time.Now()
 	// WHY: resume re-uses the worktree; a stale engine-step-attempt.json makes the stub pick the wrong by_attempt key.
 	if e.ResumePassedSteps != nil && len(e.ResumePassedSteps) > 0 {
 		_ = os.Remove(filepath.Join(e.Run.WorktreeDir, brand.StateDir(), "engine-step-attempt.json"))
@@ -109,9 +115,9 @@ func (e *Engine) Execute() error {
 			MaxTimeout: e.Workflow.MaxTimeout,
 			MaxTokens:  e.Workflow.MaxTokens,
 		})
-		if e.FromStep != "" && e.replayOriginalCookID != "" {
+		if e.FromStep != "" && e.replayOriginalRunID != "" {
 			_ = e.Run.Ledger.Emit(ledger.ReplayStarted{
-				OriginalCookID: e.replayOriginalCookID,
+				OriginalRunID:  e.replayOriginalRunID,
 				FromStep:       e.FromStep,
 				RestoredCommit: e.replayRestoredCommit,
 			})
@@ -124,9 +130,9 @@ func (e *Engine) Execute() error {
 			})
 		}
 	}
-	CookHeader(e.Run.WorkflowName, e.Run.ID, filepath.Base(e.Run.SpecPath))
+	RunHeader(e.Run.WorkflowName, e.Run.ID, filepath.Base(e.Run.SpecPath))
 	err := e.executeWorkflowSequential()
-	e.finishCook(err)
+	e.finishRun(err)
 	return err
 }
 
@@ -151,9 +157,9 @@ func (e *Engine) checkGlobalWorkflowBounds() error {
 	}
 	if d := strings.TrimSpace(wf.MaxTimeout); d != "" {
 		maxDur, err := time.ParseDuration(d)
-		if err == nil && maxDur > 0 && time.Since(e.cookRunStartedAt) > maxDur {
+		if err == nil && maxDur > 0 && time.Since(e.runStartedAt) > maxDur {
 			if e.Run.Ledger != nil {
-				elapsed := time.Since(e.cookRunStartedAt).Seconds()
+				elapsed := time.Since(e.runStartedAt).Seconds()
 				_ = e.Run.Ledger.Emit(ledger.BudgetExceeded{
 					Step: "", Scope: "timeout", MaxSeconds: maxDur.Seconds(), ElapsedSeconds: elapsed,
 				})
@@ -219,12 +225,11 @@ func (e *Engine) executeSteps(steps []workflow.Step, taskContext *plan.Task, pat
 					inputs[k] = v
 				}
 				childState, err := swr.RunSubWorkflow(step.Workflow, inputs, e.Run.WorktreeDir, stepPath, resolveCtx)
-				for _, k := range childState.Keys() {
-					e.State.Set(step.Name+".state."+k, childState.Get(k))
-				}
+				// WHY: RunSubWorkflow returns (nil, err) on resolve/parse/validate failure; merging state before checking err caused a nil dereference.
 				if err != nil {
 					return err
 				}
+				graftChildStateIntoParent(e.State, step.Name, childState)
 				continue
 			}
 			var planTasks []plan.Task
@@ -290,12 +295,10 @@ func (e *Engine) executeSteps(steps []workflow.Step, taskContext *plan.Task, pat
 								inputs[k] = v
 							}
 							childState, werr := swr.RunSubWorkflow(step.Workflow, inputs, e.Run.WorktreeDir, taskPrefix, resolveCtx)
-							for _, k := range childState.Keys() {
-								e.State.Set(step.Name+".state."+k, childState.Get(k))
-							}
 							if werr != nil {
 								return werr
 							}
+							graftChildStateIntoParent(e.State, step.Name, childState)
 						} else {
 							if err := e.executeSteps(subSteps, &task, taskPrefix, taskSession, step.Session, agentOverride, inheritedVars); err != nil {
 								return err
@@ -306,13 +309,11 @@ func (e *Engine) executeSteps(steps []workflow.Step, taskContext *plan.Task, pat
 				}
 				return e.executeSteps(subSteps, nil, stepPath, sessionMap, step.Session, agentOverride, inheritedVars)
 			}
-			if of := step.OnFailureCompat(); of != nil && step.MaxAttempts() > 1 {
+			// WHY: v0.0.4 uses retry: with exit: N; group subtree re-runs use the same session/agent each retry unless a strategy slot overrides (legacy strategy entries are gone).
+			if step.MaxAttempts() > 1 {
 				preGroupCommit, _ := PreStepCommit(e.Run.WorktreeDir)
 				maxAttempts := step.MaxAttempts()
-				expanded := workflow.ExpandStrategy(of.Strategy)
-				if len(expanded) == 0 {
-					expanded = []workflow.StrategyEntryCompat{{Type: "same", Count: 1}}
-				}
+				expanded := []groupRetryStrategy{{typ: "same"}}
 				sessionMap := make(map[string]string)
 				for groupAttempt := 1; groupAttempt <= maxAttempts; groupAttempt++ {
 					var agentOverride string
@@ -324,12 +325,12 @@ func (e *Engine) executeSteps(steps []workflow.Step, taskContext *plan.Task, pat
 							idx = len(expanded) - 1
 						}
 						strategy := expanded[idx]
-						strategyLabel = strategy.Type
-						if strategy.Agent != "" {
-							strategyLabel = strategy.Type + ": " + strategy.Agent
-							agentOverride = strategy.Agent
+						strategyLabel = strategy.typ
+						if strategy.agent != "" {
+							strategyLabel = strategy.typ + ": " + strategy.agent
+							agentOverride = strategy.agent
 						}
-						if strategy.Type == "escalate" || strategy.Type == "replan" {
+						if strategy.typ == "escalate" || strategy.typ == "replan" {
 							_ = e.Run.ResetTo(preGroupCommit)
 						}
 						// WHY: group retry re-runs the subtree; global step attempt counters must not block this fresh pass (unlike restart_from, which preserves the target budget).
@@ -340,23 +341,23 @@ func (e *Engine) executeSteps(steps []workflow.Step, taskContext *plan.Task, pat
 							}
 						}
 						invalidated := []string{}
-						if strategy.Type == "escalate" || strategy.Type == "replan" {
+						if strategy.typ == "escalate" || strategy.typ == "replan" {
 							invalidated = e.State.ClearSessionIDsForGroup(stepPath)
 							e.clearStepSessionsForGroup(stepPath)
 						}
-						if strategy.Type == "escalate" || strategy.Type == "replan" {
+						if strategy.typ == "escalate" || strategy.typ == "replan" {
 							e.State.ResetGroup(stepPath)
 						}
 						if e.Run.Ledger != nil && len(invalidated) > 0 {
 							_ = e.Run.Ledger.Emit(ledger.GroupRetrySessionsReset{
 								Group:               stepPath,
 								Attempt:             groupAttempt,
-								Strategy:            strategy.Type,
+								Strategy:            strategy.typ,
 								InvalidatedSessions: invalidated,
 							})
 						}
 						fmt.Fprintf(os.Stderr, "[%s]\tgroup-retry\tattempt %d/%d (%s)\n", stepPath, groupAttempt, maxAttempts, strategyLabel)
-						if strategy.Type == "escalate" || strategy.Type == "replan" {
+						if strategy.typ == "escalate" || strategy.typ == "replan" {
 							sessionMap = make(map[string]string)
 						}
 						groupAttemptPath := filepath.Join(e.Run.WorktreeDir, brand.StateDir(), "group-attempt")
@@ -642,11 +643,11 @@ func (e *Engine) resolveSubSteps(step *workflow.Step) ([]workflow.Step, error) {
 	if err != nil {
 		return nil, err
 	}
-	recipeDir := ""
+	wfDir := ""
 	if resolved.Path != "" {
-		recipeDir = filepath.Dir(resolved.Path)
+		wfDir = filepath.Dir(resolved.Path)
 	}
-	parsed, _, err := workflow.Parse(resolved.Raw, recipeDir)
+	parsed, _, err := workflow.Parse(resolved.Raw, wfDir)
 	if err != nil {
 		return nil, err
 	}
@@ -665,11 +666,11 @@ func (e *Engine) resolveWorkflow(step *workflow.Step, stepPath string, taskConte
 	if err != nil {
 		return nil, nil, err
 	}
-	recipeDir := ""
+	wfDir := ""
 	if resolved.Path != "" {
-		recipeDir = filepath.Dir(resolved.Path)
+		wfDir = filepath.Dir(resolved.Path)
 	}
-	parsed, _, err := workflow.Parse(resolved.Raw, recipeDir)
+	parsed, _, err := workflow.Parse(resolved.Raw, wfDir)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -719,15 +720,15 @@ func formatAgentSummary(w io.Writer, stepName, stepPath string, durationSec, cos
 	fmt.Fprintf(w, "[%s] %s done %s | %s%s | %d %s\n", brand.Lower(), stepName, durStr, costStr, ctxStr, numTurns, turnStr)
 }
 
-// printCookTotal prints running cost and step count after each step (Feature 11).
-func (e *Engine) printCookTotal() {
-	CookTotalLine(e.totalCostUSD, e.stepCompletedCount, e.stepTotalEstimate)
+// printRunTotal prints running cost and step count after each step (Feature 11).
+func (e *Engine) printRunTotal() {
+	RunTotalLine(e.totalCostUSD, e.stepCompletedCount, e.stepTotalEstimate)
 }
 
-// finishCook persists state-bag and final-diff, emits cook_completed, appends to the index, and closes the ledger so the run is fully traceable.
-// Always prints the cook footer (Feature 12).
-func (e *Engine) finishCook(runErr error) {
-	duration := time.Since(e.cookRunStartedAt)
+// finishRun persists state and final-diff, emits run_completed, appends to the index, and closes the ledger so the run is fully traceable.
+// Always prints the run footer (Feature 12).
+func (e *Engine) finishRun(runErr error) {
+	duration := time.Since(e.runStartedAt)
 	var fatalStep, errMsg, worktree string
 	if runErr != nil {
 		for i := len(e.Steps) - 1; i >= 0; i-- {
@@ -739,24 +740,24 @@ func (e *Engine) finishCook(runErr error) {
 		errMsg = runErr.Error()
 		worktree = e.Run.WorktreeDir
 	}
-	CookFooter(runErr == nil, e.totalCostUSD, e.stepCompletedCount, e.stepTotalEstimate, e.retryTriggeredCount, duration, fatalStep, errMsg, worktree)
+	RunFooter(runErr == nil, e.totalCostUSD, e.stepCompletedCount, e.stepTotalEstimate, e.retryTriggeredCount, duration, fatalStep, errMsg, worktree)
 
 	if e.Run.Ledger == nil {
 		return
 	}
-	cookDir := e.Run.RunDir
+	runDir := e.Run.RunDir
 	status := "pass"
 	if runErr != nil {
-		if errors.Is(runErr, ErrCookAborted) {
+		if errors.Is(runErr, ErrRunAborted) {
 			status = "aborted"
 		} else {
 			status = "fatal"
 		}
 	}
-	durationMs := int(time.Since(e.cookRunStartedAt).Milliseconds())
+	durationMs := int(time.Since(e.runStartedAt).Milliseconds())
 
 	stateJSON, _ := e.State.Serialize()
-	_ = os.WriteFile(filepath.Join(cookDir, "state.json"), stateJSON, 0644)
+	_ = os.WriteFile(filepath.Join(runDir, "state.json"), stateJSON, 0644)
 
 	var finalDiffPatch []byte
 	dc, err := e.Run.FinalDiff()
@@ -782,9 +783,9 @@ func (e *Engine) finishCook(runErr error) {
 		agentsList = append(agentsList, a)
 	}
 	_ = ledger.AppendIndex(e.Run.RepoRoot, ledger.IndexEntry{
-		CookID:     e.Run.ID,
-		Timestamp:  e.cookRunStartedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
-		Recipe:     e.Run.WorkflowName,
+		RunID:      e.Run.ID,
+		Timestamp:  e.runStartedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+		Workflow:   e.Run.WorkflowName,
 		Spec:       filepath.Base(e.Run.SpecPath),
 		Status:     status,
 		DurationMs: durationMs,

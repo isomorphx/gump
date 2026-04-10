@@ -52,8 +52,8 @@ func TestGitRepoRoot_OutsideRepo(t *testing.T) {
 func TestCreateWorktree_RemoveWorktree(t *testing.T) {
 	repo := t.TempDir()
 	initGitRepo(t, repo)
-	wtDir := filepath.Join(repo, ".pudding", "worktrees", "cook-test")
-	branch := "pudding/cook-test"
+	wtDir := filepath.Join(repo, ".gump", "worktrees", "run-test")
+	branch := "gump/run-test"
 	if err := CreateWorktree(repo, wtDir, branch); err != nil {
 		t.Fatal(err)
 	}
@@ -71,8 +71,8 @@ func TestCreateWorktree_RemoveWorktree(t *testing.T) {
 func TestResetTo(t *testing.T) {
 	repo := t.TempDir()
 	initGitRepo(t, repo)
-	wtDir := filepath.Join(repo, ".pudding", "worktrees", "cook-reset")
-	branch := "pudding/cook-reset"
+	wtDir := filepath.Join(repo, ".gump", "worktrees", "run-reset")
+	branch := "gump/run-reset"
 	if err := CreateWorktree(repo, wtDir, branch); err != nil {
 		t.Fatal(err)
 	}

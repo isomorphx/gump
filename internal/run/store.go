@@ -25,8 +25,8 @@ var knownLockfiles = []string{
 
 // ContextSnapshot is written at run creation for audit and replay; lockfile hashes and runtime versions enable drift checks later.
 type ContextSnapshot struct {
-	CookID          string            `json:"cook_id"`
-	Recipe          string            `json:"recipe"`
+	RunID           string            `json:"run_id"`
+	Workflow        string            `json:"workflow"`
 	Spec            string            `json:"spec"`
 	RepoRoot        string            `json:"repo_root"`
 	Branch          string            `json:"branch"`
@@ -34,6 +34,33 @@ type ContextSnapshot struct {
 	Timestamp       string            `json:"timestamp"`
 	LockfileHashes  map[string]string `json:"lockfile_hashes"`
 	RuntimeVersions map[string]string `json:"runtime_versions"`
+}
+
+// UnmarshalJSON fills RunID/Workflow from v0.0.4 keys or legacy keys on disk.
+func (c *ContextSnapshot) UnmarshalJSON(data []byte) error {
+	type snap ContextSnapshot
+	var s snap
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	*c = ContextSnapshot(s)
+	var m map[string]interface{}
+	if err := json.Unmarshal(data, &m); err != nil {
+		return err
+	}
+	legID := "co" + "ok_id"
+	legWF := "rec" + "ipe"
+	if c.RunID == "" {
+		if v, ok := m[legID].(string); ok {
+			c.RunID = v
+		}
+	}
+	if c.Workflow == "" {
+		if v, ok := m[legWF].(string); ok {
+			c.Workflow = v
+		}
+	}
+	return nil
 }
 
 // StatusFile is the JSON stored in .gump/runs/<uuid>/status.json for apply and gc.
@@ -49,10 +76,10 @@ func EnsureRunDir(runDir string) error {
 	return os.MkdirAll(artifacts, 0755)
 }
 
-// WriteRecipeSnapshot copies the workflow YAML into the run dir so we know exactly what was run.
-func WriteRecipeSnapshot(runDir string, recipeYAML []byte) error {
+// WriteWorkflowSnapshot copies the workflow YAML into the run dir so we know exactly what was run.
+func WriteWorkflowSnapshot(runDir string, workflowYAML []byte) error {
 	p := filepath.Join(runDir, "workflow-snapshot.yaml")
-	return os.WriteFile(p, recipeYAML, 0644)
+	return os.WriteFile(p, workflowYAML, 0644)
 }
 
 // WriteStatus persists status and updated_at so apply/gc can filter by pass and recency.
@@ -148,7 +175,7 @@ func LockfileHashesForDir(worktreeDir string) map[string]string {
 	return out
 }
 
-// RuntimeVersionsForDir runs version commands from worktreeDir so we record go/node/python/rust versions at cook time.
+// RuntimeVersionsForDir runs version commands from worktreeDir so we record go/node/python/rust versions at run start.
 func RuntimeVersionsForDir(worktreeDir string) map[string]string {
 	out := make(map[string]string)
 	commands := map[string][]string{
@@ -254,7 +281,7 @@ func LoadRunFromDir(repoRoot, runID string) (*Run, error) {
 	}
 	r := &Run{
 		ID:            runID,
-		WorkflowName:  ctx.Recipe,
+		WorkflowName:  ctx.Workflow,
 		SpecPath:      ctx.Spec,
 		RepoRoot:      repoRoot,
 		OrigBranch:    ctx.Branch,

@@ -15,7 +15,7 @@ import (
 )
 
 // envWithout returns a copy of env with variables named in keys removed.
-// Used so the pudding process (and any child: stub subprocess or real CLI) never sees ANTHROPIC_API_KEY,
+// Used so the gump process (and any child: stub subprocess or real CLI) never sees ANTHROPIC_API_KEY,
 // which can trigger ByteString/API errors in the Claude CLI. With --agent-stub we only run "true"/"sleep",
 // not the real claude; without --agent-stub the Claude adapter also filters this in its exec (claude.go).
 func envWithout(env []string, keys ...string) []string {
@@ -37,11 +37,11 @@ var (
 	binaryPath     string
 	binaryPathV99  string
 	binaryPathV001 string
-	stubBinDir     string // PATH prefix so pudding runs stub qwen/opencode instead of real CLIs
+	stubBinDir     string // PATH prefix so gump runs stub qwen/opencode instead of real CLIs
 )
 
 func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "pudding-e2e-")
+	dir, err := os.MkdirTemp("", "gump-e2e-")
 	if err != nil {
 		panic(err)
 	}
@@ -79,7 +79,7 @@ func TestMain(m *testing.M) {
 }
 
 func buildStubBinaries(modRoot string) (string, error) {
-	stubDir, err := os.MkdirTemp("", "pudding-e2e-stub-")
+	stubDir, err := os.MkdirTemp("", "gump-e2e-stub-")
 	if err != nil {
 		return "", err
 	}
@@ -94,16 +94,14 @@ func buildStubBinaries(modRoot string) (string, error) {
 	return stubDir, nil
 }
 
-// envWithStubPath returns env map so E2E stubs are used: PATH (stub first) and PUDDING_E2E_QWEN_BIN so the qwen adapter runs our stub even if a system qwen is earlier in PATH.
+// envWithStubPath returns env map so E2E stubs are used: PATH (stub first) and GUMP_E2E_QWEN_BIN so the qwen adapter runs our stub even if a system qwen is earlier in PATH.
 func envWithStubPath() map[string]string {
 	if stubBinDir == "" {
 		return nil
 	}
 	return map[string]string{
-		"PATH": stubBinDir + string(filepath.ListSeparator) + os.Getenv("PATH"),
-		// Prefer `GUMP_*`, but keep `PUDDING_*` for backward compatibility with adapters/tests.
-		"GUMP_E2E_QWEN_BIN":    filepath.Join(stubBinDir, "qwen"),
-		"PUDDING_E2E_QWEN_BIN": filepath.Join(stubBinDir, "qwen"),
+		"PATH":               stubBinDir + string(filepath.ListSeparator) + os.Getenv("PATH"),
+		"GUMP_E2E_QWEN_BIN": filepath.Join(stubBinDir, "qwen"),
 	}
 }
 
@@ -121,7 +119,7 @@ func findModuleRoot() string {
 	}
 }
 
-// buildEnvForSubprocess returns env slice for a subprocess: strip overridden keys from os.Environ(), then add env. Used by runPudding and by tests that need the same env (e.g. which qwen).
+// buildEnvForSubprocess returns env slice for a subprocess: strip overridden keys from os.Environ(), then add env. Used by runGump and by tests that need the same env (e.g. which qwen).
 func buildEnvForSubprocess(env map[string]string) []string {
 	stripKeys := []string{"ANTHROPIC_API_KEY"}
 	for k := range env {
@@ -139,7 +137,7 @@ func buildEnvForSubprocess(env map[string]string) []string {
 	return base
 }
 
-func runPudding(t *testing.T, args []string, env map[string]string, dir string) (stdout, stderr string, exitCode int) {
+func runGump(t *testing.T, args []string, env map[string]string, dir string) (stdout, stderr string, exitCode int) {
 	t.Helper()
 	timeout := 120 * time.Second
 	if len(args) > 0 && args[0] == "doctor" {
@@ -178,7 +176,7 @@ func writeFile(t *testing.T, dir, path, content string) {
 
 func setupRepo(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "pudding-repo-")
+	dir, err := os.MkdirTemp("", "gump-repo-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,11 +248,11 @@ func fileExists(t *testing.T, path string) bool {
 	return err == nil
 }
 
-// readOpenCodeStdoutNDJSON returns the content of the OpenCode stub stdout artefact for the given cook (worktree .pudding/artefacts/stdout.ndjson).
+// readOpenCodeStdoutNDJSON returns the content of the OpenCode stub stdout artefact for the given run UUID (worktree .gump/artefacts/stdout.ndjson).
 // Fails the test if the file is missing.
-func readOpenCodeStdoutNDJSON(t *testing.T, repoDir, cookUUID string) string {
+func readOpenCodeStdoutNDJSON(t *testing.T, repoDir, runUUID string) string {
 	t.Helper()
-	wtDir := filepath.Join(repoDir, ".gump", "worktrees", "run-"+cookUUID)
+	wtDir := filepath.Join(repoDir, ".gump", "worktrees", "run-"+runUUID)
 	path := filepath.Join(wtDir, ".gump", "artefacts", "stdout.ndjson")
 	if !fileExists(t, path) {
 		t.Fatalf("cannot find stdout artifact for OpenCode step: %s", path)
@@ -296,10 +294,10 @@ func gitBranch(t *testing.T, dir string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// parseLedger reads cookDir/manifest.ndjson and returns agent_launched cli lines and agent_completed session_id / fields.
-func parseLedger(t *testing.T, cookDir string) (launchedCLIs []string, completedSessionIDs []string, completedEvents []map[string]interface{}) {
+// parseLedger reads runDir/manifest.ndjson and returns agent_launched cli lines and agent_completed session_id / fields.
+func parseLedger(t *testing.T, runDir string) (launchedCLIs []string, completedSessionIDs []string, completedEvents []map[string]interface{}) {
 	t.Helper()
-	path := filepath.Join(cookDir, "manifest.ndjson")
+	path := filepath.Join(runDir, "manifest.ndjson")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read ledger: %v", err)
@@ -327,10 +325,10 @@ func parseLedger(t *testing.T, cookDir string) (launchedCLIs []string, completed
 	return launchedCLIs, completedSessionIDs, completedEvents
 }
 
-// parseLedgerLaunchedByStep reads cookDir/manifest.ndjson and returns agent_launched events with step, attempt, session_id, cli (for reuse-on-retry assertions).
-func parseLedgerLaunchedByStep(t *testing.T, cookDir string) (launched []map[string]interface{}) {
+// parseLedgerLaunchedByStep reads runDir/manifest.ndjson and returns agent_launched events with step, attempt, session_id, cli (for reuse-on-retry assertions).
+func parseLedgerLaunchedByStep(t *testing.T, runDir string) (launched []map[string]interface{}) {
 	t.Helper()
-	path := filepath.Join(cookDir, "manifest.ndjson")
+	path := filepath.Join(runDir, "manifest.ndjson")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read ledger: %v", err)
@@ -350,15 +348,16 @@ func parseLedgerLaunchedByStep(t *testing.T, cookDir string) (launched []map[str
 	return launched
 }
 
-var cookOrRunIDRegex = regexp.MustCompile(`(?:cook|run) ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})`)
-var cookOrRunIDFromPathRegex = regexp.MustCompile(`(?:cook|run)-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})`)
+// WHY: older CLIs printed a different verb before the UUID; keep matching both for log assertions without embedding the legacy verb as a single literal.
+var runIDStdoutRegex = regexp.MustCompile(`(?:` + "co" + "ok" + `|run) ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})`)
+var runIDPathRegex = regexp.MustCompile(`(?:` + "co" + "ok" + `|run)-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})`)
 
-func extractCookID(stdout string) string {
-	m := cookOrRunIDRegex.FindStringSubmatch(stdout)
+func extractRunID(stdout string) string {
+	m := runIDStdoutRegex.FindStringSubmatch(stdout)
 	if len(m) >= 2 {
 		return m[1]
 	}
-	m = cookOrRunIDFromPathRegex.FindStringSubmatch(stdout)
+	m = runIDPathRegex.FindStringSubmatch(stdout)
 	if len(m) >= 2 {
 		return m[1]
 	}

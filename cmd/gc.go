@@ -35,8 +35,8 @@ func runGC(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("gump gc must be run inside a git repository")
 	}
-	cooksDir := filepath.Join(repoRoot, brand.StateDir(), brand.RunsDir())
-	entries, err := run.ListRuns(cooksDir)
+	runsDir := filepath.Join(repoRoot, brand.StateDir(), brand.RunsDir())
+	entries, err := run.ListRuns(runsDir)
 	if err != nil {
 		return err
 	}
