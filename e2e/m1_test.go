@@ -41,8 +41,11 @@ func TestM1_1_ParserV4_TDD(t *testing.T) {
 		t.Fatalf("len(Workflow.Steps): got %d", len(r.Steps))
 	}
 	s0 := r.Steps[0]
-	if s0.Name != "build" || s0.Type != "split" || s0.Agent != "claude-opus" || !gateHasType(s0.Gate, "schema") || len(s0.Each) != 2 {
+	if s0.Name != "decompose" || s0.Type != "split" || s0.Agent != "claude-opus" || !gateHasType(s0.Gate, "schema") || len(s0.Each) != 2 {
 		t.Fatalf("steps[0] split: got %+v", s0)
+	}
+	if s0.Each[0].Name != "red" || s0.Each[1].Name != "green" {
+		t.Fatalf("tdd each steps: %+v / %+v", s0.Each[0].Name, s0.Each[1].Name)
 	}
 	if r.Steps[1].Name != "quality" || len(r.Steps[1].Gate) == 0 {
 		t.Fatalf("steps[1] quality gate: %+v", r.Steps[1])
@@ -283,7 +286,6 @@ steps:
 func TestM1_13_BuiltinWorkflowsParseAndValidate(t *testing.T) {
 	names := []string{
 		"tdd.yaml",
-		"simple.yaml",
 		"cheap2sota.yaml",
 		"parallel-tasks.yaml",
 		"implement-spec.yaml",
@@ -305,6 +307,22 @@ func TestM1_13_BuiltinWorkflowsParseAndValidate(t *testing.T) {
 		}
 		if errs := workflow.Validate(r); len(errs) != 0 {
 			t.Fatalf("validate %s: %v", k, errs)
+		}
+	}
+	for _, k := range []string{"arch-review.yaml"} {
+		raw := workflow.BuiltinValidators[k]
+		if len(raw) == 0 {
+			t.Fatalf("missing builtin validator %s", k)
+		}
+		r, warns, err := workflow.Parse(raw, "")
+		if err != nil {
+			t.Fatalf("parse validator %s: %v", k, err)
+		}
+		if len(warns) != 0 {
+			t.Fatalf("validator %s: expected 0 warnings, got %v", k, warns)
+		}
+		if errs := workflow.Validate(r); len(errs) != 0 {
+			t.Fatalf("validate validator %s: %v", k, errs)
 		}
 	}
 }

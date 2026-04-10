@@ -14,8 +14,10 @@ const (
 )
 
 func userConfigDir() string     { return brand.StateDir() }
-func projectConfigName() string { return brand.Lower() + ".toml" }
-func envPrefix() string         { return brand.Upper() }
+func projectConfigName() string { return "gump.toml" }
+
+// Env vars always use the GUMP_ prefix (R7), independent of binary display name.
+func envPrefix() string { return "GUMP" }
 
 // Load merges config in priority order so project overrides user overrides defaults.
 // We do not fail when config files are missing so a fresh install works without setup.
@@ -42,7 +44,7 @@ func Load() (*Config, *Source, error) {
 		applyFile(cfg, src, path, "~/"+userConfigDir()+"/"+userConfigFile)
 	}
 
-	// Project config: <brand>.toml from cwd upward
+	// Project config: gump.toml from cwd upward (R7: no pudding.toml fallback)
 	cwd, _ := os.Getwd()
 	if cwd != "" {
 		path := findProjectConfig(cwd)
@@ -57,10 +59,10 @@ func Load() (*Config, *Source, error) {
 	return cfg, src, nil
 }
 
-// findProjectConfig walks up from dir until it finds <brand>.toml or a .git (repo root); it does not traverse above .git.
+// findProjectConfig walks up from dir until it finds gump.toml or a .git (repo root); it does not traverse above .git.
 func findProjectConfig(dir string) string {
 	for {
-		path := filepath.Join(dir, projectConfigName())
+		path := filepath.Join(dir, "gump.toml")
 		if _, err := os.Stat(path); err == nil {
 			return path
 		}
@@ -177,7 +179,7 @@ func applyEnv(cfg *Config, src *Source) {
 	}
 }
 
-// ProjectConfigPath returns the path to <brand>.toml if found from cwd, else "".
+// ProjectConfigPath returns the path to gump.toml if found from cwd, else "".
 func ProjectConfigPath() string {
 	cwd, _ := os.Getwd()
 	if cwd == "" {
@@ -186,7 +188,7 @@ func ProjectConfigPath() string {
 	return findProjectConfig(cwd)
 }
 
-// ProjectRoot returns the directory containing <brand>.toml or .git, or cwd if none.
+// ProjectRoot returns the directory containing gump.toml or .git, or cwd if none.
 func ProjectRoot() string {
 	cwd, _ := os.Getwd()
 	if cwd == "" {

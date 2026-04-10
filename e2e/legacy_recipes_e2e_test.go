@@ -382,7 +382,7 @@ func TestCookAgentStubSimplePlanAndForeach(t *testing.T) {
 	writeFile(t, dir, ".pudding-test-plan.json", `[{"name": "task-1", "description": "One"}, {"name": "task-2", "description": "Two"}]`)
 	writeFile(t, dir, ".pudding-test-scenario.json", `{"files": {"file1.go": "package main\n\nfunc F1() {}\n", "file2.go": "package main\n\nfunc F2() {}\n"}}`)
 	gitCommitAll(t, dir, "add spec")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "simple", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
 	}
@@ -2796,7 +2796,7 @@ func TestStep5V7_SchemaPass(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "Decompose the work")
 	gitCommitAll(t, dir, "add spec")
-	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "simple", "--agent-stub"}, nil, dir)
+	stdout, stderr, code := runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("exit %d: stdout=%s stderr=%s", code, stdout, stderr)
 	}
@@ -3116,7 +3116,7 @@ func TestStep7L1_ManifestCreated(t *testing.T) {
 	writeFile(t, dir, ".pudding-test-plan.json", `[{"name": "task-1", "description": "One"}, {"name": "task-2", "description": "Two"}]`)
 	writeFile(t, dir, ".pudding-test-scenario.json", `{"files": {"main.go": "package main\n\nfunc Add(a, b int) int { return a + b }\nfunc main() {}"}}`)
 	gitCommitAll(t, dir, "add spec")
-	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "simple", "--agent-stub"}, nil, dir)
+	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("cook exit %d: %s", code, stdout)
 	}
@@ -3214,7 +3214,7 @@ func TestStep7L2_ArtifactsWritten(t *testing.T) {
 	writeFile(t, dir, "add_test.go", "package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { if Add(1, 2) != 3 { t.Fatal() } }\n")
 	writeFile(t, dir, ".pudding-test-scenario.json", `{"files": {"add.go": "package main\n\nfunc Add(a, b int) int { return a + b }\n", "add_test.go": "package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { if Add(1, 2) != 3 { t.Fatal() } }\n"}}`)
 	gitCommitAll(t, dir, "add spec and test")
-	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "simple", "--agent-stub"}, nil, dir)
+	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("cook exit %d: %s", code, stdout)
 	}
@@ -3259,7 +3259,7 @@ func TestStep7L3_StateBagPersisted(t *testing.T) {
 	writeFile(t, dir, ".pudding-test-plan.json", `[{"name": "task-1", "description": "One"}, {"name": "task-2", "description": "Two"}]`)
 	writeFile(t, dir, ".pudding-test-scenario.json", `{"files": {"main.go": "package main\n\nfunc Add(a, b int) int { return a + b }\nfunc main() {}"}}`)
 	gitCommitAll(t, dir, "add spec")
-	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "simple", "--agent-stub"}, nil, dir)
+	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("cook exit %d: %s", code, stdout)
 	}
@@ -3290,11 +3290,11 @@ func TestStep7L4_IndexAlimented(t *testing.T) {
 	writeFile(t, dir, ".pudding-test-plan.json", `[{"name": "task-1", "description": "One"}, {"name": "task-2", "description": "Two"}]`)
 	writeFile(t, dir, ".pudding-test-scenario.json", `{"files": {"main.go": "package main\n\nfunc main() {}"}}`)
 	gitCommitAll(t, dir, "add spec")
-	stdout1, _, code1 := runPudding(t, []string{"run", "spec.md", "--workflow", "simple", "--agent-stub"}, nil, dir)
+	stdout1, _, code1 := runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, nil, dir)
 	if code1 != 0 {
 		t.Fatalf("first cook exit %d: %s", code1, stdout1)
 	}
-	stdout2, _, code2 := runPudding(t, []string{"run", "spec.md", "--workflow", "simple", "--agent-stub"}, nil, dir)
+	stdout2, _, code2 := runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, nil, dir)
 	if code2 != 0 {
 		t.Fatalf("second cook exit %d: %s", code2, stdout2)
 	}
@@ -3422,7 +3422,7 @@ func TestStep7L7_ReportShowsLastCook(t *testing.T) {
 	writeFile(t, dir, ".pudding-test-plan.json", `[{"name": "task-1", "description": "One"}, {"name": "task-2", "description": "Two"}]`)
 	writeFile(t, dir, ".pudding-test-scenario.json", `{"files": {"main.go": "package main\n\nfunc main() {}"}}`)
 	gitCommitAll(t, dir, "add spec")
-	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "simple", "--agent-stub"}, nil, dir)
+	stdout, _, code := runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("cook exit %d: %s", code, stdout)
 	}
@@ -3443,8 +3443,8 @@ func TestStep7L7_ReportShowsLastCook(t *testing.T) {
 	if !strings.Contains(strings.ToLower(reportOut), "pass") {
 		t.Error("report should contain pass")
 	}
-	if !strings.Contains(reportOut, "simple") {
-		t.Error("report should contain recipe name simple")
+	if !strings.Contains(reportOut, "freeform") {
+		t.Error("report should contain workflow name freeform")
 	}
 	// Duration format Xm or Xs
 	if !strings.Contains(reportOut, "s") && !strings.Contains(reportOut, "m") {
@@ -3459,8 +3459,8 @@ func TestStep7L8_ReportLastNAggregates(t *testing.T) {
 	writeFile(t, dir, ".pudding-test-plan.json", `[{"name": "task-1", "description": "One"}, {"name": "task-2", "description": "Two"}]`)
 	writeFile(t, dir, ".pudding-test-scenario.json", `{"files": {"main.go": "package main\n\nfunc main() {}"}}`)
 	gitCommitAll(t, dir, "add spec")
-	runPudding(t, []string{"run", "spec.md", "--workflow", "simple", "--agent-stub"}, nil, dir)
-	runPudding(t, []string{"run", "spec.md", "--workflow", "simple", "--agent-stub"}, nil, dir)
+	runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, nil, dir)
+	runPudding(t, []string{"run", "spec.md", "--workflow", "freeform", "--agent-stub"}, nil, dir)
 	reportOut, _, code := runPudding(t, []string{"report", "--last", "2"}, nil, dir)
 	if code != 0 {
 		t.Fatalf("report --last 2 exit %d: %s", code, reportOut)

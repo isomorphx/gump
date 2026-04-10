@@ -20,18 +20,50 @@ type ResolvedWorkflow struct {
 // BuiltinWorkflows is populated from embedded YAML by internal/builtin.
 var BuiltinWorkflows = map[string][]byte{}
 
-// Resolve loads a workflow by name using project → user → built-in cascade (v0.0.4 paths).
+// BuiltinValidators is embedded validator workflows (keys are filenames, e.g. arch-review.yaml).
+var BuiltinValidators = map[string][]byte{}
+
+// Resolve loads a workflow or validator path using project → user → built-in cascade (v0.0.4 only; no legacy paths).
 func Resolve(name string, projectRoot string) (*ResolvedWorkflow, error) {
+	name = strings.TrimSpace(name)
 	var searched []string
 
-	primaryDir := brand.StateDir()
-	primarySubdir := "workflows"
-	if brand.Lower() != "gump" {
-		primarySubdir = "recipes"
+	// Gate validate: paths use the validators/ prefix so files live under .gump/validators/, not under workflows/.
+	if strings.HasPrefix(name, "validators/") {
+		rel := strings.Trim(strings.TrimPrefix(name, "validators/"), "/")
+		if rel == "" || strings.Contains(rel, "..") {
+			return nil, fmt.Errorf("invalid validator reference %q", name)
+		}
+		rel = filepath.ToSlash(rel)
+		vPath := filepath.Join("validators", filepath.FromSlash(rel)+".yaml")
+
+		if projectRoot != "" {
+			p := filepath.Join(projectRoot, brand.StateDir(), vPath)
+			searched = append(searched, p)
+			if raw, err := os.ReadFile(p); err == nil {
+				return &ResolvedWorkflow{Name: name, Source: "project", Path: p, Raw: raw}, nil
+			}
+		}
+		home, _ := os.UserHomeDir()
+		if home != "" {
+			p := filepath.Join(home, brand.StateDir(), vPath)
+			searched = append(searched, p)
+			if raw, err := os.ReadFile(p); err == nil {
+				return &ResolvedWorkflow{Name: name, Source: "user", Path: p, Raw: raw}, nil
+			}
+		}
+		key := filepath.Base(vPath)
+		if raw, ok := BuiltinValidators[key]; ok {
+			return &ResolvedWorkflow{Name: name, Source: "built-in", Path: "", Raw: raw}, nil
+		}
+		searched = append(searched, "built-in/validators")
+		return nil, fmt.Errorf("workflow %q not found. Searched: %v", name, searched)
 	}
 
+	primaryDir := brand.StateDir()
+
 	if projectRoot != "" {
-		p := filepath.Join(projectRoot, primaryDir, primarySubdir, name+".yaml")
+		p := filepath.Join(projectRoot, primaryDir, "workflows", name+".yaml")
 		searched = append(searched, p)
 		if raw, err := os.ReadFile(p); err == nil {
 			return &ResolvedWorkflow{Name: name, Source: "project", Path: p, Raw: raw}, nil
@@ -40,29 +72,10 @@ func Resolve(name string, projectRoot string) (*ResolvedWorkflow, error) {
 
 	home, _ := os.UserHomeDir()
 	if home != "" {
-		p := filepath.Join(home, primaryDir, primarySubdir, name+".yaml")
+		p := filepath.Join(home, primaryDir, "workflows", name+".yaml")
 		searched = append(searched, p)
 		if raw, err := os.ReadFile(p); err == nil {
 			return &ResolvedWorkflow{Name: name, Source: "user", Path: p, Raw: raw}, nil
-		}
-	}
-
-	if brand.Lower() == "gump" {
-		if projectRoot != "" {
-			p := filepath.Join(projectRoot, ".pudding/recipes", name+".yaml")
-			searched = append(searched, p)
-			if raw, err := os.ReadFile(p); err == nil {
-				fmt.Fprintf(os.Stderr, "warning: workflow %q not found in .gump/workflows/, falling back to legacy .pudding/recipes/ (compat)\n", name)
-				return &ResolvedWorkflow{Name: name, Source: "project", Path: p, Raw: raw}, nil
-			}
-		}
-		if home != "" {
-			p := filepath.Join(home, ".pudding/recipes", name+".yaml")
-			searched = append(searched, p)
-			if raw, err := os.ReadFile(p); err == nil {
-				fmt.Fprintf(os.Stderr, "warning: workflow %q not found in .gump/workflows/, falling back to legacy .pudding/recipes/ (compat)\n", name)
-				return &ResolvedWorkflow{Name: name, Source: "user", Path: p, Raw: raw}, nil
-			}
 		}
 	}
 

@@ -131,13 +131,13 @@ func TestSmokeDryRunV4(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("run exit %d: %s", code, stdout)
 	}
-	for _, s := range []string{"Budget:", "$5.00", "gate=", "on_failure:", "State Bag Resolutions:"} {
+	for _, s := range []string{"Budget:", "$8.00", "gate=", "retry:", "type=split", "type=code", "State Bag Resolutions:"} {
 		if !strings.Contains(stdout, s) {
 			t.Errorf("stdout missing %q: %s", s, stdout)
 		}
 	}
-	if strings.Contains(stdout, "validate:") || strings.Contains(stdout, "retry:") {
-		t.Errorf("stdout must not contain validate/retry: %s", stdout)
+	if strings.Contains(stdout, "on_failure:") {
+		t.Errorf("stdout must not use legacy on_failure: %s", stdout)
 	}
 }
 
@@ -200,7 +200,7 @@ func TestSmokeSimple(t *testing.T) {
 	requireAgent(t, "claude")
 	dir := setupSmokeRepo(t)
 	writeSpec(t, dir, specMathLib)
-	stdout, stderr, code := runGump(t, dir, "run", "spec.md", "--workflow", "simple", "--agent", "claude-sonnet")
+	stdout, stderr, code := runGump(t, dir, "run", "spec.md", "--workflow", "freeform", "--agent", "claude-sonnet")
 	if code != 0 {
 		t.Fatalf("run exit %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}

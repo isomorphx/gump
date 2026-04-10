@@ -1,8 +1,62 @@
 name: implement-spec
+max_budget: 20.00
+
 steps:
-  - name: execute
-    type: code
-    prompt: "{spec}"
-    agent: claude-opus
-    guard: { max_turns: 80 }
-    gate: [compile]
+  - name: decompose
+    type: split
+    get:
+      prompt: |
+        Decompose {spec} into independent tasks with disjoint blast radii.
+    run:
+      agent: claude-opus
+    gate: [schema]
+    each:
+      - name: converge
+        type: code
+        get:
+          prompt: |
+            Implement: {task.description}
+            Files: {task.files}
+            {prev.gate.review.comments}
+          context:
+            - file: docs/architecture.md
+        run:
+          agent: claude-sonnet
+          guard:
+            max_turns: 60
+        gate:
+          - compile
+          - test
+          - validate: validators/arch-review
+            diff: "{diff}"
+            spec: "{spec}"
+            agent: claude-opus
+        retry:
+          - attempt: 2
+            prompt: |
+              Deviations remain: {gate.review.comments}
+              Fix only these. Files: {task.files}
+          - attempt: 4
+            agent: claude-opus
+            session: new
+            worktree: reset
+          - exit: 6
+
+      - name: smoke
+        type: code
+        get:
+          prompt: |
+            Run smoke tests and fix any issues.
+            Do not refactor. Only fix failures.
+          session:
+            from: converge
+        run:
+          agent: "{converge.agent}"
+          guard:
+            max_turns: 30
+        gate: [compile, test]
+        retry:
+          - exit: 3
+
+  - name: quality
+    gate: [compile, lint, test]

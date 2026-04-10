@@ -53,8 +53,8 @@ func assertStepStartedAgentForStepContaining(t *testing.T, repoDir, runID, sub, 
 func TestE2E_R5_01_GateValidatorPass(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	os.MkdirAll(filepath.Join(dir, ".gump", "workflows", "validators"), 0755)
-	writeFile(t, dir, ".gump/workflows/validators/check.yaml", `name: check
+	os.MkdirAll(filepath.Join(dir, ".gump", "validators"), 0755)
+	writeFile(t, dir, ".gump/validators/check.yaml", `name: check
 steps:
   - name: analyze
     type: validate
@@ -88,8 +88,8 @@ steps:
 func TestE2E_R5_02_GateValidatorFail(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	os.MkdirAll(filepath.Join(dir, ".gump", "workflows", "validators"), 0755)
-	writeFile(t, dir, ".gump/workflows/validators/check.yaml", `name: check
+	os.MkdirAll(filepath.Join(dir, ".gump", "validators"), 0755)
+	writeFile(t, dir, ".gump/validators/check.yaml", `name: check
 steps:
   - name: analyze
     type: validate
@@ -147,8 +147,8 @@ func assertSomeFileUnderGumpContainsAll(t *testing.T, repoDir string, parts []st
 func TestE2E_R5_03_GateValidatorWithUsesOpus(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "SPEC_R5_03_SPEC_MARK")
-	os.MkdirAll(filepath.Join(dir, ".gump", "workflows", "validators"), 0755)
-	writeFile(t, dir, ".gump/workflows/validators/arch-review.yaml", `name: arch-review
+	os.MkdirAll(filepath.Join(dir, ".gump", "validators"), 0755)
+	writeFile(t, dir, ".gump/validators/arch-review.yaml", `name: arch-review
 steps:
   - name: analyze
     type: validate
@@ -190,8 +190,8 @@ steps:
 func TestE2E_R5_04_GateValidatorCommentsInRetryPrompt(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	os.MkdirAll(filepath.Join(dir, ".gump", "workflows", "validators"), 0755)
-	writeFile(t, dir, ".gump/workflows/validators/arch-review.yaml", `name: arch-review
+	os.MkdirAll(filepath.Join(dir, ".gump", "validators"), 0755)
+	writeFile(t, dir, ".gump/validators/arch-review.yaml", `name: arch-review
 steps:
   - name: analyze
     type: validate
@@ -284,8 +284,8 @@ steps:
 func TestE2E_R5_05_RetryValidatorMatch(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	os.MkdirAll(filepath.Join(dir, ".gump", "workflows", "validators"), 0755)
-	writeFile(t, dir, ".gump/workflows/validators/assess-distance.yaml", `name: assess-distance
+	os.MkdirAll(filepath.Join(dir, ".gump", "validators"), 0755)
+	writeFile(t, dir, ".gump/validators/assess-distance.yaml", `name: assess-distance
 steps:
   - name: judge
     type: validate
@@ -327,8 +327,8 @@ steps:
 func TestE2E_R5_06_RetryValidatorNoMatch(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	os.MkdirAll(filepath.Join(dir, ".gump", "workflows", "validators"), 0755)
-	writeFile(t, dir, ".gump/workflows/validators/assess-distance.yaml", `name: assess-distance
+	os.MkdirAll(filepath.Join(dir, ".gump", "validators"), 0755)
+	writeFile(t, dir, ".gump/validators/assess-distance.yaml", `name: assess-distance
 steps:
   - name: judge
     type: validate
@@ -409,8 +409,8 @@ steps:
 func TestE2E_R5_08_WorkflowInGet(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "auth spec")
-	os.MkdirAll(filepath.Join(dir, ".gump", "workflows", "validators"), 0755)
-	writeFile(t, dir, ".gump/workflows/validators/research.yaml", `name: research
+	os.MkdirAll(filepath.Join(dir, ".gump", "validators"), 0755)
+	writeFile(t, dir, ".gump/validators/research.yaml", `name: research
 steps:
   - name: find
     type: validate
@@ -437,8 +437,8 @@ steps:
 func TestE2E_R5_09_StandaloneValidatorWithSet(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "ignored")
-	os.MkdirAll(filepath.Join(dir, ".gump", "workflows", "validators"), 0755)
-	writeFile(t, dir, ".gump/workflows/validators/arch-review.yaml", `name: arch-review
+	os.MkdirAll(filepath.Join(dir, ".gump", "validators"), 0755)
+	writeFile(t, dir, ".gump/validators/arch-review.yaml", `name: arch-review
 steps:
   - name: audit
     type: validate
@@ -464,8 +464,8 @@ steps:
 func TestE2E_R5_10_DryRunSubworkflowWarning(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	os.MkdirAll(filepath.Join(dir, ".gump", "workflows", "validators"), 0755)
-	writeFile(t, dir, ".gump/workflows/validators/arch-review.yaml", `name: arch-review
+	os.MkdirAll(filepath.Join(dir, ".gump", "validators"), 0755)
+	writeFile(t, dir, ".gump/validators/arch-review.yaml", `name: arch-review
 steps:
   - name: a
     type: validate
@@ -492,8 +492,8 @@ steps:
 func TestE2E_R5_11_AllGatesEvaluated(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	os.MkdirAll(filepath.Join(dir, ".gump", "workflows", "validators"), 0755)
-	writeFile(t, dir, ".gump/workflows/validators/check.yaml", `name: check
+	os.MkdirAll(filepath.Join(dir, ".gump", "validators"), 0755)
+	writeFile(t, dir, ".gump/validators/check.yaml", `name: check
 steps:
   - name: analyze
     type: validate
@@ -532,8 +532,8 @@ steps:
 func TestE2E_R5_12_LedgerQualifiedNestedStep(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	os.MkdirAll(filepath.Join(dir, ".gump", "workflows", "validators"), 0755)
-	writeFile(t, dir, ".gump/workflows/validators/arch-review.yaml", `name: arch-review
+	os.MkdirAll(filepath.Join(dir, ".gump", "validators"), 0755)
+	writeFile(t, dir, ".gump/validators/arch-review.yaml", `name: arch-review
 steps:
   - name: analyze
     type: validate
@@ -566,8 +566,8 @@ steps:
 func TestE2E_R5_13_CumulativeCostWithGateValidator(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	os.MkdirAll(filepath.Join(dir, ".gump", "workflows", "validators"), 0755)
-	writeFile(t, dir, ".gump/workflows/validators/extra.yaml", `name: extra
+	os.MkdirAll(filepath.Join(dir, ".gump", "validators"), 0755)
+	writeFile(t, dir, ".gump/validators/extra.yaml", `name: extra
 steps:
   - name: v
     type: validate
@@ -602,8 +602,8 @@ steps:
 func TestSmoke_R5_01_ArchReviewInGate(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
-	os.MkdirAll(filepath.Join(dir, ".gump", "workflows", "validators"), 0755)
-	writeFile(t, dir, ".gump/workflows/validators/arch-review.yaml", `name: arch-review
+	os.MkdirAll(filepath.Join(dir, ".gump", "validators"), 0755)
+	writeFile(t, dir, ".gump/validators/arch-review.yaml", `name: arch-review
 steps:
   - name: analyze
     type: validate

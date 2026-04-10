@@ -1,24 +1,64 @@
 name: tdd
-max_budget: 5.00
+max_budget: 8.00
+
 steps:
-  - name: build
+  - name: decompose
     type: split
-    agent: claude-opus
-    prompt: "Plan TDD tasks for {spec}"
-    guard: { max_turns: 80 }
+    get:
+      prompt: |
+        Analyze this spec and the codebase. Decompose into independent tasks.
+        For each task, list the files that will be affected (blast radius).
+    run:
+      agent: claude-opus
     gate: [schema]
     each:
-      - name: tests
+      - name: red
         type: code
-        agent: claude-opus
-        prompt: "Write tests for {task.description}"
-        guard: { max_turns: 80 }
-        gate: [compile, test]
-      - name: impl
+        get:
+          prompt: |
+            Write comprehensive failing tests for: {task.description}
+            Cover edge cases and error conditions.
+            Only create/modify test files in: {task.files}
+        run:
+          agent: claude-haiku
+          guard:
+            max_turns: 40
+        gate:
+          - compile
+          - touched: "*_test.*"
+          - tests_found
+        retry:
+          - attempt: 2
+            agent: claude-sonnet
+          - exit: 3
+
+      - name: green
         type: code
-        agent: claude-opus
-        prompt: "Implement {task.description}"
-        guard: { max_turns: 80 }
-        gate: [compile, test]
+        get:
+          prompt: |
+            Implement code to make all tests pass.
+            Do NOT modify any test files.
+            Only modify implementation files in: {task.files}
+          session:
+            from: red
+        run:
+          agent: claude-haiku
+          guard:
+            max_turns: 60
+        gate:
+          - compile
+          - test
+          - untouched: "*_test.*"
+        retry:
+          - attempt: 2
+            prompt: |
+              Tests still failing. Error: {error}
+              Focus only on making tests pass. Do not modify test files.
+              Files: {task.files}
+          - attempt: 4
+            agent: claude-sonnet
+            session: new
+          - exit: 5
+
   - name: quality
     gate: [compile, lint, test]

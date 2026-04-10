@@ -65,7 +65,7 @@ func TestCookDryRunTDD(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stdout)
 	}
-	for _, s := range []string{"max_budget: $5.00", "gate=[schema]", "type=split", "each:"} {
+	for _, s := range []string{"Budget:", "$8.00", "gate=[schema]", "type=split", "each:"} {
 		if !strings.Contains(stdout, s) {
 			t.Errorf("stdout missing %q: %s", s, stdout)
 		}
@@ -91,7 +91,7 @@ func TestCookbookList(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stdout)
 	}
-	for _, s := range []string{"tdd", "simple", "bugfix", "refactor", "cheap2sota", "parallel-tasks", "implement-spec", "freeform"} {
+	for _, s := range []string{"tdd", "bugfix", "refactor", "cheap2sota", "parallel-tasks", "implement-spec", "freeform"} {
 		if !strings.Contains(stdout, s) {
 			t.Errorf("stdout missing %q: %s", s, stdout)
 		}
@@ -173,7 +173,8 @@ func TestConfigEnvOverridesFile(t *testing.T) {
 
 func TestCookInvalidRecipeYAML(t *testing.T) {
 	dir := setupRepo(t)
-	writeFile(t, dir, ".pudding/recipes/bad.yaml", `name: bad
+	_ = os.MkdirAll(filepath.Join(dir, ".gump", "workflows"), 0755)
+	writeFile(t, dir, ".gump/workflows/bad.yaml", `name: bad
 steps:
   - name: invalid
     type: code
@@ -197,7 +198,7 @@ steps:
 
 func TestCookbookListIncludesProjectRecipes(t *testing.T) {
 	dir := setupRepo(t)
-	writeFile(t, dir, ".pudding/recipes/custom.yaml", `name: custom
+	writeFile(t, dir, ".gump/workflows/custom.yaml", `name: custom
 description: My custom recipe
 steps:
   - name: s
@@ -220,7 +221,7 @@ review: []
 
 func TestCookStrategyShorthandParsed(t *testing.T) {
 	dir := setupRepo(t)
-	writeFile(t, dir, ".pudding/recipes/shorthand.yaml", `name: shorthand
+	writeFile(t, dir, ".gump/workflows/shorthand.yaml", `name: shorthand
 steps:
   - name: do
     type: code
@@ -234,7 +235,7 @@ steps:
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stdout)
 	}
-	if !strings.Contains(stdout, "retry: exit cap") {
+	if !strings.Contains(stdout, "retry: exit:5") {
 		t.Errorf("stdout %q", stdout)
 	}
 }

@@ -51,7 +51,7 @@ func TestReadIndexMissing(t *testing.T) {
 
 func TestReadIndexSkipsInvalidLines(t *testing.T) {
 	dir := t.TempDir()
-	indexPath := filepath.Join(dir, ".pudding", "cooks", indexName)
+	indexPath := filepath.Join(dir, ".gump", "runs", indexName)
 	_ = os.MkdirAll(filepath.Dir(indexPath), 0755)
 	_ = os.WriteFile(indexPath, []byte(`{"cook_id":"a","ts":"2025-01-01T00:00:00Z","recipe":"r","spec":"s","status":"pass","duration_ms":0,"cost_usd":0,"steps":0,"retries":0,"agents":[]}
 not json

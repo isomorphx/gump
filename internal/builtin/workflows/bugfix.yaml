@@ -1,8 +1,57 @@
 name: bugfix
+max_budget: 5.00
+
 steps:
-  - name: execute
-    type: code
-    prompt: "{spec}"
-    agent: claude-opus
-    guard: { max_turns: 80 }
-    gate: [compile]
+  - name: analyze
+    type: split
+    get:
+      prompt: |
+        Analyze this bug report. Identify the root cause.
+        Produce a single task with the reproduction strategy and affected files.
+    run:
+      agent: claude-sonnet
+    gate: [schema]
+    each:
+      - name: reproduce
+        type: code
+        get:
+          prompt: |
+            Write a test that reproduces this bug: {task.description}
+            The test must fail with the current code.
+        run:
+          agent: claude-haiku
+          guard:
+            max_turns: 30
+        gate:
+          - compile
+          - tests_found
+        retry:
+          - attempt: 2
+            agent: claude-sonnet
+          - exit: 3
+
+      - name: patch
+        type: code
+        get:
+          prompt: |
+            Fix the bug. The reproduction test must pass.
+            Only modify: {task.files}
+          session:
+            from: reproduce
+        run:
+          agent: claude-haiku
+          guard:
+            max_turns: 40
+        gate: [compile, test]
+        retry:
+          - attempt: 2
+            prompt: |
+              Fix still failing: {error}
+              Only modify: {task.files}
+          - attempt: 3
+            agent: claude-sonnet
+            session: new
+          - exit: 4
+
+  - name: quality
+    gate: [compile, test]

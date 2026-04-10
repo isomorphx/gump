@@ -12,7 +12,7 @@ func TestPrepareOutputDir(t *testing.T) {
 	if err := PrepareOutputDir(dir); err != nil {
 		t.Fatal(err)
 	}
-	outPath := filepath.Join(dir, ".pudding", "out")
+	outPath := filepath.Join(dir, ".gump", "out")
 	if st, err := os.Stat(outPath); err != nil || !st.IsDir() {
 		t.Errorf("expected .pudding/out dir: %v", err)
 	}
@@ -28,14 +28,14 @@ func TestExtractPlanOutput_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if err != nil && !strings.Contains(err.Error(), ".pudding/out/plan.json") {
+	if err != nil && !strings.Contains(err.Error(), ".gump/out/plan.json") {
 		t.Errorf("error should mention plan.json: %v", err)
 	}
 }
 
 func TestExtractPlanOutput_Valid(t *testing.T) {
 	dir := t.TempDir()
-	outDir := filepath.Join(dir, ".pudding", "out")
+	outDir := filepath.Join(dir, ".gump", "out")
 	_ = os.MkdirAll(outDir, 0755)
 	planPath := filepath.Join(outDir, "plan.json")
 	content := `[{"name":"t1","description":"D1","files":["a.go"]}]`
@@ -64,7 +64,7 @@ func TestExtractArtifactOutput_NotFound(t *testing.T) {
 
 func TestExtractArtifactOutput_Valid(t *testing.T) {
 	dir := t.TempDir()
-	outDir := filepath.Join(dir, ".pudding", "out")
+	outDir := filepath.Join(dir, ".gump", "out")
 	_ = os.MkdirAll(outDir, 0755)
 	artifactPath := filepath.Join(outDir, "artifact.txt")
 	content := "stub artifact output"

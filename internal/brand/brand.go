@@ -19,12 +19,8 @@ var (
 )
 
 func init() {
-	// WHY: we want branding decisions to happen before any CLI command init.
-	// We still fall back to the legacy name when detection fails.
 	exe := filepath.Base(strings.TrimSpace(os.Args[0]))
 	exeLower := strings.ToLower(exe)
-	// WHY: E2E tests build versioned binaries like `gump-v99` but they should
-	// still be treated as the `gump` brand.
 	if strings.HasPrefix(exeLower, "gump") {
 		nameLower = "gump"
 		nameUpper = "GUMP"
@@ -34,33 +30,14 @@ func init() {
 func Lower() string { return nameLower }
 func Upper() string { return nameUpper }
 
-func StateDir() string {
-	if Lower() == "gump" {
-		return ".gump"
-	}
-	return ".pud" + "ding"
-}
+// StateDir is always .gump (R7: no legacy .pudding paths from branding).
+func StateDir() string { return ".gump" }
 
-func RunsDir() string {
-	if Lower() == "gump" {
-		return "runs"
-	}
-	return "cooks"
-}
+func RunsDir() string { return "runs" }
 
-func WorktreeBranchPrefix() string {
-	if Lower() == "gump" {
-		return "gump/run-"
-	}
-	return "pud" + "ding/cook-"
-}
+func WorktreeBranchPrefix() string { return "gump/run-" }
 
-func WorktreeDirPrefix() string {
-	if Lower() == "gump" {
-		return "run-"
-	}
-	return "cook-"
-}
+func WorktreeDirPrefix() string { return "run-" }
 
 func MergeTrailer() string {
 	if Lower() == "gump" {

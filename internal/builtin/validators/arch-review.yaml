@@ -1,0 +1,31 @@
+name: arch-review
+steps:
+  - name: review
+    type: validate
+    get:
+      prompt: |
+        You are a senior code reviewer. Review this diff against the specification.
+
+        ## Specification
+        {spec}
+
+        ## Diff to Review
+        {diff}
+
+        ## Instructions
+        - Check that the implementation matches the spec
+        - Check for architectural violations
+        - Check for missing error handling
+        - Check for security issues
+        - Check that the code is idiomatic
+
+        If the implementation is acceptable, pass. If there are deviations,
+        fail and explain what needs to change.
+
+        Write your verdict to .gump/out/validate.json with format:
+        {{"pass": true/false, "comments": "your review"}}
+    run:
+      agent: "{agent}"
+      guard:
+        max_turns: 20
+        max_budget: 1.00

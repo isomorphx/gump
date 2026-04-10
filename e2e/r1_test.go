@@ -567,7 +567,6 @@ func TestSmoke_R1_02_DryRunCLI(t *testing.T) {
 func TestSmoke_R1_01_BuiltinsNoWarnings(t *testing.T) {
 	names := []string{
 		"tdd.yaml",
-		"simple.yaml",
 		"cheap2sota.yaml",
 		"parallel-tasks.yaml",
 		"implement-spec.yaml",
@@ -590,6 +589,20 @@ func TestSmoke_R1_01_BuiltinsNoWarnings(t *testing.T) {
 		if errs := workflow.Validate(wf); len(errs) != 0 {
 			t.Fatalf("validate %s: %v", k, errs)
 		}
+	}
+	vraw := workflow.BuiltinValidators["arch-review.yaml"]
+	if len(vraw) == 0 {
+		t.Fatal("missing builtin arch-review.yaml")
+	}
+	vwf, vwarns, verr := workflow.Parse(vraw, "")
+	if verr != nil {
+		t.Fatalf("parse arch-review: %v", verr)
+	}
+	if len(vwarns) != 0 {
+		t.Fatalf("arch-review warnings: %v", vwarns)
+	}
+	if errs := workflow.Validate(vwf); len(errs) != 0 {
+		t.Fatalf("validate arch-review: %v", errs)
 	}
 }
 

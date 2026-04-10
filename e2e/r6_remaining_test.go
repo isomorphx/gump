@@ -87,7 +87,7 @@ func TestE2E_R6_04_RetryInsideEach(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
 	writeFile(t, dir, ".pudding-test-plan.json", `[{"name":"auth","description":"A"}]`)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"2":{"files":{"z.go":"package main\n\nfunc X() { !!! }\n"}},"3":{"files":{"z.go":"package main\n\nfunc X() {}\n"}}}}`)
+	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"1":{"files":{"z.go":"package main\n\nfunc X() { !!! }\n"}},"2":{"files":{"z.go":"package main\n\nfunc X() {}\n"}}}}`)
 	os.MkdirAll(filepath.Join(dir, ".gump", "workflows"), 0755)
 	writeFile(t, dir, ".gump/workflows/r6-04.yaml", `name: r6-04
 steps:
@@ -268,7 +268,7 @@ func TestE2E_R6_11_ResumeSkipsCompletedSplitTasks(t *testing.T) {
 	writeFile(t, dir, "ok2.go", "package main\n")
 	writeFile(t, dir, "spec.md", "x")
 	writeFile(t, dir, ".pudding-test-plan.json", `[{"name":"a","description":"a"},{"name":"b","description":"b"},{"name":"c","description":"c"}]`)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"4":{"files":{"badc.go":"package main\n\nfunc Y() { !!! }\n"}}}}`)
+	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"3":{"files":{"badc.go":"package main\n\nfunc Y() { !!! }\n"}}}}`)
 	os.MkdirAll(filepath.Join(dir, ".gump", "workflows"), 0755)
 	writeFile(t, dir, ".gump/workflows/r6-11.yaml", `name: r6-11
 steps:
@@ -363,7 +363,7 @@ func TestE2E_R6_14_PrevIsolatedPerTask(t *testing.T) {
 	dir := setupGoRepo(t)
 	writeFile(t, dir, "spec.md", "x")
 	writeFile(t, dir, ".pudding-test-plan.json", `[{"name":"a","description":"a"},{"name":"b","description":"b"}]`)
-	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"2":{"files":{"z.go":"package main\n\nfunc Z() { !!! }\n"}},"3":{"files":{"z.go":"package main\n\nfunc Z() {}\n"}},"4":{"files":{"w.go":"package main\n\nfunc W() { !!! }\n"}},"5":{"files":{"w.go":"package main\n\nfunc W() {}\n"}}}}`)
+	writeFile(t, dir, ".pudding-test-scenario.json", `{"by_attempt":{"1":{"files":{"z.go":"package main\n\nfunc Z() { !!! }\n"}},"2":{"files":{"z.go":"package main\n\nfunc Z() {}\n"}},"3":{"files":{"w.go":"package main\n\nfunc W() { !!! }\n"}},"4":{"files":{"w.go":"package main\n\nfunc W() {}\n"}}}}`)
 	os.MkdirAll(filepath.Join(dir, ".gump", "workflows"), 0755)
 	writeFile(t, dir, ".gump/workflows/r6-14.yaml", `name: r6-14
 steps:

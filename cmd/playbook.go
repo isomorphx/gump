@@ -57,15 +57,9 @@ func runCookbookList(cmd *cobra.Command, args []string) error {
 		byName[base] = recipeMeta{name: base, description: r.Description, source: "built-in"}
 	}
 
-	primarySubdir := "recipes"
-	if brand.Lower() == "gump" {
-		primarySubdir = "workflows"
-	}
-
 	home, _ := os.UserHomeDir()
 	if home != "" {
-		legacyUserRecipesDir := filepath.Join(home, ".pudding/recipes")
-		userDir := filepath.Join(home, brand.StateDir(), primarySubdir)
+		userDir := filepath.Join(home, brand.StateDir(), "workflows")
 		entries, _ := os.ReadDir(userDir)
 		for _, e := range entries {
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
@@ -84,30 +78,9 @@ func runCookbookList(cmd *cobra.Command, args []string) error {
 			_ = yaml.Unmarshal(b, &r)
 			byName[base] = recipeMeta{name: base, description: r.Description, source: "user"}
 		}
-
-		if brand.Lower() == "gump" {
-			entries, _ = os.ReadDir(legacyUserRecipesDir)
-			for _, e := range entries {
-				if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
-					continue
-				}
-				base := strings.TrimSuffix(e.Name(), ".yaml")
-				path := filepath.Join(legacyUserRecipesDir, e.Name())
-				b, err := os.ReadFile(path)
-				if err != nil {
-					continue
-				}
-				var r struct {
-					Name        string `yaml:"name"`
-					Description string `yaml:"description"`
-				}
-				_ = yaml.Unmarshal(b, &r)
-				byName[base] = recipeMeta{name: base, description: r.Description, source: "user-legacy"}
-			}
-		}
 	}
 	if projectRoot != "" {
-		projDir := filepath.Join(projectRoot, brand.StateDir(), primarySubdir)
+		projDir := filepath.Join(projectRoot, brand.StateDir(), "workflows")
 		entries, _ := os.ReadDir(projDir)
 		for _, e := range entries {
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
@@ -125,28 +98,6 @@ func runCookbookList(cmd *cobra.Command, args []string) error {
 			}
 			_ = yaml.Unmarshal(b, &r)
 			byName[base] = recipeMeta{name: base, description: r.Description, source: "project"}
-		}
-
-		if brand.Lower() == "gump" {
-			legacyProjDir := filepath.Join(projectRoot, ".pudding/recipes")
-			entries, _ = os.ReadDir(legacyProjDir)
-			for _, e := range entries {
-				if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
-					continue
-				}
-				base := strings.TrimSuffix(e.Name(), ".yaml")
-				path := filepath.Join(legacyProjDir, e.Name())
-				b, err := os.ReadFile(path)
-				if err != nil {
-					continue
-				}
-				var r struct {
-					Name        string `yaml:"name"`
-					Description string `yaml:"description"`
-				}
-				_ = yaml.Unmarshal(b, &r)
-				byName[base] = recipeMeta{name: base, description: r.Description, source: "project-legacy"}
-			}
 		}
 	}
 	var names []string

@@ -1,8 +1,44 @@
 name: cheap2sota
+max_budget: 10.00
+
 steps:
-  - name: execute
-    type: code
-    prompt: "{spec}"
-    agent: claude-opus
-    guard: { max_turns: 80 }
-    gate: [compile]
+  - name: decompose
+    type: split
+    get:
+      prompt: |
+        Decompose {spec} into independent tasks.
+        Each task must be implementable and testable in isolation.
+    run:
+      agent: claude-sonnet
+    gate: [schema]
+    each:
+      - name: impl
+        type: code
+        get:
+          prompt: |
+            Implement: {task.description}
+            Files: {task.files}
+        run:
+          agent: qwen
+          guard:
+            max_turns: 60
+        gate: [compile, test]
+        retry:
+          - attempt: 2
+            prompt: |
+              Previous attempt failed: {error}
+              Fix the implementation. Files: {task.files}
+          - attempt: 3
+            agent: claude-haiku
+            session: new
+          - attempt: 4
+            agent: claude-sonnet
+            session: new
+          - attempt: 5
+            agent: claude-opus
+            session: new
+            worktree: reset
+          - exit: 6
+
+  - name: quality
+    gate: [compile, lint, test]

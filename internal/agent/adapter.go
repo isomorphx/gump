@@ -28,6 +28,8 @@ type LaunchRequest struct {
 	AgentName string
 	Timeout   time.Duration
 	MaxTurns  int
+	// StepPath is the fully-qualified engine step path (e.g. decompose/t1/impl); used by StubAdapter for per-step fixtures.
+	StepPath string
 }
 
 // ResumeRequest is like LaunchRequest but asks the provider to resume an existing session;
@@ -39,6 +41,7 @@ type ResumeRequest struct {
 	SessionID string
 	Timeout   time.Duration
 	MaxTurns  int
+	StepPath string
 }
 
 // Process represents a running agent subprocess; the engine streams stdout and then Waits.

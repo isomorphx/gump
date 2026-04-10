@@ -339,12 +339,13 @@ func runCook(cmd *cobra.Command, args []string) error {
 		fmt.Println("─────────────────────────────────────────────────────────")
 		fmt.Println()
 		fmt.Printf("Workflow:  %s\n", resolved.Name)
+		if rec.MaxBudget > 0 {
+			fmt.Printf("Budget:    $%.2f\n", rec.MaxBudget)
+		}
+		fmt.Println()
 		fmt.Printf("Source:    %s\n", resolved.Source)
 		fmt.Printf("Spec:      %s (%d bytes)\n", specPath, specSize)
 		fmt.Printf("Config:    %s\n", configSource)
-		if rec.MaxBudget > 0 {
-			fmt.Printf("max_budget: $%.2f\n", rec.MaxBudget)
-		}
 		if rec.MaxTimeout != "" {
 			fmt.Printf("max_timeout: %s\n", rec.MaxTimeout)
 		}
@@ -685,75 +686,131 @@ func walkStepNames(steps []workflow.Step, fn func(name string)) {
 
 func printStepsV4(steps []workflow.Step, indent string, parentNum string) {
 	for i, s := range steps {
-		stepNum := fmt.Sprintf("%d", i+1)
-		if parentNum != "" {
-			stepNum = parentNum + "." + stepNum
+		var stepNum string
+		if parentNum == "" {
+			stepNum = fmt.Sprintf("%d", i+1)
+			fmt.Printf("%s%s. %s\n", indent, stepNum, s.Name)
+		} else {
+			stepNum = parentNum + "." + fmt.Sprintf("%d", i+1)
+			fmt.Printf("%s%s %s\n", indent, stepNum, s.Name)
 		}
-		fmt.Printf("%s%s. %s\n", indent, stepNum, s.Name)
 		detailIndent := indent + "   "
-		if strings.TrimSpace(s.Type) != "" {
-			fmt.Printf("%stype=%s\n", detailIndent, s.Type)
-		}
-		if len(s.Gate) > 0 {
-			fmt.Printf("%sgate=%s\n", detailIndent, formatValidators(s.Gate))
-		}
-		if s.Type == "split" && len(s.Each) > 0 {
-			fmt.Printf("%seach: (%d nested steps)\n", detailIndent, len(s.Each))
+
+		var summary []string
+		if t := strings.TrimSpace(s.Type); t != "" {
+			summary = append(summary, "type="+t)
 		}
 		if s.Parallel {
-			fmt.Printf("%sparallel=true\n", detailIndent)
-		}
-		if s.Workflow != "" {
-			fmt.Printf("%sworkflow=%s\n", detailIndent, s.Workflow)
+			summary = append(summary, "parallel=true")
 		}
 		if s.Agent != "" {
-			fmt.Printf("%sagent=%s\n", detailIndent, s.Agent)
+			summary = append(summary, "agent="+s.Agent)
 		}
-		if strings.TrimSpace(s.Prompt) != "" {
-			preview := strings.TrimSpace(s.Prompt)
-			if len(preview) > 60 {
-				preview = preview[:57] + "..."
-			}
-			fmt.Printf("%sprompt=%q\n", detailIndent, preview)
+		if len(s.Gate) > 0 {
+			summary = append(summary, "gate="+formatValidators(s.Gate))
 		}
-		if strings.TrimSpace(s.HITL) != "" {
-			fmt.Printf("%shitl=%s\n", detailIndent, s.HITL)
+		if s.Workflow != "" {
+			summary = append(summary, "workflow="+s.Workflow)
 		}
-		if s.Session.Mode == "from" && s.Session.Target != "" {
-			fmt.Printf("%ssession=from:%s\n", detailIndent, s.Session.Target)
-		} else if s.Session.Mode == "new" {
-			fmt.Printf("%ssession=new\n", detailIndent)
+		if len(summary) > 0 {
+			fmt.Printf("%s%s\n", detailIndent, strings.Join(summary, "  "))
 		}
-		hasExplicitGuard := s.Guard.MaxTurns > 0 || s.Guard.MaxBudget > 0 || s.Guard.MaxTokens > 0 || s.Guard.MaxTime != "" || s.Guard.NoWrite != nil
-		if hasExplicitGuard {
-			fmt.Printf("%sguard:", detailIndent)
-			if s.Guard.MaxTurns > 0 {
-				fmt.Printf(" max_turns=%d", s.Guard.MaxTurns)
+
+		if s.Type == "split" && len(s.Each) > 0 {
+			fmt.Printf("%seach:\n", detailIndent)
+			printStepsV4(s.Each, detailIndent, stepNum)
+		} else {
+			if strings.TrimSpace(s.Prompt) != "" {
+				preview := strings.TrimSpace(s.Prompt)
+				if len(preview) > 60 {
+					preview = preview[:57] + "..."
+				}
+				fmt.Printf("%sprompt=%q\n", detailIndent, preview)
 			}
-			if s.Guard.MaxBudget > 0 {
-				fmt.Printf(" max_budget=%.2f", s.Guard.MaxBudget)
+			if strings.TrimSpace(s.HITL) != "" {
+				fmt.Printf("%shitl=%s\n", detailIndent, s.HITL)
 			}
-			if s.Guard.MaxTokens > 0 {
-				fmt.Printf(" max_tokens=%d", s.Guard.MaxTokens)
+			if s.Session.Mode == "from" && s.Session.Target != "" {
+				fmt.Printf("%ssession=from:%s\n", detailIndent, s.Session.Target)
+			} else if s.Session.Mode == "new" && strings.TrimSpace(s.Type) != "" {
+				fmt.Printf("%ssession=new\n", detailIndent)
 			}
-			if s.Guard.MaxTime != "" {
-				fmt.Printf(" max_time=%s", s.Guard.MaxTime)
+			hasExplicitGuard := s.Guard.MaxTurns > 0 || s.Guard.MaxBudget > 0 || s.Guard.MaxTokens > 0 || s.Guard.MaxTime != "" || s.Guard.NoWrite != nil
+			if hasExplicitGuard {
+				fmt.Printf("%sguard:", detailIndent)
+				if s.Guard.MaxTurns > 0 {
+					fmt.Printf(" max_turns=%d", s.Guard.MaxTurns)
+				}
+				if s.Guard.MaxBudget > 0 {
+					fmt.Printf(" max_budget=%.2f", s.Guard.MaxBudget)
+				}
+				if s.Guard.MaxTokens > 0 {
+					fmt.Printf(" max_tokens=%d", s.Guard.MaxTokens)
+				}
+				if s.Guard.MaxTime != "" {
+					fmt.Printf(" max_time=%s", s.Guard.MaxTime)
+				}
+				if s.Guard.NoWrite != nil {
+					fmt.Printf(" no_write=%t", *s.Guard.NoWrite)
+				}
+				fmt.Printf("\n")
 			}
-			if s.Guard.NoWrite != nil {
-				fmt.Printf(" no_write=%t", *s.Guard.NoWrite)
+			if len(s.Retry) > 0 {
+				if line := formatRetryDryRunV4(s.Retry); line != "" {
+					fmt.Printf("%sretry: %s\n", detailIndent, line)
+				}
+			} else if of := s.OnFailureCompat(); of != nil && of.Retry > 0 {
+				fmt.Printf("%sretry: exit cap ≈ %d attempts\n", detailIndent, of.Retry)
 			}
-			fmt.Printf("\n")
-		}
-		if of := s.OnFailureCompat(); of != nil && of.Retry > 0 {
-			fmt.Printf("%sretry: exit cap ≈ %d attempts\n", detailIndent, of.Retry)
 		}
 		if len(s.Steps) > 0 {
 			printStepsV4(s.Steps, detailIndent, stepNum)
 		}
-		if len(s.Each) > 0 {
-			printStepsV4(s.Each, detailIndent, stepNum)
-		}
 	}
+}
+
+// formatRetryDryRunV4 summarizes native retry entries for dry-run (ordered list semantics).
+// formatRetryDryRunV4 gives operators a single-line view of the ordered retry policy (matches how runs fail or escalate in practice).
+func formatRetryDryRunV4(entries []workflow.RetryEntry) string {
+	if len(entries) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, e := range entries {
+		if e.Exit > 0 {
+			parts = append(parts, fmt.Sprintf("exit:%d", e.Exit))
+			continue
+		}
+		if e.Attempt <= 0 {
+			continue
+		}
+		tail := dryRunRetryTail(&e)
+		parts = append(parts, fmt.Sprintf("attempt:%d→%s", e.Attempt, tail))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func dryRunRetryTail(e *workflow.RetryEntry) string {
+	if strings.TrimSpace(e.Prompt) != "" {
+		return "prompt"
+	}
+	ag := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(e.Agent), "claude-"))
+	if strings.EqualFold(strings.TrimSpace(e.Worktree), "reset") {
+		if ag != "" {
+			return ag + "+reset"
+		}
+		return "reset"
+	}
+	if strings.EqualFold(strings.TrimSpace(e.Session), "new") {
+		if ag != "" {
+			return ag + "+new"
+		}
+		return "new"
+	}
+	if ag != "" {
+		return ag
+	}
+	return "retry"
 }
 
 func formatValidators(v []workflow.GateEntry) string {

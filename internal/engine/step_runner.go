@@ -525,6 +525,7 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 				SessionID: sessionID,
 				Timeout:   timeout,
 				MaxTurns:  maxTurns,
+				StepPath:  stepPath,
 			})
 			if err != nil {
 				exec.Status = StepFatal
@@ -542,6 +543,7 @@ func (e *Engine) runAtomicStepOnce(step *workflow.Step, stepPath string, taskCon
 				AgentName: agentToUse,
 				Timeout:   timeout,
 				MaxTurns:  maxTurns,
+				StepPath:  stepPath,
 			})
 			if err != nil {
 				exec.Status = StepFatal

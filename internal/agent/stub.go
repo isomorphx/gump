@@ -108,6 +108,27 @@ var (
 	testPlanFile     = ".pud" + "ding-test-plan.json"
 )
 
+func stubArtifactFilename(stepName, qualStepPath string) string {
+	if qualStepPath != "" {
+		s := strings.ReplaceAll(strings.Trim(qualStepPath, "/"), "/", "__")
+		s = strings.ReplaceAll(s, ".", "_")
+		return s
+	}
+	if stepName != "" {
+		return stepName
+	}
+	return "step"
+}
+
+func splitSplitTaskLeaf(qual string) (task, leaf string, ok bool) {
+	p := strings.Trim(qual, "/")
+	parts := strings.Split(p, "/")
+	if len(parts) != 3 {
+		return "", "", false
+	}
+	return parts[1], parts[2], true
+}
+
 // stubSyntheticLaunchCLI mirrors real adapter CLIs for ledger assertions when using StubAdapter.
 func stubSyntheticLaunchCLI(worktree, agentName, sessionID string) string {
 	lower := strings.ToLower(strings.TrimSpace(agentName))
@@ -144,19 +165,36 @@ type StubAdapter struct {
 	lastResultByProc map[*Process]*RunResult
 	lastLaunchCLI    string
 	attemptSeq       map[string]int // per (worktree, step) monotonically increases across retries
+	reviewSeq        map[string]int // per worktree+stepPath; in-memory so .gump/out wipes do not reset review_by_attempt
+}
+
+func (s *StubAdapter) bumpReviewAttempt(worktree, qualStepPath string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.reviewSeq == nil {
+		s.reviewSeq = make(map[string]int)
+	}
+	key := worktree + "\x00"
+	if qualStepPath != "" {
+		key += qualStepPath
+	} else {
+		key += "global"
+	}
+	s.reviewSeq[key]++
+	return s.reviewSeq[key]
 }
 
 // Launch runs stub logic in a goroutine (writes files, emits NDJSON to a pipe) and returns a Process the engine can Stream then Wait.
 func (s *StubAdapter) Launch(ctx context.Context, req LaunchRequest) (*Process, error) {
-	return s.run(ctx, req.Worktree, req.Prompt, req.AgentName, req.Timeout, "")
+	return s.run(ctx, req.Worktree, req.Prompt, req.AgentName, req.Timeout, "", req.StepPath)
 }
 
 // Resume behaves like Launch; the stub ignores session for simplicity.
 func (s *StubAdapter) Resume(ctx context.Context, req ResumeRequest) (*Process, error) {
-	return s.run(ctx, req.Worktree, req.Prompt, req.AgentName, req.Timeout, req.SessionID)
+	return s.run(ctx, req.Worktree, req.Prompt, req.AgentName, req.Timeout, req.SessionID, req.StepPath)
 }
 
-func (s *StubAdapter) run(ctx context.Context, worktree, prompt, agentName string, timeout time.Duration, sessionID string) (*Process, error) {
+func (s *StubAdapter) run(ctx context.Context, worktree, prompt, agentName string, timeout time.Duration, sessionID, qualStepPath string) (*Process, error) {
 	if s.lastResultByProc == nil {
 		s.lastResultByProc = make(map[*Process]*RunResult)
 	}
@@ -259,26 +297,33 @@ func (s *StubAdapter) run(ctx context.Context, worktree, prompt, agentName strin
 			// attempt index by call order for the (worktree, stepName).
 			// We intentionally key by worktree only: some retry/replan sub-prompts don't
 			// include the `[STEP:...]` marker, so `stepName` may be empty.
-			seqKey := worktree
-			s.mu.Lock()
-			if s.attemptSeq == nil {
-				s.attemptSeq = make(map[string]int)
-			}
-			if s.attemptSeq[seqKey] == 0 {
-				seqPath := filepath.Join(worktree, brand.StateDir(), "stub-launch-seq")
-				if b, err := os.ReadFile(seqPath); err == nil {
-					var base int
-					if _, err := fmt.Sscanf(strings.TrimSpace(string(b)), "%d", &base); err == nil && base > 0 {
-						s.attemptSeq[seqKey] = base
+			// WHY: the root split planner step is commonly named "decompose"; it should not
+			// consume the same counter as per-task code launches so by_attempt keys can match
+			// workflow impl attempts (R7 cheap2sota: success merge uses key "4" for yaml attempt 4).
+			skipSeq := isPlan && strings.Trim(qualStepPath, "/") == "decompose"
+			if !skipSeq {
+				seqKey := worktree
+				s.mu.Lock()
+				if s.attemptSeq == nil {
+					s.attemptSeq = make(map[string]int)
+				}
+				if s.attemptSeq[seqKey] == 0 {
+					seqPath := filepath.Join(worktree, brand.StateDir(), "stub-launch-seq")
+					if b, err := os.ReadFile(seqPath); err == nil {
+						var base int
+						if _, err := fmt.Sscanf(strings.TrimSpace(string(b)), "%d", &base); err == nil && base > 0 {
+							s.attemptSeq[seqKey] = base
+						}
 					}
 				}
+				s.attemptSeq[seqKey]++
+				attemptFromPrompt = s.attemptSeq[seqKey]
+				_ = os.MkdirAll(filepath.Join(worktree, brand.StateDir()), 0755)
+				_ = os.WriteFile(filepath.Join(worktree, brand.StateDir(), "stub-launch-seq"), []byte(strconv.Itoa(attemptFromPrompt)), 0644)
+				s.mu.Unlock()
 			}
-			s.attemptSeq[seqKey]++
-			attemptFromPrompt = s.attemptSeq[seqKey]
-			_ = os.MkdirAll(filepath.Join(worktree, brand.StateDir()), 0755)
-			_ = os.WriteFile(filepath.Join(worktree, brand.StateDir(), "stub-launch-seq"), []byte(strconv.Itoa(attemptFromPrompt)), 0644)
-			s.mu.Unlock()
 		}
+		stubBase := stubArtifactFilename(stepName, qualStepPath)
 		if isPlan {
 			planPath := filepath.Join(outDir, "plan.json")
 			planContent := []byte(`[
@@ -289,48 +334,33 @@ func (s *StubAdapter) run(ctx context.Context, worktree, prompt, agentName strin
 				planContent = custom
 			}
 			_ = os.WriteFile(planPath, planContent, 0644)
-			if applyTestScenarioWithStep(worktree, stepName, isReplanFromPrompt, attemptFromPrompt) {
+			if applyTestScenarioWithStep(worktree, stepName, isReplanFromPrompt, attemptFromPrompt, isPlan, qualStepPath) {
 				// scenario files (e.g. evil.go) for split/plan no_write e2e
 			} else {
-				filename := stepName + ".stub"
-				if stepName == "" {
-					filename = "step.stub"
-				}
-				_ = os.WriteFile(filepath.Join(worktree, filename), []byte("stub output"), 0644)
+				_ = os.WriteFile(filepath.Join(worktree, stubBase+".stub"), []byte("stub output"), 0644)
 			}
 		} else if isArtifact {
 			artifactPath := filepath.Join(outDir, "artifact.txt")
 			_ = os.WriteFile(artifactPath, []byte("stub artifact output for "+stepName), 0644)
-			filename := stepName + ".stub"
-			if stepName == "" {
-				filename = "step.stub"
-			}
-			_ = os.WriteFile(filepath.Join(worktree, filename), []byte("stub output"), 0644)
+			_ = os.WriteFile(filepath.Join(worktree, stubBase+".stub"), []byte("stub output"), 0644)
 		} else if isReview {
 			validatePath := filepath.Join(outDir, "validate.json")
-			if body := reviewJSONFromScenario(worktree, stepName, attemptFromPrompt); body != "" {
+			revAttempt := s.bumpReviewAttempt(worktree, qualStepPath)
+			if body := reviewJSONFromScenario(worktree, stepName, revAttempt); body != "" {
 				_ = os.WriteFile(validatePath, []byte(body), 0644)
 			} else {
 				_ = os.WriteFile(validatePath, []byte(`{"pass":true,"comments":"stub validate ok"}`), 0644)
 			}
-			if applyTestScenarioWithStep(worktree, stepName, isReplanFromPrompt, attemptFromPrompt) {
+			if applyTestScenarioWithStep(worktree, stepName, isReplanFromPrompt, attemptFromPrompt, false, qualStepPath) {
 				// scenario supplies files (e.g. compile gate)
 			} else {
-				filename := stepName + ".stub"
-				if stepName == "" {
-					filename = "step.stub"
-				}
-				_ = os.WriteFile(filepath.Join(worktree, filename), []byte("stub output"), 0644)
+				_ = os.WriteFile(filepath.Join(worktree, stubBase+".stub"), []byte("stub output"), 0644)
 			}
 		} else {
-			if applyTestScenarioWithStep(worktree, stepName, isReplanFromPrompt, attemptFromPrompt) {
+			if applyTestScenarioWithStep(worktree, stepName, isReplanFromPrompt, attemptFromPrompt, false, qualStepPath) {
 				// Scenario file defined code files; no .stub
 			} else {
-				filename := stepName + ".stub"
-				if stepName == "" {
-					filename = "step.stub"
-				}
-				_ = os.WriteFile(filepath.Join(worktree, filename), []byte("stub output"), 0644)
+				_ = os.WriteFile(filepath.Join(worktree, stubBase+".stub"), []byte("stub output"), 0644)
 			}
 		}
 
@@ -399,8 +429,8 @@ func restartCycleFromWorktree(worktree string) int {
 	return n
 }
 
-// reviewJSONFromScenario returns custom review.json body when scenario sets review_by_attempt, review_by_cycle, or review_by_step.
-func reviewJSONFromScenario(worktree, stepName string, attempt int) string {
+// reviewJSONFromScenario returns custom validate.json body when scenario sets review_by_attempt (keys are per-step review launch order), review_by_cycle, or review_by_step.
+func reviewJSONFromScenario(worktree, stepName string, reviewAttempt int) string {
 	data, err := os.ReadFile(filepath.Join(worktree, testScenarioFile))
 	if err != nil {
 		return ""
@@ -414,7 +444,7 @@ func reviewJSONFromScenario(worktree, stepName string, attempt int) string {
 		return ""
 	}
 	if scenario.ReviewByAttempt != nil {
-		if body, ok := scenario.ReviewByAttempt[strconv.Itoa(attempt)]; ok && body != "" {
+		if body, ok := scenario.ReviewByAttempt[strconv.Itoa(reviewAttempt)]; ok && body != "" {
 			return body
 		}
 	}
@@ -475,13 +505,18 @@ func attemptFromContextFile(worktree string) int {
 	return 1
 }
 
+func isUnderGumpOutPath(rel string) bool {
+	p := filepath.ToSlash(filepath.Clean(rel))
+	return strings.HasPrefix(p, ".gump/out/")
+}
+
 // applyTestScenario reads the test scenario file and creates the listed files so e2e can drive validation with real code.
 // When "by_attempt" is present, the attempt number is detected from the context file (Attempt N/M) and the matching files for that attempt are used, merged with root "files".
 // When "by_step" is present, stepName (from the prompt) selects which files to merge so parallel steps can write disjoint files.
 func applyTestScenario(worktree string) bool {
-	return applyTestScenarioWithStep(worktree, "", false, 0)
+	return applyTestScenarioWithStep(worktree, "", false, 0, false, "")
 }
-func applyTestScenarioWithStep(worktree string, stepName string, isReplanFromPrompt bool, attemptFromPrompt int) bool {
+func applyTestScenarioWithStep(worktree string, stepName string, isReplanFromPrompt bool, attemptFromPrompt int, skipByAttempt bool, qualStepPath string) bool {
 	data, err := os.ReadFile(filepath.Join(worktree, testScenarioFile))
 	if err != nil {
 		return false
@@ -494,6 +529,9 @@ func applyTestScenarioWithStep(worktree string, stepName string, isReplanFromPro
 		ByStep map[string]struct {
 			Files map[string]string `json:"files"`
 		} `json:"by_step"`
+		ByTaskStep map[string]map[string]struct {
+			Files map[string]string `json:"files"`
+		} `json:"by_task_step"`
 		ByRestart map[string]struct {
 			Files map[string]string `json:"files"`
 		} `json:"by_restart"`
@@ -511,6 +549,15 @@ func applyTestScenarioWithStep(worktree string, stepName string, isReplanFromPro
 		if s, ok := scenario.ByStep[stepName]; ok && s.Files != nil {
 			for k, v := range s.Files {
 				merged[k] = v
+			}
+		}
+	}
+	if task, leaf, ok := splitSplitTaskLeaf(qualStepPath); ok && scenario.ByTaskStep != nil {
+		if tm, ok := scenario.ByTaskStep[task]; ok {
+			if s, ok := tm[leaf]; ok && s.Files != nil {
+				for k, v := range s.Files {
+					merged[k] = v
+				}
 			}
 		}
 	}
@@ -534,6 +581,10 @@ func applyTestScenarioWithStep(worktree string, stepName string, isReplanFromPro
 		key := strconv.Itoa(attempt)
 		if a, ok := scenario.ByAttempt[key]; ok && a.Files != nil {
 			for k, v := range a.Files {
+				// WHY: plan steps are no_write outside .gump/out, but schema-retry e2e still needs per-attempt plan.json fixtures.
+				if skipByAttempt && !isUnderGumpOutPath(k) {
+					continue
+				}
 				merged[k] = v
 			}
 		}

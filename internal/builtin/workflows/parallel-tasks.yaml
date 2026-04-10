@@ -1,8 +1,34 @@
 name: parallel-tasks
+max_budget: 12.00
+
 steps:
-  - name: execute
-    type: code
-    prompt: "{spec}"
-    agent: claude-opus
-    guard: { max_turns: 80 }
-    gate: [compile]
+  - name: decompose
+    type: split
+    parallel: true
+    get:
+      prompt: |
+        Decompose {spec} into independent tasks with strictly disjoint
+        blast radii. No two tasks may touch the same file.
+    run:
+      agent: claude-opus
+    gate: [schema]
+    each:
+      - name: impl
+        type: code
+        get:
+          prompt: |
+            Implement: {task.description}
+            Only touch: {task.files}
+        run:
+          agent: claude-sonnet
+          guard:
+            max_turns: 60
+        gate: [compile, test]
+        retry:
+          - attempt: 3
+            agent: claude-opus
+            session: new
+          - exit: 4
+
+  - name: quality
+    gate: [compile, lint, test]

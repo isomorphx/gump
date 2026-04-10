@@ -1,8 +1,13 @@
 name: freeform
+max_budget: 5.00
+
 steps:
   - name: execute
     type: code
-    prompt: "{spec}"
-    agent: claude-opus
-    guard: { max_turns: 80 }
+    get:
+      prompt: "{spec}"
+    run:
+      agent: claude-opus
+      guard:
+        max_turns: 80
     gate: [compile]

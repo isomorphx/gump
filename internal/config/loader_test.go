@@ -27,12 +27,12 @@ func TestLoad_Defaults(t *testing.T) {
 }
 
 func TestLoad_EnvOverrides(t *testing.T) {
-	os.Setenv("PUDDING_DEFAULT_AGENT", "env-agent")
-	os.Setenv("PUDDING_LOG_LEVEL", "debug")
-	os.Setenv("PUDDING_NO_UPDATE_CHECK", "1")
-	defer os.Unsetenv("PUDDING_DEFAULT_AGENT")
-	defer os.Unsetenv("PUDDING_LOG_LEVEL")
-	defer os.Unsetenv("PUDDING_NO_UPDATE_CHECK")
+	os.Setenv("GUMP_DEFAULT_AGENT", "env-agent")
+	os.Setenv("GUMP_LOG_LEVEL", "debug")
+	os.Setenv("GUMP_NO_UPDATE_CHECK", "1")
+	defer os.Unsetenv("GUMP_DEFAULT_AGENT")
+	defer os.Unsetenv("GUMP_LOG_LEVEL")
+	defer os.Unsetenv("GUMP_NO_UPDATE_CHECK")
 	cfg, src, err := Load()
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +44,7 @@ func TestLoad_EnvOverrides(t *testing.T) {
 		t.Errorf("got LogLevel=%q src=%q", cfg.LogLevel, src.LogLevel)
 	}
 	if cfg.UpdateCheck {
-		t.Errorf("expected UpdateCheck=false when PUDDING_NO_UPDATE_CHECK is set")
+		t.Errorf("expected UpdateCheck=false when GUMP_NO_UPDATE_CHECK is set")
 	}
 }
 
@@ -53,7 +53,7 @@ func TestLoad_ProjectConfig(t *testing.T) {
 	orig, _ := os.Getwd()
 	_ = os.Chdir(dir)
 	defer os.Chdir(orig)
-	path := filepath.Join(dir, "pudding.toml")
+	path := filepath.Join(dir, "gump.toml")
 	_ = os.WriteFile(path, []byte(`default_agent = "proj-agent"
 [validation]
 compile_cmd = "make build"
@@ -62,7 +62,7 @@ compile_cmd = "make build"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DefaultAgent != "proj-agent" || src.DefaultAgent != "pudding.toml" {
+	if cfg.DefaultAgent != "proj-agent" || src.DefaultAgent != "gump.toml" {
 		t.Errorf("got DefaultAgent=%q src=%q", cfg.DefaultAgent, src.DefaultAgent)
 	}
 	if cfg.CompileCmd != "make build" {
@@ -77,9 +77,9 @@ func TestLoad_ProjectConfig_DisableUpdateCheck(t *testing.T) {
 	defer os.Chdir(orig)
 
 	// Ensure env doesn't interfere.
-	_ = os.Unsetenv("PUDDING_NO_UPDATE_CHECK")
+	_ = os.Unsetenv("GUMP_NO_UPDATE_CHECK")
 
-	path := filepath.Join(dir, "pudding.toml")
+	path := filepath.Join(dir, "gump.toml")
 	_ = os.WriteFile(path, []byte(`default_agent = "proj-agent"
 [validation]
 compile_cmd = "make build"
@@ -102,7 +102,7 @@ func TestLoad_ValidationTimeout_Project(t *testing.T) {
 	orig, _ := os.Getwd()
 	_ = os.Chdir(dir)
 	defer os.Chdir(orig)
-	path := filepath.Join(dir, "pudding.toml")
+	path := filepath.Join(dir, "gump.toml")
 	_ = os.WriteFile(path, []byte(`[validation]
 timeout = "5s"
 `), 0644)
@@ -113,17 +113,17 @@ timeout = "5s"
 	if cfg.ValidationTimeout != 5*time.Second {
 		t.Errorf("got ValidationTimeout=%v", cfg.ValidationTimeout)
 	}
-	if src.ValidationTimeout != "pudding.toml" {
+	if src.ValidationTimeout != "gump.toml" {
 		t.Errorf("got src.ValidationTimeout=%q", src.ValidationTimeout)
 	}
 }
 
-func TestProjectRoot_ReturnsDirWithPuddingToml(t *testing.T) {
+func TestProjectRoot_ReturnsDirWithGumpToml(t *testing.T) {
 	dir := t.TempDir()
 	orig, _ := os.Getwd()
 	_ = os.Chdir(dir)
 	defer os.Chdir(orig)
-	_ = os.WriteFile(filepath.Join(dir, "pudding.toml"), []byte(""), 0644)
+	_ = os.WriteFile(filepath.Join(dir, "gump.toml"), []byte(""), 0644)
 	root := ProjectRoot()
 	// Resolve symlinks so /private/var and /var match on macOS
 	root, _ = filepath.EvalSymlinks(root)

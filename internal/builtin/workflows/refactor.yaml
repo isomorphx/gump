@@ -1,8 +1,40 @@
 name: refactor
+max_budget: 8.00
+
 steps:
-  - name: execute
-    type: code
-    prompt: "{spec}"
-    agent: claude-opus
-    guard: { max_turns: 80 }
-    gate: [compile]
+  - name: decompose
+    type: split
+    get:
+      prompt: |
+        Plan refactoring for: {spec}
+        Ensure each task is independently testable.
+        All existing tests must stay green after each task.
+    run:
+      agent: claude-sonnet
+    gate: [schema]
+    each:
+      - name: apply
+        type: code
+        get:
+          prompt: |
+            Refactor according to: {task.description}
+            Only modify: {task.files}
+            All existing tests must continue to pass.
+        run:
+          agent: claude-sonnet
+          guard:
+            max_turns: 60
+        gate: [compile, test]
+        retry:
+          - attempt: 2
+            prompt: |
+              Refactoring broke tests: {error}
+              Fix while preserving the refactoring intent.
+              Files: {task.files}
+          - attempt: 3
+            agent: claude-opus
+            session: new
+          - exit: 4
+
+  - name: quality
+    gate: [compile, lint, test]
